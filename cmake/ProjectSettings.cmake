@@ -18,6 +18,14 @@ endforeach()
 
 find_package(Vulkan REQUIRED)
 find_package(X11 REQUIRED)
+find_package(Freetype QUIET)
+
+if(Freetype_FOUND)
+    set(ENGINE3D_HAS_FREETYPE 1)
+else()
+    set(ENGINE3D_HAS_FREETYPE 0)
+    message(WARNING "FreeType headers not found. TTF font loading and on-screen text will be unavailable until you install freetype-devel.")
+endif()
 
 set(SHADER_SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
 set(SHADER_BINARY_ROOT ${PROJECT_SHADER_OUTPUT_DIR})

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -104,6 +105,32 @@ struct TextureAsset {
     std::string path;
 };
 
+// Nazwany asset fontu TrueType wskazujacy plik TTF oraz rozmiar rasteryzacji glifow.
+struct FontAsset {
+    std::string name;
+    std::string path;
+    uint32_t pixelHeight = 48;
+    std::string glyphsUtf8;
+};
+
+// Poziome wyrownanie etykiety tekstowej wzgledem punktu zakotwiczenia X.
+enum class TextHorizontalAlign {
+    Left,
+    Center,
+    Right,
+};
+
+// Etykieta 2D rysowana na ekranie jako nakladka ponad scena 3D.
+struct TextLabel {
+    std::string fontName;
+    std::string text;
+    float x = 16.0f;
+    float y = 32.0f;
+    float scale = 1.0f;
+    std::array<float, 4> color = {1.0f, 1.0f, 1.0f, 1.0f};
+    TextHorizontalAlign horizontalAlign = TextHorizontalAlign::Left;
+};
+
 // Jeden obiekt sceny laczacy siatke, teksture i animacje transformacji.
 struct SceneObject {
     std::string meshName;
@@ -141,8 +168,11 @@ struct AppConfig {
     // Zasoby sceny: geometria, tekstury i obiekty wykorzystujace te zasoby.
     std::vector<MeshAsset> meshes;
     std::vector<TextureAsset> textures;
+    std::vector<FontAsset> fonts;
     std::string activeTexture;
     std::vector<SceneObject> sceneObjects;
+    std::vector<TextLabel> textLabels;
+    std::function<void(float, uint32_t, uint32_t, std::vector<TextLabel>&)> updateTextLabels;
     // Kamera globalna sterujaca punktem widzenia calej sceny.
     CameraConfig camera;
 };

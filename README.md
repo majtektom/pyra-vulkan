@@ -24,6 +24,7 @@ Minimalna namiastka silnika 3D w C++ i Vulkanie. Projekt buduje bibliotekę `eng
 - CMake 3.20+
 - biblioteki deweloperskie Vulkan
 - biblioteki deweloperskie X11
+- `freetype-devel` jeżeli chcesz ładować fonty TTF i renderować tekst 2D na ekranie
 - `glslc` albo `glslangValidator` dla GLSL
 - `dxc` albo `glslangValidator` dla HLSL
 - `slangc` dla Slang
@@ -52,6 +53,9 @@ cmake --build build
 - kamera oparta o `position`, `target`, `up`
 - manifest shaderów rozwiązywany po nazwie programu
 - texture manager rozwiązujący asset tekstury po nazwie oraz domyślna biała tekstura fallback
+- font manager rozwiązujący assety TTF po nazwie oraz overlay tekstowy 2D budowany z atlasu glifów
+- atlas fontu obsługuje UTF-8, więc polskie litery z TTF działają poprawnie; dodatkowo `FontAsset.glyphsUtf8` pozwala jawnie określić, które znaki mają trafić do atlasu
+- `AppConfig.updateTextLabels` pozwala zmieniać etykiety w runtime; gdy callback wprowadzi nowy znak spoza aktualnego atlasu, silnik przebuduje atlas i bufory tekstu automatycznie
 - upload tekstur BMP, TGA i DDS do `VK_IMAGE_USAGE_SAMPLED_BIT` przez staging buffer i sampler/image view, niezależnie od tego czy asset leży w `assets/textures/...` czy `assets/sprite/...`
 - TGA 32-bit i DDS DXT3/DXT5 zachowują kanał alpha; DDS DXT1/DXT3/DXT5 są ładowane jako skompresowane formaty BC1/BC2/BC3
 - opcjonalne validation layers w debug, jeśli są dostępne

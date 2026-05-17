@@ -1,5 +1,6 @@
 #include "engine/Engine.hpp"
 
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -25,6 +26,40 @@ int main() {
         {"tga_cactus", "assets/sprite/cactus.tga"},
         {"dds_metal", "assets/textures/drewno.dds"},
     };
+
+#if ENGINE3D_HAS_FREETYPE
+    // Font TTF i kilka etykiet 2D pokazuja, jak nakladka tekstowa moze opisywac scene ponad renderem 3D.
+    config.fonts = {
+        {"ui", "assets/fonts/times.ttf", 40},
+    };
+
+    config.textLabels = {
+        {"ui", "engine3d: rotating cube", 24.0f, 18.0f, 1.0f, {1.0f, 0.95f, 0.8f, 1.0f}},
+        {"ui", "BMP | TGA | DDS", 24.0f, 62.0f, 0.75f, {0.7f, 0.9f, 1.0f, 0.92f}},
+        {"ui", "FPS: --", static_cast<float>(config.width) - 24.0f, 18.0f, 0.75f, {0.95f, 1.0f, 0.85f, 0.95f}, engine3d::TextHorizontalAlign::Right},
+    };
+
+    // Callback moze zmieniac tresc etykiet w runtime; gdy pojawia sie nowe znaki, atlas fontu przebuduje sie automatycznie.
+    config.updateTextLabels = [](float elapsedSeconds, uint32_t viewportWidth, uint32_t, std::vector<engine3d::TextLabel>& labels) {
+        if (labels.size() < 3) {
+            return;
+        }
+
+        const bool showPolish = (static_cast<int>(elapsedSeconds) / 3) % 2 == 1;
+        labels[1].text = showPolish ? "Zażółć gęślą jaźń" : "BMP | TGA | DDS";
+
+        static float previousElapsedSeconds = elapsedSeconds;
+        const float deltaSeconds = elapsedSeconds - previousElapsedSeconds;
+        previousElapsedSeconds = elapsedSeconds;
+
+        if (deltaSeconds > 0.0f) {
+            const int fps = static_cast<int>(std::lround(1.0f / deltaSeconds));
+            labels[2].text = "FPS: " + std::to_string(fps);
+        }
+
+        labels[2].x = static_cast<float>(viewportWidth) - 24.0f;
+    };
+#endif
 
     // Kamera jest bardziej oddalona niz w trojkacie, bo scena zawiera kilka kostek obok siebie.
     config.camera.position = {0.0f, 0.0f, 5.5f};

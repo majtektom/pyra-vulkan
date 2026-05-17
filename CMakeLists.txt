@@ -4,5 +4,7 @@ project(engine3d_examples LANGUAGES CXX)
 
 include(cmake/ProjectSettings.cmake)
 
+add_custom_target(compile_shaders ALL)
+
 add_subdirectory(engine)
 add_subdirectory(examples)

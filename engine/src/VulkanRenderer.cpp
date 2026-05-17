@@ -2,9 +2,12 @@
 
 #include "VulkanRenderer.hpp"
 
+#include "FontAtlasLoader.hpp"
+#include "Utf8.hpp"
 #include "TextureAssetLoader.hpp"
 #include "X11Window.hpp"
 
+#include "engine/FontManager.hpp"
 #include "engine/ShaderManager.hpp"
 #include "engine/TextureManager.hpp"
 
@@ -35,11 +38,17 @@ namespace {
 
 constexpr int kMaxFramesInFlight = 2;
 
+#ifndef ENGINE3D_HAS_FREETYPE
+#define ENGINE3D_HAS_FREETYPE 0
+#endif
+
 #ifdef NDEBUG
 constexpr bool kEnableValidationLayers = false;
 #else
 constexpr bool kEnableValidationLayers = true;
 #endif
+
+constexpr bool kHasFreeType = ENGINE3D_HAS_FREETYPE != 0;
 
 const std::vector<const char*> kValidationLayers = {
     "VK_LAYER_KHRONOS_validation",
@@ -113,13 +122,20 @@ public:
     // Konstruktor przejmuje konfiguracje i buduje menedzery zasobow uzywane pozniej przez renderer.
     explicit VulkanRendererImpl(AppConfig config)
         : config_(std::move(config)),
+          fontManager_(std::make_unique<FontManager>(config_.fonts)),
           shaderManager_(std::make_unique<ShaderManager>(config_.shaderManifest)),
-                    textureManager_(std::make_unique<TextureManager>(config_.textures)) {
-        if (config_.meshes.empty()) {
+          textureManager_(std::make_unique<TextureManager>(config_.textures)) {
+        if (!config_.sceneObjects.empty() && config_.meshes.empty()) {
             throw std::runtime_error("engine3d requires at least one mesh asset");
         }
-        if (config_.sceneObjects.empty()) {
-            throw std::runtime_error("engine3d requires at least one scene object");
+        if (config_.sceneObjects.empty() && config_.textLabels.empty()) {
+            throw std::runtime_error("engine3d requires at least one scene object or text label");
+        }
+        if (!config_.textLabels.empty() && config_.fonts.empty()) {
+            throw std::runtime_error("text rendering requires at least one configured font asset");
+        }
+        if (!config_.textLabels.empty() && !kHasFreeType) {
+            throw std::runtime_error("text rendering requires freetype-devel headers during build");
         }
     }
 
@@ -149,7 +165,61 @@ private:
         VkSampler sampler = VK_NULL_HANDLE;
     };
 
+    struct TextVertex {
+        std::array<float, 2> position;
+        std::array<float, 2> texCoord;
+        std::array<float, 4> color;
+
+        [[nodiscard]] static VkVertexInputBindingDescription bindingDescription() {
+            VkVertexInputBindingDescription description{};
+            description.binding = 0;
+            description.stride = sizeof(TextVertex);
+            description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            return description;
+        }
+
+        [[nodiscard]] static std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions() {
+            std::array<VkVertexInputAttributeDescription, 3> descriptions{};
+
+            descriptions[0].binding = 0;
+            descriptions[0].location = 0;
+            descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+            descriptions[0].offset = offsetof(TextVertex, position);
+
+            descriptions[1].binding = 0;
+            descriptions[1].location = 1;
+            descriptions[1].format = VK_FORMAT_R32G32_SFLOAT;
+            descriptions[1].offset = offsetof(TextVertex, texCoord);
+
+            descriptions[2].binding = 0;
+            descriptions[2].location = 2;
+            descriptions[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+            descriptions[2].offset = offsetof(TextVertex, color);
+
+            return descriptions;
+        }
+    };
+
+    struct FontGpuResources {
+        std::string name;
+        float lineHeight = 0.0f;
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory imageMemory = VK_NULL_HANDLE;
+        VkImageView imageView = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        std::unordered_map<std::uint32_t, FontAtlasGlyph> glyphs;
+    };
+
+    struct TextGpuResources {
+        std::size_t fontIndex = 0;
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+        uint32_t vertexCount = 0;
+    };
+
     AppConfig config_;
+    std::unique_ptr<FontManager> fontManager_;
     std::unique_ptr<ShaderManager> shaderManager_;
     std::unique_ptr<TextureManager> textureManager_;
 
@@ -171,6 +241,9 @@ private:
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout textDescriptorSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout textPipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline textGraphicsPipeline_ = VK_NULL_HANDLE;
     VkImage depthImage_ = VK_NULL_HANDLE;
     VkDeviceMemory depthImageMemory_ = VK_NULL_HANDLE;
     VkImageView depthImageView_ = VK_NULL_HANDLE;
@@ -180,10 +253,15 @@ private:
     std::unordered_map<std::string, std::size_t> meshLookup_;
     std::vector<TextureGpuResources> textures_;
     std::unordered_map<std::string, std::size_t> textureLookup_;
+    std::vector<FontGpuResources> fonts_;
+    std::unordered_map<std::string, std::size_t> fontLookup_;
+    std::vector<TextGpuResources> texts_;
+    std::vector<TextLabel> lastTextLabels_;
     std::array<VkBuffer, kMaxFramesInFlight> globalUniformBuffers_{};
     std::array<VkDeviceMemory, kMaxFramesInFlight> globalUniformBuffersMemory_{};
     std::array<void*, kMaxFramesInFlight> globalUniformBuffersMapped_{};
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
+    VkDescriptorPool textDescriptorPool_ = VK_NULL_HANDLE;
     std::vector<std::array<VkDescriptorSet, kMaxFramesInFlight>> descriptorSetsByTexture_;
     std::array<VkCommandBuffer, kMaxFramesInFlight> commandBuffers_{};
     std::array<VkSemaphore, kMaxFramesInFlight> imageAvailableSemaphores_{};
@@ -212,19 +290,78 @@ private:
         createImageViews();
         createRenderPass();
         createDescriptorSetLayout();
+        createTextDescriptorSetLayout();
         createGraphicsPipeline();
+        createTextGraphicsPipeline();
         createCommandPool();
         createDepthResources();
         createFramebuffers();
         createMeshBuffers();
         createGlobalUniformBuffers();
         createTextureResources();
+        createFontResources();
         createDescriptorPool();
         createDescriptorSets();
+        createTextDescriptorPool();
+        createTextDescriptorSets();
+        createTextBuffers();
+        lastTextLabels_ = config_.textLabels;
         createCommandBuffers();
         createSyncObjects();
         // Zapisujemy moment startu, aby animacje mogly bazowac na czasie od uruchomienia programu.
         startTime_ = std::chrono::steady_clock::now();
+    }
+
+    // Sprawdza, czy scena potrzebuje nakladki tekstowej ponad renderem 3D.
+    [[nodiscard]] bool hasTextOverlay() const {
+        return !config_.textLabels.empty();
+    }
+
+    // Porownuje dwie listy etykiet, aby wykryc realna zmiane tresci lub polozenia tekstu.
+    [[nodiscard]] static bool areTextLabelsEqual(const std::vector<TextLabel>& lhs, const std::vector<TextLabel>& rhs) {
+        if (lhs.size() != rhs.size()) {
+            return false;
+        }
+
+        for (std::size_t index = 0; index < lhs.size(); ++index) {
+            const TextLabel& left = lhs[index];
+            const TextLabel& right = rhs[index];
+            if (left.fontName != right.fontName ||
+                left.text != right.text ||
+                left.x != right.x ||
+                left.y != right.y ||
+                left.scale != right.scale ||
+                left.color != right.color ||
+                left.horizontalAlign != right.horizontalAlign) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Sklada finalny zestaw glifow dla fontu: znaki jawnie podane w assetcie oraz te uzyte w etykietach.
+    [[nodiscard]] std::vector<std::uint32_t> collectFontGlyphs(const FontAsset& fontAsset) const {
+        std::vector<std::uint32_t> glyphs;
+
+        for (std::uint32_t codepoint : utf8::decode(fontAsset.glyphsUtf8)) {
+            utf8::appendUnique(glyphs, codepoint);
+        }
+
+        for (const auto& label : config_.textLabels) {
+            if (label.fontName != fontAsset.name) {
+                continue;
+            }
+
+            for (std::uint32_t codepoint : utf8::decode(label.text)) {
+                if (codepoint == static_cast<std::uint32_t>('\n') || codepoint == static_cast<std::uint32_t>('\r')) {
+                    continue;
+                }
+                utf8::appendUnique(glyphs, codepoint);
+            }
+        }
+
+        return glyphs;
     }
 
     // Petla glowna odswieza zdarzenia oraz renderuje kolejne klatki az do zamkniecia okna.
@@ -273,6 +410,10 @@ private:
             vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
             graphicsPipeline_ = VK_NULL_HANDLE;
         }
+        if (textGraphicsPipeline_ != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device_, textGraphicsPipeline_, nullptr);
+            textGraphicsPipeline_ = VK_NULL_HANDLE;
+        }
         if (renderPass_ != VK_NULL_HANDLE) {
             vkDestroyRenderPass(device_, renderPass_, nullptr);
             renderPass_ = VK_NULL_HANDLE;
@@ -298,6 +439,9 @@ private:
 
             if (descriptorPool_ != VK_NULL_HANDLE) {
                 vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
+            }
+            if (textDescriptorPool_ != VK_NULL_HANDLE) {
+                vkDestroyDescriptorPool(device_, textDescriptorPool_, nullptr);
             }
 
             for (std::size_t index = 0; index < kMaxFramesInFlight; ++index) {
@@ -344,11 +488,20 @@ private:
                 }
             }
 
+            destroyTextBuffers();
+            destroyFontResources();
+
             if (descriptorSetLayout_ != VK_NULL_HANDLE) {
                 vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
             }
+            if (textDescriptorSetLayout_ != VK_NULL_HANDLE) {
+                vkDestroyDescriptorSetLayout(device_, textDescriptorSetLayout_, nullptr);
+            }
             if (pipelineLayout_ != VK_NULL_HANDLE) {
                 vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
+            }
+            if (textPipelineLayout_ != VK_NULL_HANDLE) {
+                vkDestroyPipelineLayout(device_, textPipelineLayout_, nullptr);
             }
 
             for (std::size_t index = 0; index < kMaxFramesInFlight; ++index) {
@@ -381,6 +534,46 @@ private:
         }
 
         window_.reset();
+    }
+
+    // Zwalnia bufory geometrii tekstu, aby mozna je bylo odtworzyc po zmianie tresci etykiet.
+    void destroyTextBuffers() {
+        for (auto& text : texts_) {
+            if (text.vertexBuffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device_, text.vertexBuffer, nullptr);
+                text.vertexBuffer = VK_NULL_HANDLE;
+            }
+            if (text.vertexBufferMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device_, text.vertexBufferMemory, nullptr);
+                text.vertexBufferMemory = VK_NULL_HANDLE;
+            }
+        }
+        texts_.clear();
+    }
+
+    // Zwalnia zasoby GPU fontow, gdy atlas musi zostac przebudowany pod nowy zestaw znakow.
+    void destroyFontResources() {
+        for (auto& font : fonts_) {
+            if (font.sampler != VK_NULL_HANDLE) {
+                vkDestroySampler(device_, font.sampler, nullptr);
+                font.sampler = VK_NULL_HANDLE;
+            }
+            if (font.imageView != VK_NULL_HANDLE) {
+                vkDestroyImageView(device_, font.imageView, nullptr);
+                font.imageView = VK_NULL_HANDLE;
+            }
+            if (font.image != VK_NULL_HANDLE) {
+                vkDestroyImage(device_, font.image, nullptr);
+                font.image = VK_NULL_HANDLE;
+            }
+            if (font.imageMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device_, font.imageMemory, nullptr);
+                font.imageMemory = VK_NULL_HANDLE;
+            }
+        }
+
+        fonts_.clear();
+        fontLookup_.clear();
     }
 
     // Wczytuje caly plik binarny do pamieci, np. skompilowany shader SPIR-V.
@@ -737,6 +930,28 @@ private:
         }
     }
 
+    // Definiuje descriptor set dla atlasu fontu probkowanego przez shader tekstu.
+    void createTextDescriptorSetLayout() {
+        if (!hasTextOverlay()) {
+            return;
+        }
+
+        VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+        samplerLayoutBinding.binding = 0;
+        samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        samplerLayoutBinding.descriptorCount = 1;
+        samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &samplerLayoutBinding;
+
+        if (vkCreateDescriptorSetLayout(device_, &layoutInfo, nullptr, &textDescriptorSetLayout_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create text descriptor set layout");
+        }
+    }
+
     // Zamienia surowe bajty SPIR-V na obiekt shader module rozumiany przez Vulkan.
     [[nodiscard]] VkShaderModule createShaderModule(const std::vector<char>& code) const {
         VkShaderModuleCreateInfo createInfo{};
@@ -878,6 +1093,142 @@ private:
         }
 
         // Po utworzeniu pipeline'u osobne moduly shaderow nie sa juz potrzebne.
+        vkDestroyShaderModule(device_, fragShaderModule, nullptr);
+        vkDestroyShaderModule(device_, vertShaderModule, nullptr);
+    }
+
+    // Tworzy prosty pipeline do rysowania tekstu 2D ponad gotowa scena.
+    void createTextGraphicsPipeline() {
+        if (!hasTextOverlay()) {
+            return;
+        }
+
+        const auto vertShaderCode = readFile(std::string(ENGINE_TEXT_SHADER_DIR) + "/text.vert.spv");
+        const auto fragShaderCode = readFile(std::string(ENGINE_TEXT_SHADER_DIR) + "/text.frag.spv");
+
+        const VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        const VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
+
+        const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
+            vertShaderStageInfo,
+            fragShaderStageInfo,
+        };
+
+        const auto bindingDescription = TextVertex::bindingDescription();
+        const auto attributeDescriptions = TextVertex::attributeDescriptions();
+
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = static_cast<float>(swapChainExtent_.width);
+        viewport.height = static_cast<float>(swapChainExtent_.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+
+        VkRect2D scissor{};
+        scissor.offset = {0, 0};
+        scissor.extent = swapChainExtent_;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = &viewport;
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = &scissor;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_FALSE;
+        depthStencil.depthWriteEnable = VK_FALSE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.blendEnable = VK_TRUE;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                              VK_COLOR_COMPONENT_G_BIT |
+                                              VK_COLOR_COMPONENT_B_BIT |
+                                              VK_COLOR_COMPONENT_A_BIT;
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = sizeof(std::array<float, 2>);
+
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &textDescriptorSetLayout_;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+        if (vkCreatePipelineLayout(device_, &pipelineLayoutInfo, nullptr, &textPipelineLayout_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create text pipeline layout");
+        }
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+        pipelineInfo.pStages = shaderStages.data();
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.layout = textPipelineLayout_;
+        pipelineInfo.renderPass = renderPass_;
+        pipelineInfo.subpass = 0;
+
+        if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &textGraphicsPipeline_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create text graphics pipeline");
+        }
+
         vkDestroyShaderModule(device_, fragShaderModule, nullptr);
         vkDestroyShaderModule(device_, vertShaderModule, nullptr);
     }
@@ -1194,6 +1545,66 @@ private:
         }
     }
 
+    // Tworzy osobna pule descriptor setow dla atlasow fontow uzywanych przez tekst 2D.
+    void createTextDescriptorPool() {
+        if (!hasTextOverlay()) {
+            return;
+        }
+
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSize.descriptorCount = static_cast<uint32_t>(fonts_.size());
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = static_cast<uint32_t>(fonts_.size());
+
+        if (vkCreateDescriptorPool(device_, &poolInfo, nullptr, &textDescriptorPool_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create text descriptor pool");
+        }
+    }
+
+    // Kazdy font dostaje descriptor set wskazujacy jego atlas i sampler.
+    void createTextDescriptorSets() {
+        if (!hasTextOverlay()) {
+            return;
+        }
+
+        std::vector<VkDescriptorSetLayout> layouts(fonts_.size(), textDescriptorSetLayout_);
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = textDescriptorPool_;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+        allocInfo.pSetLayouts = layouts.data();
+
+        std::vector<VkDescriptorSet> descriptorSets(fonts_.size());
+        if (vkAllocateDescriptorSets(device_, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate text descriptor sets");
+        }
+
+        for (std::size_t index = 0; index < fonts_.size(); ++index) {
+            fonts_[index].descriptorSet = descriptorSets[index];
+
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView = fonts_[index].imageView;
+            imageInfo.sampler = fonts_[index].sampler;
+
+            VkWriteDescriptorSet descriptorWrite{};
+            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrite.dstSet = fonts_[index].descriptorSet;
+            descriptorWrite.dstBinding = 0;
+            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrite.descriptorCount = 1;
+            descriptorWrite.pImageInfo = &imageInfo;
+
+            vkUpdateDescriptorSets(device_, 1, &descriptorWrite, 0, nullptr);
+        }
+    }
+
     // Alokuje glowne command buffery uzywane do nagrywania polecen dla kolejnych klatek.
     void createCommandBuffers() {
         VkCommandBufferAllocateInfo allocInfo{};
@@ -1505,6 +1916,279 @@ private:
         }
     }
 
+    // Uploaduje atlas fontu do GPU i zapamietuje metryki potrzebne do budowania geometrii znakow.
+    void createFontFromAtlas(const FontAtlasData& atlasData) {
+        FontGpuResources font{};
+        font.name = atlasData.name;
+        font.lineHeight = atlasData.lineHeight;
+        font.glyphs = atlasData.glyphs;
+
+        requireTextureFormatSupport(atlasData.format);
+
+        const VkDeviceSize imageSize = static_cast<VkDeviceSize>(atlasData.pixelBytes.size());
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+        createBuffer(
+            imageSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingBufferMemory
+        );
+
+        void* data = nullptr;
+        vkMapMemory(device_, stagingBufferMemory, 0, imageSize, 0, &data);
+        std::memcpy(data, atlasData.pixelBytes.data(), atlasData.pixelBytes.size());
+        vkUnmapMemory(device_, stagingBufferMemory);
+
+        createImage(
+            atlasData.atlasWidth,
+            atlasData.atlasHeight,
+            1,
+            atlasData.format,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            font.image,
+            font.imageMemory
+        );
+
+        transitionImageLayout(font.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+        copyBufferToImage(stagingBuffer, font.image, atlasData.copyRegions);
+        transitionImageLayout(font.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+        font.imageView = createImageView(font.image, atlasData.format, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+        samplerInfo.maxAnisotropy = 1.0f;
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.maxLod = 1.0f;
+
+        if (vkCreateSampler(device_, &samplerInfo, nullptr, &font.sampler) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create font sampler");
+        }
+
+        vkDestroyBuffer(device_, stagingBuffer, nullptr);
+        vkFreeMemory(device_, stagingBufferMemory, nullptr);
+
+        fontLookup_.emplace(font.name, fonts_.size());
+        fonts_.push_back(std::move(font));
+    }
+
+    // Wczytuje wszystkie TTF potrzebne do etykiet tekstowych i buduje ich atlasy glifow.
+    void createFontResources() {
+        fonts_.clear();
+        fontLookup_.clear();
+
+        if (!hasTextOverlay()) {
+            return;
+        }
+
+        for (const auto& fontAsset : config_.fonts) {
+            const FontAsset& resolvedFont = fontManager_->require(fontAsset.name);
+            const std::vector<std::uint32_t> glyphs = collectFontGlyphs(resolvedFont);
+            const FontAtlasData atlasData = FontAtlasLoader::load(resolvedFont, glyphs);
+            createFontFromAtlas(atlasData);
+        }
+    }
+
+    // Zwraca zasoby GPU fontu wskazanego przez etykiete tekstowa.
+    [[nodiscard]] const FontGpuResources& requireFontByName(const std::string& fontName) const {
+        const auto iterator = fontLookup_.find(fontName);
+        if (iterator == fontLookup_.end()) {
+            throw std::runtime_error("text label references unknown font: " + fontName);
+        }
+        return fonts_[iterator->second];
+    }
+
+    // Buduje geometre trojkatow dla napisu na podstawie atlasu glifow i metryk fontu.
+    [[nodiscard]] std::vector<TextVertex> buildTextVertices(const TextLabel& label, const FontGpuResources& font) const {
+        std::vector<TextVertex> vertices;
+        const std::vector<std::uint32_t> codepoints = utf8::decode(label.text);
+        auto resolveGlyph = [&](std::uint32_t codepoint) -> const FontAtlasGlyph* {
+            auto glyphIterator = font.glyphs.find(codepoint);
+            if (glyphIterator != font.glyphs.end()) {
+                return &glyphIterator->second;
+            }
+
+            glyphIterator = font.glyphs.find(static_cast<std::uint32_t>('?'));
+            if (glyphIterator != font.glyphs.end()) {
+                return &glyphIterator->second;
+            }
+
+            return nullptr;
+        };
+
+        std::vector<float> lineWidths(1, 0.0f);
+        for (std::uint32_t codepoint : codepoints) {
+            if (codepoint == static_cast<std::uint32_t>('\r')) {
+                continue;
+            }
+            if (codepoint == static_cast<std::uint32_t>('\n')) {
+                lineWidths.push_back(0.0f);
+                continue;
+            }
+
+            const FontAtlasGlyph* glyph = resolveGlyph(codepoint);
+            if (glyph != nullptr) {
+                lineWidths.back() += glyph->advanceX * label.scale;
+            }
+        }
+
+        std::size_t currentLine = 0;
+        auto lineStartX = [&](std::size_t lineIndex) {
+            const float lineWidth = lineWidths[lineIndex];
+            switch (label.horizontalAlign) {
+                case TextHorizontalAlign::Center:
+                    return label.x - lineWidth * 0.5f;
+                case TextHorizontalAlign::Right:
+                    return label.x - lineWidth;
+                case TextHorizontalAlign::Left:
+                default:
+                    return label.x;
+            }
+        };
+
+        float penX = lineStartX(currentLine);
+        float baselineY = label.y + font.lineHeight * label.scale;
+
+        for (std::uint32_t codepoint : codepoints) {
+            if (codepoint == static_cast<std::uint32_t>('\r')) {
+                continue;
+            }
+            if (codepoint == static_cast<std::uint32_t>('\n')) {
+                ++currentLine;
+                penX = lineStartX(currentLine);
+                baselineY += font.lineHeight * label.scale;
+                continue;
+            }
+
+            const FontAtlasGlyph* glyph = resolveGlyph(codepoint);
+            if (glyph == nullptr) {
+                continue;
+            }
+
+            const float x0 = penX + glyph->bearingX * label.scale;
+            const float y0 = baselineY - glyph->bearingY * label.scale;
+            const float x1 = x0 + glyph->width * label.scale;
+            const float y1 = y0 + glyph->height * label.scale;
+
+            if (glyph->width > 0.0f && glyph->height > 0.0f) {
+                const std::array<float, 4> color = label.color;
+                vertices.push_back({{{x0, y0}}, {{glyph->u0, glyph->v0}}, color});
+                vertices.push_back({{{x1, y0}}, {{glyph->u1, glyph->v0}}, color});
+                vertices.push_back({{{x1, y1}}, {{glyph->u1, glyph->v1}}, color});
+                vertices.push_back({{{x0, y0}}, {{glyph->u0, glyph->v0}}, color});
+                vertices.push_back({{{x1, y1}}, {{glyph->u1, glyph->v1}}, color});
+                vertices.push_back({{{x0, y1}}, {{glyph->u0, glyph->v1}}, color});
+            }
+
+            penX += glyph->advanceX * label.scale;
+        }
+
+        return vertices;
+    }
+
+    // Zamienia wszystkie etykiety tekstowe na bufory GPU gotowe do rysowania w kazdej klatce.
+    void createTextBuffers() {
+        destroyTextBuffers();
+
+        if (!hasTextOverlay()) {
+            return;
+        }
+
+        for (const auto& label : config_.textLabels) {
+            const FontGpuResources& font = requireFontByName(label.fontName);
+            const std::vector<TextVertex> vertices = buildTextVertices(label, font);
+
+            TextGpuResources text{};
+            text.fontIndex = fontLookup_.at(label.fontName);
+            text.vertexCount = static_cast<uint32_t>(vertices.size());
+
+            if (!vertices.empty()) {
+                const VkDeviceSize bufferSize = sizeof(TextVertex) * vertices.size();
+                createDeviceLocalBufferWithStaging(
+                    vertices.data(),
+                    bufferSize,
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                    text.vertexBuffer,
+                    text.vertexBufferMemory
+                );
+            }
+
+            texts_.push_back(text);
+        }
+    }
+
+    // Sprawdza, czy aktualna tresc etykiet wymaga nowych glifow, ktorych nie ma jeszcze w atlasie fontu.
+    [[nodiscard]] bool textLabelsNeedFontRebuild() const {
+        for (const auto& label : config_.textLabels) {
+            const FontGpuResources& font = requireFontByName(label.fontName);
+            for (std::uint32_t codepoint : utf8::decode(label.text)) {
+                if (codepoint == static_cast<std::uint32_t>('\r') || codepoint == static_cast<std::uint32_t>('\n')) {
+                    continue;
+                }
+                if (font.glyphs.find(codepoint) == font.glyphs.end()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Odtwarza cala warstwe tekstowa po pojawieniu sie nowych znakow, ktorych nie bylo w atlasie fontu.
+    void rebuildTextOverlayResources() {
+        vkDeviceWaitIdle(device_);
+
+        destroyTextBuffers();
+        if (textDescriptorPool_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(device_, textDescriptorPool_, nullptr);
+            textDescriptorPool_ = VK_NULL_HANDLE;
+        }
+        destroyFontResources();
+
+        createFontResources();
+        createTextDescriptorPool();
+        createTextDescriptorSets();
+        createTextBuffers();
+    }
+
+    // Odtwarza tylko bufory geometrii tekstu po zmianie tresci, gdy atlas glifow nadal jest wystarczajacy.
+    void rebuildTextBuffersOnly() {
+        vkDeviceWaitIdle(device_);
+        createTextBuffers();
+    }
+
+    // Aktualizuje dynamiczne etykiety tekstowe i przebudowuje atlas tylko wtedy, gdy pojawiaja sie nowe glify.
+    void updateDynamicTextOverlay(float elapsedSeconds) {
+        if (!config_.updateTextLabels) {
+            return;
+        }
+
+        config_.updateTextLabels(elapsedSeconds, swapChainExtent_.width, swapChainExtent_.height, config_.textLabels);
+        if (areTextLabelsEqual(config_.textLabels, lastTextLabels_)) {
+            return;
+        }
+
+        if (textLabelsNeedFontRebuild()) {
+            rebuildTextOverlayResources();
+        } else {
+            rebuildTextBuffersOnly();
+        }
+
+        lastTextLabels_ = config_.textLabels;
+    }
+
     // Wyznacza nazwe tekstury dla obiektu, korzystajac z lokalnego override'u albo globalnego fallbacku.
     [[nodiscard]] std::string resolveTextureName(const SceneObject& object) const {
         if (!object.textureName.empty()) {
@@ -1551,10 +2235,15 @@ private:
             vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
             pipelineLayout_ = VK_NULL_HANDLE;
         }
+        if (textPipelineLayout_ != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device_, textPipelineLayout_, nullptr);
+            textPipelineLayout_ = VK_NULL_HANDLE;
+        }
         createSwapChain();
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
+        createTextGraphicsPipeline();
         createDepthResources();
         createFramebuffers();
         imagesInFlight_.assign(swapChainImages_.size(), VK_NULL_HANDLE);
@@ -1676,6 +2365,46 @@ private:
             vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
         }
 
+        if (textGraphicsPipeline_ != VK_NULL_HANDLE) {
+            const std::array<float, 2> screenSize = {
+                static_cast<float>(swapChainExtent_.width),
+                static_cast<float>(swapChainExtent_.height),
+            };
+
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, textGraphicsPipeline_);
+            vkCmdPushConstants(
+                commandBuffer,
+                textPipelineLayout_,
+                VK_SHADER_STAGE_VERTEX_BIT,
+                0,
+                sizeof(screenSize),
+                screenSize.data()
+            );
+
+            for (const auto& text : texts_) {
+                if (text.vertexCount == 0) {
+                    continue;
+                }
+
+                const FontGpuResources& font = fonts_[text.fontIndex];
+                vkCmdBindDescriptorSets(
+                    commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    textPipelineLayout_,
+                    0,
+                    1,
+                    &font.descriptorSet,
+                    0,
+                    nullptr
+                );
+
+                const VkBuffer vertexBuffers[] = {text.vertexBuffer};
+                const VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+                vkCmdDraw(commandBuffer, text.vertexCount, 1, 0, 0);
+            }
+        }
+
         vkCmdEndRenderPass(commandBuffer);
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -1686,6 +2415,9 @@ private:
     // Realizuje pelny cykl pojedynczej klatki: acquire, update, submit i present.
     void drawFrame() {
         vkWaitForFences(device_, 1, &inFlightFences_[currentFrame_], VK_TRUE, std::numeric_limits<uint64_t>::max());
+
+        const float elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime_).count();
+        updateDynamicTextOverlay(elapsed);
 
         uint32_t imageIndex = 0;
         VkResult result = vkAcquireNextImageKHR(
