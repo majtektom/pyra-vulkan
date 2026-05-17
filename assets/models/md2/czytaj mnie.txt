@@ -1,0 +1,1 @@
+obazki do modeli nale¿y przekonwertowaæ do 24bit i odbiæ w pionie inaczej zle bêd¹ wczytowane albo zle pokryj¹ model

@@ -1,0 +1,15 @@
+MapVersion 1.0
+
+FOG_COLOR=VECTOR4(0.3,0.3,0.3,1.0)
+LIGHT_MODEL_AMBIEND=VECTOR4(0.1,0.1,0.1,1.0)
+
+HEIGHT_MAP
+{
+	terrain="..//dane//teren//demo//terrain.xml"
+}
+
+SKY_BOX
+{
+	directory="../dane/skybox/noc"
+	size=6500.0
+}

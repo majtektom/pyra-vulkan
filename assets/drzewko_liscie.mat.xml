@@ -1,0 +1,34 @@
+<Material version="1" name="drzewko_liscie">
+    <!--kolor materialu gdy brak oswietlenia-->
+    <color vector4="1. , 1. , 1. , 1." />
+    <!--unilateral- czy wielokaty nalezace do materialu sa jedno czy dwustronne true to jednostronny-->
+    <parametry unilateral="0" />
+    <!--czy obiekt jest oswietlony
+ColorMaterial - czy kolor materialu przy wlaczonym swietle definiuje kolor wierzcholka
+shininess - wspolczynnik odbicia-->
+    <Oswietlaj jest_oswietlone="0" ColorMaterial="0" />
+    <!--kolejne textury gdy sa-->
+    <Texture0 filename="..\dane\textury\LISCIE5.DDS" type="2D" />
+    <!--rodzaj gladkosci obiektu-->
+    <grading typ="SMOOTH" />
+    <!--czy dla obiektu mamy liczyc mgle-->
+    <Fog jest_mgla="1" typ="FOG_DEPTH">
+        <FogColor vector4="0.8000000119 , 0.8000000119 , 0.8000000119 , 1." />
+    </Fog>
+    <!--czy jest przezroczystosc-->
+    <Blend jest_blend="1" blendTyp="BLEND_ALPHA" alphaTest="0" />
+    <!--przechowuje stany poczszegolnych jednostek texturujacych 
+gdy ktorejs brak stosuje domyslne-->
+    <StageState0>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState0>
+    <StageState1>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState1>
+    <StageState2>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState2>
+    <StageState3>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState3>
+</Material>

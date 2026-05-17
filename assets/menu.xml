@@ -1,0 +1,53 @@
+<GUI>
+    <Menu audio>
+        <Go no efektw />
+        <Go no muzyki />
+        <Menu Audio />
+        <Wstecz />
+        <efekty />
+        <muzyka />
+    </Menu audio>
+    <Menu gwne>
+        <Koniec />
+        <Menu gwne />
+        <Nowa gra />
+        <Opcje audio />
+        <Opcje grafiki />
+        <Powrt do gry />
+    </Menu gwne>
+    <Nowa gra>
+        <Lista plikw />
+        <Menu Nowa gra />
+        <Wczytaj />
+        <Wstecz />
+    </Nowa gra>
+    <Opcje ekranu>
+        <FSAA />
+        <Gamma />
+        <Gbia kolorw />
+        <Jasno />
+        <Kontrast />
+        <Menu Opcje ekranu />
+        <Peny ekran? />
+        <Rozdzielczo />
+        <Synchronizacja pionowa />
+        <Wersja OpenGL: Vulkan 1.3
+Karta: Vulkan
+Producent:  />
+        <Wstecz />
+        <Zatwierd />
+        <con />
+        <fsaa />
+        <gamm />
+        <glebia />
+        <jas />
+        <roz />
+    </Opcje ekranu>
+    <Opcje grafiki>
+        <Opcje ekranu />
+        <Opcje grafiki />
+        <Shader />
+        <Wstecz />
+        <Zatwierd />
+    </Opcje grafiki>
+</GUI>

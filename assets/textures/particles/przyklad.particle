@@ -1,0 +1,104 @@
+ParticleSystem 1.0 "przyklad"
+
+/*opis
+system czasteczkowy zaczynamy od s³owa particles po którym jest string okreœlaj¹cy nazwê systemu
+mo¿ye byæ dowolna iloœæ systemów czastkowych( nie mo¿na ich zagnie¿d¿aæ)
+potem w klamrach {} mo¿na stosowaæ tokeny które s¹ poni¿ej
+
+real -> to liczba float albo wyrarzenie RealRandom(float,float)
+integer -> liczba calukowita lub wyrarzenie IntRandom(int,int)
+Mo¿na u¿ywaæ nastêpuj¹ce tokeny
+RealRandom(float,float)
+IntRandom(int,int)
+numparticles=int//ile czastek
+emitrate=int	//czêstoœæ emisji
+gravity=Vector(float,float,float) //wektor grawitacji
+texture =string //tekstura ca czastkach
+ZDAZENIA (bez zaznaczenia znacznikiem "at" ustawiaj¹ pocz¹tkow¹ wartoœæ czastki):
+	position=Vector(real,real,real) //pozycja uk³adu czastek
+	velocity=Vector(real,real,real) //prêdkoœæ cz¹stki
+	size=real // wielkoœæ cz¹stki
+	lifeTime=real // czas ¿ycia
+	mass=real	//masa czastek
+	color=Vector4(real,real,real,real) //kolor czastek
+
+at ->zdarzenie w okreslonym czasie (podajemy po nim w jakim czasie ¿ysia czastki ma byæ wywo³any, sposób u¿ycia:
+	at float zdazenie(któreœ z tych wy¿ej)
+fade <float> -> p³ynna zmiana do danego zdarzenia, podajemy go przed at gdy chcemy p³ynn¹ zmianê danego zdarzenia. Sk³adnia:
+fade <czas trwania zdarzenia> at ...
+*/
+/**/
+particles "snieg"
+{
+	numparticles=3100//ile czastek
+	emitrate=400		//czêstoœæ emisji
+	gravity=Vector(0.0,-5.0,1.0) //wektor grawitacji
+	texture ="..//dane//particles//particle.dds" //tekstura na czastkach
+	position=Vector(RealRandom(-10.0,10.0),RealRandom(0.0,100.0),RealRandom(-100.0,100.0)) //pozycja uk³adu czastek
+	velocity=Vector(RealRandom(-5.0,5.0),RealRandom(-8.0,0.0),RealRandom(-5.0,5.0)) //prêdkoœæ cz¹stki
+	size=RealRandom(0.04,0.2) // wielkoœæ cz¹stki
+	lifeTime=RealRandom(5.0,10.0)//// czas ¿ycia
+	mass=RealRandom(0.1,1.0)	//masa czastek
+	color=Vector4(1.0,1.0,1.0,RealRandom(0.3,1.0))//kolor czastek
+	
+}
+
+particles "ogien"
+{
+	numparticles=70000 //ile czastek
+	emitrate=15000		//czêstoœæ emisji
+	gravity=Vector(0.0,2.0,0.0) //wektor grawitacji
+	texture ="..//dane//particles//og.dds" //tekstura na czastkach
+	position=Vector(RealRandom(3.0,3.2),RealRandom(-2.2,-2.0),RealRandom(-5.2,-5.0)) //pozycja uk³adu czastek
+	velocity=Vector(RealRandom(-2.3,-2.2),0.0,RealRandom(-0.1,0.1)) //prêdkoœæ cz¹stki
+	size=0.06 // wielkoœæ cz¹stki
+	lifeTime=RealRandom(2.5,5.0)//// czas ¿ycia
+	mass=RealRandom(1.5,1.6)	//masa czastek
+	color=Vector4(0.1,0.1,1.0,RealRandom(0.2,0.9))//kolor czastek
+	fade 1.0 at 0.3 color=Vector4(1.0,0.0,0.0,0.7)
+	fade 2.5 at 1.0 color=Vector4(1.0,1.0,0.0,0.5)
+	fade 1.3 at 1.0 mass=RealRandom(-0.4,0.1)
+	fade 1.6 at 1.3 mass=RealRandom(-1.3,-0.8)
+	fade 1.0 at 1.6 mass=RealRandom(-2.8,-1.7)
+	fade 3.0 at 2.5 size=0.01
+
+	
+}
+
+particles "ogien1"
+{
+	numparticles=2000 //ile czastek
+	emitrate=1100		//czêstoœæ emisji
+	gravity=Vector(0.0,1.0,0.0) //wektor grawitacji
+	texture ="..//dane//particles//og.dds" //tekstura na czastkach
+	position=Vector(-2.2,-2.0,-5.0) //pozycja uk³adu czastek
+	velocity=Vector(RealRandom(-0.2,0.2),0.0,RealRandom(-0.2,0.2)) //prêdkoœæ cz¹stki
+	size=0.05 // wielkoœæ cz¹stki
+	lifeTime=RealRandom(1.0,2.0)//// czas ¿ycia
+	mass=RealRandom(0.3,2.0)	//masa czastek
+	color=Vector4(0.1,0.1,1.0,RealRandom(0.2,0.9))//kolor czastek
+	fade 0.3 at 0.01 color=Vector4(1.0,0.0,0.0,0.7)
+	fade 0.5 at 0.3 color=Vector4(1.0,1.0,0.0,0.5)
+	fade 2.0 at 1.0 size=0.005
+	
+} 
+particles "prz"
+{
+	numparticles=500 //ile czastek
+	emitrate=100		//czêstoœæ emisji
+	gravity=Vector(0.0,-1.0,0.0) //wektor grawitacji
+	texture ="..//dane//particles//particle.dds" //tekstura na czastkach
+	position=Vector(RealRandom(-3.0,3.0),RealRandom(-3.0,3.0),RealRandom(-10.0,10.0)) //pozycja uk³adu czastek
+	velocity=Vector(0.0,0.0,0.0) //prêdkoœæ cz¹stki
+	size=0.01 // wielkoœæ cz¹stki
+	lifeTime=RealRandom(5.0,7.0)//// czas ¿ycia
+	mass=0.0	//masa czastek
+	color=Vector4(RealRandom(0.01,0.99),RealRandom(0.01,0.99),RealRandom(0.01,0.99),1.0)//kolor czastek
+	fade 1.5 at 0.5 size=0.1
+	fade 1.5 at 2.6 size=0.01
+	fade 1.2 at 0.6 color=Vector4(RealRandom(0.01,0.99),RealRandom(0.01,0.99),RealRandom(0.01,0.99),1.0)
+	fade 1.2 at 2.7 color=Vector4(1.0,0.0,0.0,1.0)
+	at 4.0 mass=1.0
+	
+}/*
+*/

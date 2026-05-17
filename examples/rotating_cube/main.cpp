@@ -1,0 +1,104 @@
+#include "engine/Engine.hpp"
+
+#include <string>
+#include <utility>
+
+int main() {
+    // Przyklad tworzy kilka kostek, aby pokazac jednoczesna obsluge wielu tekstur i obiektow sceny.
+    engine3d::AppConfig config;
+    config.windowTitle = "engine3d: rotating cube";
+
+    // Shader programu definiuje sposob transformacji wierzcholkow i probkowania tekstur na kostce.
+    config.shaderManifest.entries = {
+        {
+            "default",
+            {
+                std::string(EXAMPLE_SHADER_DIR) + "/cube.vert.spv",
+                std::string(EXAMPLE_SHADER_DIR) + "/cube.frag.spv",
+            },
+        },
+    };
+
+    // Kazda nazwa logiczna wskazuje inny plik tekstury, dzieki czemu obiekty moga wybierac asset po nazwie.
+    config.textures = {
+        {"bmp_metal", "assets/textures/metal.bmp"},
+        {"tga_cactus", "assets/sprite/cactus.tga"},
+        {"dds_metal", "assets/textures/drewno.dds"},
+    };
+
+    // Kamera jest bardziej oddalona niz w trojkacie, bo scena zawiera kilka kostek obok siebie.
+    config.camera.position = {0.0f, 0.0f, 5.5f};
+
+    // Jedna siatka kostki jest wspoldzielona przez wszystkie obiekty sceny.
+    config.meshes = {
+        {
+            "cube",
+            {
+                {
+                    {{{-0.75f, -0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+                    {{{0.75f, -0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+                    {{{0.75f, 0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+                    {{{-0.75f, 0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+
+                    {{{0.75f, -0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+                    {{{-0.75f, -0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+                    {{{-0.75f, 0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+                    {{{0.75f, 0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+
+                    {{{-0.75f, -0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+                    {{{-0.75f, -0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+                    {{{-0.75f, 0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+                    {{{-0.75f, 0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+
+                    {{{0.75f, -0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+                    {{{0.75f, -0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+                    {{{0.75f, 0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+                    {{{0.75f, 0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+
+                    {{{-0.75f, 0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+                    {{{0.75f, 0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+                    {{{0.75f, 0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+                    {{{-0.75f, 0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+
+                    {{{-0.75f, -0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+                    {{{0.75f, -0.75f, -0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+                    {{{0.75f, -0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+                    {{{-0.75f, -0.75f, 0.75f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+                },
+                {
+                    0, 1, 2, 2, 3, 0,
+                    4, 5, 6, 6, 7, 4,
+                    8, 9, 10, 10, 11, 8,
+                    12, 13, 14, 14, 15, 12,
+                    16, 17, 18, 18, 19, 16,
+                    20, 21, 22, 22, 23, 20,
+                },
+            },
+        },
+    };
+
+    // Scene objects korzystaja z tej samej geometrii, ale kazdy wybiera inna teksture i inny ruch.
+    config.sceneObjects = {
+        engine3d::SceneObject{
+            "cube",
+            "bmp_metal",
+            engine3d::Transform{{-2.2f, 0.0f, 0.0f}, {}, {0.8f, 0.8f, 0.8f}},
+            {0.65f, 1.0f, 0.0f},
+        },
+        engine3d::SceneObject{
+            "cube",
+            "tga_cactus",
+            engine3d::Transform{{-1.1f, 0.0f, 0.0f}, {}, {1.0f, 1.0f, 1.0f}},
+            {0.0f, -1.2f, 0.4f},
+        },
+        engine3d::SceneObject{
+            "cube",
+            "dds_metal",
+            engine3d::Transform{{2.2f, 0.0f, 0.0f}, {}, {0.8f, 0.8f, 0.8f}},
+            {0.3f, 0.9f, -0.5f},
+        },
+    };
+
+    // Uruchamiamy silnik z gotowa scena demonstracyjna.
+    return engine3d::runEngine(std::move(config));
+}

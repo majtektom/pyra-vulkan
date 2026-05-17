@@ -1,0 +1,35 @@
+MapVersion 1.0
+
+FOG_COLOR=VECTOR4(0.8,0.8,0.8,1.0)
+
+HEIGHT_MAP
+{
+	heightMap="..//dane//teren//teren.bmp"
+	textureLow="..//dane//teren//terrain.bmp"
+	textureHigh="..//dane//teren//piasek.bmp"
+	scaleMap	=10	//int
+	scaleHeight	=1.0	//float
+	scaletextureLow	=1	//int
+	scaletextureHigh=100	//int
+}
+
+SKY_BOX
+{
+	directory="../dane/skybox/dzien"
+	size=6500.0
+}
+
+MD2
+{
+	modelfile="brak"
+	texture="brak"
+	textureDot3="brak"
+	Vshader="b"
+	Pshader="b"
+	position=VECTOR3(0.0,0.0,0.0)
+}
+
+SPRITE
+{
+	position=VECTOR3(0.0,0.0,0.0)	
+}

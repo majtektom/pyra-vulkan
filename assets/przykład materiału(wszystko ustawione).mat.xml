@@ -1,0 +1,86 @@
+<Material version="1.0" name="woda">
+    <!--tu jest program shader-->
+    <ProgramShader>
+        <ProgramVertex filename="../dane/shader/woda/woda.vert" />
+        <ProgramFragment filename="../dane/shader/woda/woda.frag" />
+    </ProgramShader>
+    <!--kolor materialu gdy brak oswietlenia-->
+    <color vector4="0. , 0. , 0. , 0." />
+    <!--unilateral- czy wielokaty nalezace do materialu sa jedno czy dwustronne true to jednostronny-->
+    <parametry unilateral="0" />
+    <!--czy obiekt jest oswietlony
+ColorMaterial - czy kolor materialu przy wlaczonym swietle definiuje kolor wierzcholka
+shininess - wspolczynnik odbicia-->
+    <Oswietlaj jest_oswietlone="1" ColorMaterial="0">
+        <ambientColor vector4="1. , 1. , 1. , 1." />
+        <diffuseColor vector4="1. , 1. , 1. , 1." />
+        <specularcolor vector4="1. , 1. , 1. , 1." />
+        <emissioncolor vector4="0. , 0. , 0. , 0." />
+        <shininess value="20" />
+    </Oswietlaj>
+    <!--kolejne textury gdy sa-->
+    <Texture0 filename="../dane/woda/texture.dds" type="2D" />
+    <!--rodzaj gladkosci obiektu-->
+    <grading typ="SMOOTH" />
+    <!--czy dla obiektu mamy liczyc mgle-->
+    <Fog jest_mgla="1" typ="FOG_DEPTH">
+        <FogColor vector4="0.8000000119 , 0.8000000119 , 0.8000000119 , 1." />
+    </Fog>
+    <!--czy jest przezroczystosc-->
+    <Blend jest_blend="1" blendTyp="BLEND_MIXCOLOR" alphaTest="0.000000" />
+    <!--przechowuje stany poczszegolnych jednostek texturujacych 
+gdy ktorejs brak stosuje domyslne-->
+   
+	<StageState0>
+        <generateCoordTexture typegen="GEN_OBJECT_LINEAR" generateS="1" generateT="1" generateR="0" generateQ="0">
+            <GenVector gen="GEN_S" vector4="0. , 0. , 1. , 0." />
+            <GenVector gen="GEN_T" vector4="0. , 0. , 1. , 0." />
+        </generateCoordTexture>
+        <SetTextureStageState pname="ENV_COMBINE_RGB" argument="ENVC_DOT3_RGBA" />
+        <SetTextureStageState pname="ENV_SOURCE0_RGB" argument="ENVS_TEXTURE" />
+        <SetTextureStageState pname="ENV_SOURCE1_RGB" argument="ENVS_PRIMARY_COLOR" />
+        <SetTextureStageState pname="ENV_OPERAND0_RGB" argument="ENVO_SRC_COLOR" />
+        <SetTextureStageState pname="ENV_OPERAND1_RGB" argument="ENVO_SRC_COLOR" />
+    </StageState0>
+    <StageState1>
+        <SetTextureStageState pname="ENV_COMBINE_RGB" argument="ENVC_MODULATE" />
+        <SetTextureStageState pname="ENV_SOURCE0_RGB" argument="ENVS_PREVIOUS" />
+        <SetTextureStageState pname="ENV_SOURCE1_RGB" argument="ENVS_TEXTURE" />
+        <SetTextureStageState pname="ENV_OPERAND0_RGB" argument="ENVO_SRC_ALPHA" />
+        <SetTextureStageState pname="ENV_OPERAND1_RGB" argument="ENVO_SRC_COLOR" />
+    </StageState1>
+    <StageState2>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState2>
+    <StageState3>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState3>
+	<!-- bufor g³ebi  
+	test->czy w³¹czany
+	mask-> zapisywanie do bufora g³êbi(domyœlnie w³¹czone)
+	func-> BUF_NEVER,BUF_ALWAYS,BUF_LESS,BUF_LEQUAL,BUF_EQUAL,BUF_GEQUAL,BUF_GREATER,BUF_NOTEQUAL	-->
+	<Depth_buffer test="1" mask="1" func="BUF_LESS"/>
+	<!-- bufor kolorów
+	mask->zapisywanie do bufora kolorów	-->
+	<Color_buffer mask="1" />
+	 <!-- bufor szablonowy
+	 test-> czy w³¹czony
+	 _mask->zapisywanie do bufora szablonowego
+	 func->BUF_NEVER,BUF_ALWAYS,BUF_LESS,BUF_LEQUAL,BUF_EQUAL,BUF_GEQUAL,BUF_GREATER,BUF_NOTEQUAL
+	 ref_func-> int -wartoœæ referencyjna do testów szablonowych
+	mask_func-> unsigned int- maska do testów szablonowych	 -->
+	<Stencil_buffer test="0" mask="1" func="BUF_LESS" ref_func="1" mask_func="1">
+		<!-- jakzmieniaæ wartoœæ bufora szablonowego
+		STENCIL_KEEP,STENCIL_ZERO,STENCIL_REPLACE,STENCIL_INCR,STENCIL_DECR,
+		STENCIL_INVERT,STENCIL_INCR_WRAP,STENCIL_DECR_WRAP  
+		sfail->  gdy test szablonu zakoñczy siê niepowodzeniem
+		zfail-> gdy test g³êbi zakoñczy siê niepowodzeniem
+		zpass-> gdy test g³êbi zakoñczy sie powodzeniem-->
+		<Op sfail="STENCIL_REPLACE" zfail="STENCIL_KEEP" zpass="STENCIL_KEEP" />
+	</Stencil_buffer>
+	<!--offset trujk¹tów 
+	parametry przesuniêcia (przesuniecie=(m*factor)+(r*units))
+	factor- wspó³czynnik skalowania (domyœlnie 0.0)
+	units- przesuniêcie o podan¹ wartoœæ --> 
+	<Polygon_offset jest_offset="0" factor="0.0" units="0.0" />
+</Material>

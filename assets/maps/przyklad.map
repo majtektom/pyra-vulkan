@@ -1,0 +1,24 @@
+MapVersion 1.0
+
+FOG_COLOR=VECTOR4(0.7,0.7,0.7,1.0)
+LIGHT_MODEL_AMBIEND=VECTOR4(0.3,0.3,0.3,1.0)
+CAMERA
+{
+	position=VECTOR3(300.0,100.0,720.0)
+	lookAt=VECTOR3(4000.0,300.0,4000.0)
+
+}
+
+HEIGHT_MAP
+{
+	terrain="..//dane//teren//przyklad//terrain.xml"
+}
+
+SKY_BOX
+{
+	directory="../dane/skybox/dzien"
+	size=6500.0
+}
+
+
+

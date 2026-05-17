@@ -1,0 +1,19 @@
+<Terrain version="1.0" name="teren">
+	<heightMap filename="..//dane//teren//demo//height.bmp" />
+	<material filename="..//dane//teren//demo//material.mat.xml" />
+	<Scale scaleMap	="10" scaleHeight="2.0" scaletextureLow	="1" scaletextureHigh="400" />
+	<Layers>
+<!---->		<Layer mask="..//dane//teren//demo//m1.dds" texture="..//dane//textury//piasek.bmp" />
+		<Layer mask="..//dane//teren//demo//m2.dds" texture="..//dane//textury//piasek.bmp" />
+		<Layer mask="..//dane//teren//demo//m3.dds" texture="..//dane//textury//piasek.bmp" />
+		<Layer mask="..//dane//teren//demo//m4.dds" texture="..//dane//textury//drewno.dds" />
+		<Layer mask="..//dane//teren//demo//m5.dds" texture="..//dane//textury//drewno.dds" />
+		<Layer mask="..//dane//teren//demo//m6.dds" texture="..//dane//textury//piasek.bmp" />
+		<Layer mask="..//dane//teren//demo//m7.dds" texture="..//dane//textury//grass.dds" />
+		<Layer mask="..//dane//teren//demo//m8.dds" texture="..//dane//textury//piasek.bmp" />
+		<Layer mask="..//dane//teren//demo//m9.dds" texture="..//dane//textury//metal.bmp" />
+		<Layer mask="..//dane//teren//demo//m10.dds" texture="..//dane//textury//sand.bmp" />
+		<Layer mask="..//dane//teren//demo//m11.dds" texture="..//dane//textury//sand.bmp" />
+		<Layer mask="..//dane//teren//demo//m12.dds" texture="..//dane//textury//piasek.dds" />
+	</Layers>
+</Terrain>

@@ -1,0 +1,21 @@
+MapVersion 1.0
+
+FOG_COLOR=VECTOR4(0.8,0.8,0.8,1.0)
+
+HEIGHT_MAP
+{
+	heightMap="..//dane//teren//przyk.bmp"
+	textureLow="..//dane//teren//kobieta.bmp"
+	textureHigh="..//dane//teren//cegla.bmp"
+	scaleMap	=10	//int
+	scaleHeight	=1.0	//float
+	scaletextureLow	=1	//int
+	scaletextureHigh=100	//int
+}
+
+SKY_BOX
+{
+	directory="../dane/skybox/dzien"
+	size=6500.0
+
+}

@@ -1,0 +1,18 @@
+MapVersion 1.0
+HEIGHT_MAP
+{
+	heightMap=GENERATE_PLASMA
+	textureLow="../dane//teren//terrain.bmp"
+	textureHigh="..//dane//teren//trawa.dds"
+	scaleMap	=10	//int
+	scaleHeight	=2.0	//float
+	scaletextureLow	=1	//int
+	scaletextureHigh=500	//int
+}
+
+SKY_BOX
+{
+	directory="../dane/skybox/dzien"
+	size=6500.0
+}
+

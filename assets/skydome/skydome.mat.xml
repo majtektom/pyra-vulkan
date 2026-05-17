@@ -1,0 +1,46 @@
+<Material version="1.0" name="niebo">
+    <!--tu jest program shader-->
+      <ProgramShader>
+	    <ProgramVertex filename="../dane/skydome/sky.vert" />
+		<ProgramFragment filename="../dane/skydome/sky.frag" />
+    </ProgramShader>
+    <!--kolor materialu gdy brak oswietlenia-->
+    <color vector4="1. , 1. , 1. , 1." />
+    <!--unilateral- czy wielokaty nalezace do materialu sa jedno czy dwustronne true to jednostronny-->
+    <parametry unilateral="1" />
+    <!--czy obiekt jest oswietlony
+ColorMaterial - czy kolor materialu przy wlaczonym swietle definiuje kolor wierzcholka
+shininess - wspolczynnik odbicia-->
+    <Oswietlaj jest_oswietlone="0" ColorMaterial="0">
+        <ambientColor vector4="1. , 1. , 1. , 1." />
+        <diffuseColor vector4="1. , 1. , 1. , 1." />
+        <specularcolor vector4="1. , 1. , 1. , 1." />
+        <emissioncolor vector4="0. , 0. , 0. , 0." />
+        <shininess value="20" />
+    </Oswietlaj>
+    <!--kolejne textury gdy sa-->
+    <Texture0 filename="../dane/skydome/cloud.bmp" type="2D" />
+	<Texture1 filename="../dane/skydome/cloud.bmp" type="2D" />
+    <!--rodzaj gladkosci obiektu-->
+    <grading typ="SMOOTH" />
+    <!--czy dla obiektu mamy liczyc mgle-->
+    <Fog jest_mgla="0" typ="FOG_DEPTH">
+        <FogColor vector4="0.8000000119 , 0.8000000119 , 0.8000000119 , 1." />
+    </Fog>
+    <!--czy jest przezroczystosc-->
+    <Blend jest_blend="0" blendTyp="BLEND_MIXCOLOR" alphaTest="0.000000" />
+    <!--przechowuje stany poczszegolnych jednostek texturujacych 
+gdy ktorejs brak stosuje domyslne-->
+    <StageState0>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState0>
+    <StageState1>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState1>
+    <StageState2>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState2>
+    <StageState3>
+        <SetTextureStageState pname="ENV_TEXTURE_MODE" argument="ENVM_MODULATE" />
+    </StageState3>
+</Material>
