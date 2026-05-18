@@ -5,10 +5,13 @@
 #include "FontAtlasLoader.hpp"
 #include "Utf8.hpp"
 #include "TextureAssetLoader.hpp"
+#include "VulkanUtil.hpp"
 #include "X11Window.hpp"
 
 #include "engine/FontManager.hpp"
 #include "engine/ShaderManager.hpp"
+#include "engine/GridRenderer.hpp"
+#include "engine/SkyboxRenderer.hpp"
 #include "engine/TextureManager.hpp"
 
 #include <X11/Xlib.h>
@@ -273,6 +276,9 @@ private:
     bool enableValidationLayers_ = false;
     std::chrono::steady_clock::time_point startTime_{};
 
+    GridRenderer gridRenderer_;
+    SkyboxRenderer skyboxRenderer_;
+
     // Tworzy natywne okno X11, do ktorego Vulkan bedzie prezentowal gotowe klatki.
     void initWindow() {
         // Sam renderer nie zna szczegolow tworzenia okna - deleguje to do osobnej klasy backendu okienkowego.
@@ -306,6 +312,8 @@ private:
         createTextDescriptorSets();
         createTextBuffers();
         lastTextLabels_ = config_.textLabels;
+        initGridRenderer();
+        initSkyboxRenderer();
         createCommandBuffers();
         createSyncObjects();
         // Zapisujemy moment startu, aby animacje mogly bazowac na czasie od uruchomienia programu.
@@ -366,12 +374,33 @@ private:
 
     // Petla glowna odswieza zdarzenia oraz renderuje kolejne klatki az do zamkniecia okna.
     void mainLoop() {
+        // Przejmujemy kursor jesli skonfigurowano interaktywna petle (onUpdate).
+        bool grabbed = false;
+        if (config_.onUpdate) {
+            window_->grabPointer(true);
+            grabbed = true;
+        }
+        auto lastTime = std::chrono::steady_clock::now();
         while (!window_->shouldClose()) {
             processEvents();
             if (window_->shouldClose()) {
                 break;
             }
+
+            const auto now = std::chrono::steady_clock::now();
+            const float deltaTime = std::chrono::duration<float>(now - lastTime).count();
+            lastTime = now;
+
+            config_.input = window_->pollInput().toInputState();
+            if (config_.onUpdate) {
+                config_.onUpdate(deltaTime, config_);
+            }
+
             drawFrame();
+        }
+
+        if (grabbed) {
+            window_->grabPointer(false);
         }
 
         // Przed wyjsciem czekamy, az GPU skonczy prace, aby niczego nie zniszczyc za wczesnie.
@@ -414,6 +443,8 @@ private:
             vkDestroyPipeline(device_, textGraphicsPipeline_, nullptr);
             textGraphicsPipeline_ = VK_NULL_HANDLE;
         }
+        gridRenderer_.cleanup(device_);
+        skyboxRenderer_.cleanup(device_);
         if (renderPass_ != VK_NULL_HANDLE) {
             vkDestroyRenderPass(device_, renderPass_, nullptr);
             renderPass_ = VK_NULL_HANDLE;
@@ -490,6 +521,9 @@ private:
 
             destroyTextBuffers();
             destroyFontResources();
+
+            gridRenderer_.cleanup(device_);
+            skyboxRenderer_.cleanup(device_);
 
             if (descriptorSetLayout_ != VK_NULL_HANDLE) {
                 vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
@@ -574,6 +608,30 @@ private:
 
         fonts_.clear();
         fontLookup_.clear();
+    }
+
+    // Inicjalizuje GridRenderer: tworzy pipeline, layout i bufor wierzcholkow siatki.
+    void initGridRenderer() {
+        gridRenderer_.init(
+            device_, physicalDevice_, renderPass_, descriptorSetLayout_,
+            commandPool_, graphicsQueue_, swapChainExtent_,
+            config_.grid,
+            std::string(ENGINE_GRID_SHADER_DIR)
+        );
+    }
+
+    // Inicjalizuje SkyboxRenderer: tworzy pipeline i geometrie.
+    // Deskryptory tekstur sa przekazywane w recordCommandBuffer (per-frame),
+    // poniewaz kazda klatka ma wlasny UBO, a skybox potrzebuje biezacego.
+    void initSkyboxRenderer() {
+        if (!config_.skybox.enabled) return;
+
+        skyboxRenderer_.init(
+            device_, physicalDevice_, renderPass_, descriptorSetLayout_,
+            commandPool_, graphicsQueue_, swapChainExtent_,
+            config_.skybox,
+            std::string(ENGINE_SKYBOX_SHADER_DIR)
+        );
     }
 
     // Wczytuje caly plik binarny do pamieci, np. skompilowany shader SPIR-V.
@@ -1113,13 +1171,13 @@ private:
         vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
         vertShaderStageInfo.module = vertShaderModule;
-        vertShaderStageInfo.pName = "main";
+        vertShaderStageInfo.pName = "vertexMain";
 
         VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
         fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         fragShaderStageInfo.module = fragShaderModule;
-        fragShaderStageInfo.pName = "main";
+        fragShaderStageInfo.pName = "fragmentMain";
 
         const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
             vertShaderStageInfo,
@@ -1233,7 +1291,8 @@ private:
         vkDestroyShaderModule(device_, vertShaderModule, nullptr);
     }
 
-    // Tworzy framebuffer dla kazdego obrazu swapchaina, dolaczajac tez wspolny bufor glebokosci.
+    // Tworzy pipeline do rysowania linii siatki Grid.
+
     void createFramebuffers() {
         swapChainFramebuffers_.resize(swapChainImageViews_.size());
 
@@ -1832,6 +1891,7 @@ private:
     void createTextureFromData(const std::string& name, const TextureUploadData& textureData) {
         TextureGpuResources texture{};
         texture.name = name;
+        const bool isSkyboxTexture = name == "skybox_fb" || name == "skybox_lr" || name == "skybox_top";
 
         requireTextureFormatSupport(textureData.format);
 
@@ -1871,23 +1931,12 @@ private:
         texture.imageView = createImageView(texture.image, textureData.format, VK_IMAGE_ASPECT_COLOR_BIT, textureData.mipLevels);
 
         // Sampler opisuje, jak odczytywac teksture w shaderze.
-        VkSamplerCreateInfo samplerInfo{};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.anisotropyEnable = VK_FALSE;
-        samplerInfo.maxAnisotropy = 1.0f;
-        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-        samplerInfo.unnormalizedCoordinates = VK_FALSE;
-        samplerInfo.compareEnable = VK_FALSE;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.maxLod = static_cast<float>(textureData.mipLevels);
-
-        if (vkCreateSampler(device_, &samplerInfo, nullptr, &texture.sampler) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create texture sampler");
+        if (isSkyboxTexture) {
+            texture.sampler = vk::createClampSampler(device_);
+        } else if (textureData.mirroredRepeat) {
+            texture.sampler = vk::createMirrorRepeatSampler(device_, textureData.mipLevels);
+        } else {
+            texture.sampler = vk::createTextureSampler(device_, textureData.mipLevels);
         }
 
         vkDestroyBuffer(device_, stagingBuffer, nullptr);
@@ -1911,7 +1960,8 @@ private:
 
         for (const auto& textureAsset : config_.textures) {
             const TextureAsset& resolvedTexture = textureManager_->require(textureAsset.name);
-            const TextureUploadData textureData = TextureAssetLoader::load(resolvedTexture.path);
+            TextureUploadData textureData = TextureAssetLoader::load(resolvedTexture.path);
+            textureData.mirroredRepeat = resolvedTexture.mirroredRepeat;
             createTextureFromData(resolvedTexture.name, textureData);
         }
     }
@@ -2246,6 +2296,8 @@ private:
         createTextGraphicsPipeline();
         createDepthResources();
         createFramebuffers();
+        initGridRenderer();
+        initSkyboxRenderer();
         imagesInFlight_.assign(swapChainImages_.size(), VK_NULL_HANDLE);
     }
 
@@ -2330,6 +2382,40 @@ private:
 
         // Od tego miejsca wszystkie polecenia trafiaja do glownego render passu.
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        // Skybox: renderowany pierwszy (depth LEQUAL, bez zapisu depth, zawsze w tle).
+        // Kazda klatka ma wlasny UBO, wiec pobieramy deskryptory z biezacej klatki.
+        if (skyboxRenderer_.isReady() && skyboxRenderer_.isEnabled()) {
+            const std::string faceTexNames[3] = {"skybox_fb", "skybox_lr", "skybox_top"};
+            std::array<VkDescriptorSet, 3> frameFaceSets = {
+                descriptorSetsByTexture_[0][frameIndex],
+                descriptorSetsByTexture_[0][frameIndex],
+                descriptorSetsByTexture_[0][frameIndex],
+            };
+            for (int ti = 0; ti < 3; ++ti) {
+                const auto it = textureLookup_.find(faceTexNames[ti]);
+                if (it != textureLookup_.end() && it->second < descriptorSetsByTexture_.size()) {
+                    frameFaceSets[ti] = descriptorSetsByTexture_[it->second][frameIndex];
+                }
+            }
+            skyboxRenderer_.setEnabled(config_.skybox.enabled);
+            skyboxRenderer_.recordDrawCommands(
+                commandBuffer,
+                skyboxRenderer_.getPipelineLayout(),
+                config_.camera.position,
+                frameFaceSets
+            );
+        }
+
+        // Grid: renderowany po skyboxie, przed obiektami sceny.
+        if (gridRenderer_.isReady() && gridRenderer_.isEnabled()) {
+            VkDescriptorSet gridDescSet = VK_NULL_HANDLE;
+            if (!descriptorSetsByTexture_.empty()) {
+                gridDescSet = descriptorSetsByTexture_[0][frameIndex];
+            }
+            gridRenderer_.recordDrawCommands(commandBuffer, gridRenderer_.getPipelineLayout(), gridDescSet, 0);
+        }
+
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
         for (const auto& object : config_.sceneObjects) {
             // Kazdy obiekt moze miec inna teksture, ale korzystac z tej samej geometrii i pipeline'u.

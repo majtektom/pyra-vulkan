@@ -16,6 +16,7 @@ struct TextureUploadData {
     VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
     std::vector<std::uint8_t> pixelBytes;
     std::vector<VkBufferImageCopy> copyRegions;
+    bool mirroredRepeat = false;
 };
 
 // Dekoder assetow tekstur oddzielony od renderera, aby latwiej bylo go rozwijac i tlumaczyc.

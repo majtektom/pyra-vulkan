@@ -1,4 +1,8 @@
-add_shader_bundle(rotating_cube cube.vert cube.frag)
+add_shader_bundle(
+    rotating_cube
+    cube.vert.hlsl=cube.hlsl@vertexMain
+    cube.frag.hlsl=cube.hlsl@fragmentMain
+)
 
 add_executable(rotating_cube_example
     main.cpp

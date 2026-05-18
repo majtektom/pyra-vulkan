@@ -1,2 +1,3 @@
 add_subdirectory(rotating_triangle)
 add_subdirectory(rotating_cube)
+add_subdirectory(flyaround)

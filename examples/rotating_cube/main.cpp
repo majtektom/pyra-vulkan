@@ -16,6 +16,8 @@ int main() {
             {
                 std::string(EXAMPLE_SHADER_DIR) + "/cube.vert.spv",
                 std::string(EXAMPLE_SHADER_DIR) + "/cube.frag.spv",
+                "vertexMain",
+                "fragmentMain",
             },
         },
     };
@@ -123,7 +125,7 @@ int main() {
         engine3d::SceneObject{
             "cube",
             "tga_cactus",
-            engine3d::Transform{{-1.1f, 0.0f, 0.0f}, {}, {1.0f, 1.0f, 1.0f}},
+            engine3d::Transform{{0.0f, 0.0f, 0.0f}, {}, {1.0f, 1.0f, 1.0f}},
             {0.0f, -1.2f, 0.4f},
         },
         engine3d::SceneObject{

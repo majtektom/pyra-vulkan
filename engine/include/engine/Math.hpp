@@ -12,6 +12,13 @@ struct Vec3 {
     float z = 0.0f;
 };
 
+struct Quaternion {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 1.0f;
+};
+
 // Macierz 4x4 w ukladzie zgodnym z tym, czego oczekuja shadery Vulkan.
 struct Matrix4 {
     alignas(16) std::array<float, 16> values{};
@@ -32,6 +39,14 @@ struct Matrix4 {
 // Odejmowanie wektorow daje wektor od punktu right do punktu left.
 [[nodiscard]] inline Vec3 subtract(const Vec3& left, const Vec3& right) {
     return {left.x - right.x, left.y - right.y, left.z - right.z};
+}
+
+[[nodiscard]] inline Vec3 add(const Vec3& left, const Vec3& right) {
+    return {left.x + right.x, left.y + right.y, left.z + right.z};
+}
+
+[[nodiscard]] inline Vec3 multiply(const Vec3& vec, float scalar) {
+    return {vec.x * scalar, vec.y * scalar, vec.z * scalar};
 }
 
 // Iloczyn skalarny przydaje sie m.in. do projekcji i liczenia dlugosci wektora.
@@ -55,6 +70,60 @@ struct Matrix4 {
         return {0.0f, 0.0f, 0.0f};
     }
     return {vector.x / length, vector.y / length, vector.z / length};
+}
+
+[[nodiscard]] inline float radians(float degrees) {
+    return degrees * 3.1415926535f / 180.0f;
+}
+
+[[nodiscard]] inline Quaternion normalize(const Quaternion& quaternion) {
+    const float length = std::sqrt(
+        quaternion.x * quaternion.x +
+        quaternion.y * quaternion.y +
+        quaternion.z * quaternion.z +
+        quaternion.w * quaternion.w
+    );
+    if (length == 0.0f) {
+        return {};
+    }
+
+    return {
+        quaternion.x / length,
+        quaternion.y / length,
+        quaternion.z / length,
+        quaternion.w / length,
+    };
+}
+
+[[nodiscard]] inline Quaternion conjugate(const Quaternion& quaternion) {
+    return {-quaternion.x, -quaternion.y, -quaternion.z, quaternion.w};
+}
+
+[[nodiscard]] inline Quaternion multiply(const Quaternion& left, const Quaternion& right) {
+    return {
+        left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
+        left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
+        left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w,
+        left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
+    };
+}
+
+[[nodiscard]] inline Quaternion quaternionFromAxisAngle(const Vec3& axis, float angleRadians) {
+    const Vec3 unitAxis = normalize(axis);
+    const float halfAngle = angleRadians * 0.5f;
+    const float sine = std::sin(halfAngle);
+    return normalize({
+        unitAxis.x * sine,
+        unitAxis.y * sine,
+        unitAxis.z * sine,
+        std::cos(halfAngle),
+    });
+}
+
+[[nodiscard]] inline Vec3 rotateVector(const Quaternion& rotation, const Vec3& vector) {
+    const Quaternion vectorQuaternion{vector.x, vector.y, vector.z, 0.0f};
+    const Quaternion rotated = multiply(multiply(rotation, vectorQuaternion), conjugate(rotation));
+    return {rotated.x, rotated.y, rotated.z};
 }
 
 // Mnozy dwie macierze 4x4, aby laczyc kolejne transformacje w jedna.
@@ -159,6 +228,14 @@ struct Matrix4 {
         -dot(side, eye), -dot(upVector, eye), dot(forward, eye), 1.0f,
     };
     return matrix;
+}
+
+[[nodiscard]] inline Matrix4 removeTranslation(const Matrix4& matrix) {
+    Matrix4 result = matrix;
+    result.values[12] = 0.0f;
+    result.values[13] = 0.0f;
+    result.values[14] = 0.0f;
+    return result;
 }
 
 }  // namespace engine3d

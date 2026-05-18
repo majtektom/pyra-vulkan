@@ -3,6 +3,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 
+#include <cstring>
 #include <stdexcept>
 
 namespace engine3d {
@@ -35,8 +36,12 @@ X11Window::X11Window(const std::string& title, uint32_t width, uint32_t height)
         throw std::runtime_error("failed to create X11 window");
     }
 
-    // Rejestrujemy zdarzenia potrzebne do zamykania, resize i obslugi Escape.
-    XSelectInput(display, window, ExposureMask | StructureNotifyMask | KeyPressMask);
+// Rejestrujemy zdarzenia potrzebne do zamykania, resize i obslugi Escape.
+    XSelectInput(display, window,
+        ExposureMask | StructureNotifyMask |
+        KeyPressMask | KeyReleaseMask |
+        ButtonPressMask | ButtonReleaseMask |
+        PointerMotionMask);
     XStoreName(display, window, title.c_str());
 
     Atom wmDeleteMessage = XInternAtom(display, "WM_DELETE_WINDOW", False);
@@ -48,10 +53,15 @@ X11Window::X11Window(const std::string& title, uint32_t width, uint32_t height)
     display_ = display;
     window_ = window;
     wmDeleteMessage_ = static_cast<unsigned long>(wmDeleteMessage);
+
+    std::memset(keys_.data(), 0, keys_.size());
 }
 
 // Zwalnia okno i polaczenie z serwerem X.
 X11Window::~X11Window() {
+    if (pointerGrabbed_) {
+        grabPointer(false);
+    }
     auto* display = static_cast<Display*>(display_);
     if (display != nullptr && window_ != 0) {
         XDestroyWindow(display, static_cast<Window>(window_));
@@ -59,6 +69,62 @@ X11Window::~X11Window() {
     if (display != nullptr) {
         XCloseDisplay(display);
     }
+}
+
+void X11Window::grabPointer(bool grab) {
+    auto* display = static_cast<Display*>(display_);
+    if (display == nullptr) return;
+
+    if (grab && !pointerGrabbed_) {
+        // Tworzymy niewidzialny kursor: przezroczysty piksel 1x1
+        XColor dummyColor{};
+        Pixmap cursorPixmap = XCreatePixmap(display,
+            static_cast<Window>(window_), 1, 1, 1);
+        Cursor invisibleCursor = XCreatePixmapCursor(
+            display, cursorPixmap, cursorPixmap, &dummyColor, &dummyColor, 0, 0);
+        XFreePixmap(display, cursorPixmap);
+
+        const int grabStatus = XGrabPointer(display,
+            static_cast<Window>(window_), True,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+            GrabModeAsync, GrabModeAsync,
+            static_cast<Window>(window_), invisibleCursor, CurrentTime);
+        if (grabStatus == GrabSuccess) {
+            pointerGrabbed_ = true;
+            // Resetujemy pozycje do srodka okna
+            const int cx = static_cast<int>(width_) / 2;
+            const int cy = static_cast<int>(height_) / 2;
+            XWarpPointer(display, None, static_cast<Window>(window_),
+                0, 0, 0, 0, cx, cy);
+            mouseX_ = cx;
+            mouseY_ = cy;
+            mouseDeltaX_ = 0;
+            mouseDeltaY_ = 0;
+        } else {
+            // Grab sie nie udal - nie bedziemy mieli poprawnego inputu myszy
+        }
+    } else if (!grab && pointerGrabbed_) {
+        XUngrabPointer(display, CurrentTime);
+        XFlush(display);
+        pointerGrabbed_ = false;
+    }
+}
+
+bool X11Window::pointerGrabbed() const {
+    return pointerGrabbed_;
+}
+
+InputSnapshot X11Window::pollInput() {
+    InputSnapshot snapshot;
+    std::copy(std::begin(keys_), std::end(keys_), std::begin(snapshot.keys));
+    snapshot.mouseDeltaX = mouseDeltaX_;
+    snapshot.mouseDeltaY = mouseDeltaY_;
+    std::copy(std::begin(mouseButtons_), std::end(mouseButtons_), std::begin(snapshot.mouseButtons));
+    snapshot.mouseX = mouseX_;
+    snapshot.mouseY = mouseY_;
+    mouseDeltaX_ = 0;
+    mouseDeltaY_ = 0;
+    return snapshot;
 }
 
 // Odczytuje wszystkie oczekujace zdarzenia i zapisuje je w prostym stanie klasy.
@@ -89,12 +155,77 @@ void X11Window::processEvents() {
         }
 
         if (event.type == KeyPress) {
+            const uint8_t keycode = static_cast<uint8_t>(event.xkey.keycode & 0xFF);
+            keys_[keycode] = true;
             const KeySym key = XLookupKeysym(&event.xkey, 0);
             if (key == XK_Escape) {
                 shouldClose_ = true;
                 return;
             }
         }
+
+        if (event.type == KeyRelease) {
+            if (XPending(display) > 0) {
+                XEvent nextEvent{};
+                XPeekEvent(display, &nextEvent);
+                if (nextEvent.type == KeyPress &&
+                    nextEvent.xkey.keycode == event.xkey.keycode &&
+                    nextEvent.xkey.time == event.xkey.time) {
+                    XNextEvent(display, &nextEvent);
+                    continue;
+                }
+            }
+            const uint8_t keycode = static_cast<uint8_t>(event.xkey.keycode & 0xFF);
+            keys_[keycode] = false;
+        }
+
+        if (event.type == ButtonPress) {
+            const int button = event.xbutton.button;
+            if (button >= 1 && button <= 5) {
+                mouseButtons_[button - 1] = true;
+            }
+        }
+
+        if (event.type == ButtonRelease) {
+            const int button = event.xbutton.button;
+            if (button >= 1 && button <= 5) {
+                mouseButtons_[button - 1] = false;
+            }
+        }
+
+        if (event.type == MotionNotify) {
+            const int newX = event.xmotion.x;
+            const int newY = event.xmotion.y;
+
+            if (pointerGrabbed_) {
+                // Kumulujemy deltę wzgledem poprzedniej pozycji myszy.
+                // XWarpPointer wywolywany tylko raz po petli, nie per-event.
+                mouseDeltaX_ += newX - mouseX_;
+                mouseDeltaY_ += newY - mouseY_;
+                mouseX_ = newX;
+                mouseY_ = newY;
+            } else {
+                // Normalny tryb okienkowy: delta z poprzedniej pozycji
+                if (mouseX_ != 0 || mouseY_ != 0) {
+                    mouseDeltaX_ += newX - mouseX_;
+                    mouseDeltaY_ += newY - mouseY_;
+                }
+                mouseX_ = newX;
+                mouseY_ = newY;
+            }
+        }
+    }
+
+    // W trybie FPS warpujemy kursor do srodka tylko raz na klatke,
+    // po przetworzeniu wszystkich zdarzen. Unikamy dziesiatek kosztownych
+    // synchronicznych round-tripow X11 per klatke.
+    if (pointerGrabbed_) {
+        const int cx = static_cast<int>(width_) / 2;
+        const int cy = static_cast<int>(height_) / 2;
+        XWarpPointer(display, None, static_cast<Window>(window_),
+            0, 0, 0, 0, cx, cy);
+        mouseX_ = cx;
+        mouseY_ = cy;
     }
 }
 

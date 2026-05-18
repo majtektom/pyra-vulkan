@@ -103,6 +103,7 @@ struct MeshAsset {
 struct TextureAsset {
     std::string name;
     std::string path;
+    bool mirroredRepeat = false;
 };
 
 // Nazwany asset fontu TrueType wskazujacy plik TTF oraz rozmiar rasteryzacji glifow.
@@ -155,6 +156,29 @@ struct GlobalUniformBufferObject {
     Matrix4 proj;
 };
 
+struct InputState {
+    bool keys[256] = {};
+    int mouseDeltaX = 0;
+    int mouseDeltaY = 0;
+    bool mouseButtons[5] = {};
+    int mouseX = 0;
+    int mouseY = 0;
+};
+
+struct GridConfig {
+    bool enabled = false;
+    float size = 200.0f;
+    float spacing = 10.0f;
+    std::array<float, 3> color = {0.5f, 0.5f, 0.5f};
+};
+
+struct SkyboxConfig {
+    bool enabled = false;
+    std::string directory;
+    float size = 3500.0f;
+    float verticalOffset = 100.0f;
+};
+
 // Glowna konfiguracja silnika przekazywana do uruchomienia sceny.
 struct AppConfig {
     // Parametry okna i koloru tla.
@@ -175,7 +199,10 @@ struct AppConfig {
     std::function<void(float, uint32_t, uint32_t, std::vector<TextLabel>&)> updateTextLabels;
     // Kamera globalna sterujaca punktem widzenia calej sceny.
     CameraConfig camera;
+    InputState input;
+    GridConfig grid;
+    SkyboxConfig skybox;
+    std::function<void(float, AppConfig&)> onUpdate;
 };
 
 }  // namespace engine3d
-
