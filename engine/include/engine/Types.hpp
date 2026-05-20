@@ -13,9 +13,14 @@
 
 namespace engine3d {
 
+class SceneManager;
+
+
+
 // Pojedynczy wierzcholek przekazywany do GPU.
 struct Vertex {
     std::array<float, 3> position;
+    std::array<float, 3> normal;
     std::array<float, 3> color;
     std::array<float, 2> texCoord;
 
@@ -29,8 +34,8 @@ struct Vertex {
     }
 
     // Opisuje pola struktury Vertex jako atrybuty wejscia shaderow.
-    [[nodiscard]] static std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3> descriptions{};
+    [[nodiscard]] static std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 4> descriptions{};
 
         // location 0 w shaderze odpowiada pozycji 3D.
         descriptions[0].binding = 0;
@@ -38,17 +43,23 @@ struct Vertex {
         descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         descriptions[0].offset = offsetof(Vertex, position);
 
-        // location 1 niesie kolor wierzcholka.
+        // location 1 niesie normalna wierzcholka.
         descriptions[1].binding = 0;
         descriptions[1].location = 1;
         descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        descriptions[1].offset = offsetof(Vertex, color);
+        descriptions[1].offset = offsetof(Vertex, normal);
 
-        // location 2 niesie wspolrzedne UV dla probkowania tekstury.
+        // location 2 niesie kolor wierzcholka.
         descriptions[2].binding = 0;
         descriptions[2].location = 2;
-        descriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        descriptions[2].offset = offsetof(Vertex, texCoord);
+        descriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+        descriptions[2].offset = offsetof(Vertex, color);
+
+        // location 3 niesie wspolrzedne UV dla probkowania tekstury.
+        descriptions[3].binding = 0;
+        descriptions[3].location = 3;
+        descriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
+        descriptions[3].offset = offsetof(Vertex, texCoord);
 
         return descriptions;
     }
@@ -132,10 +143,76 @@ struct TextLabel {
     TextHorizontalAlign horizontalAlign = TextHorizontalAlign::Left;
 };
 
-// Jeden obiekt sceny laczacy siatke, teksture i animacje transformacji.
+// Typ filtrowania tekstury.
+enum class TextureFilter {
+    Nearest,
+    Linear,
+};
+
+// Tryb mipmapowania tekstury.
+enum class MipmapMode {
+    Nearest,
+    Linear,
+};
+
+// Tryb adresowania tekstury (wrapowanie).
+enum class AddressMode {
+    Repeat,
+    MirroredRepeat,
+    ClampToEdge,
+};
+
+// Tryb mieszania kolorow (przezroczystosc).
+enum class BlendMode {
+    Disabled,
+    Alpha,
+    Additive,
+};
+
+// Tryb cullowania (usuwania) scianek.
+enum class CullMode {
+    Disabled,
+    Front,
+    Back,
+};
+
+// Material obiektu - definiuje sposob renderowania: teksture, filtrowanie,
+// przezroczystosc, oswietlenie, kolor i inne wlasciwosci.
+struct Material {
+    std::string name;
+    // Tekstura uzywana przez material (pusta = domyslna biala).
+    std::string textureName;
+    // Opcjonalny override shadera (pusty = uzyj aktywnego z sceny).
+    std::string shaderProgram;
+    // Filtrowanie tekstury.
+    TextureFilter minFilter = TextureFilter::Linear;
+    TextureFilter magFilter = TextureFilter::Linear;
+    MipmapMode mipmapMode = MipmapMode::Linear;
+    // Tryb adresowania dla kazdej osi UVW.
+    AddressMode addressModeU = AddressMode::Repeat;
+    AddressMode addressModeV = AddressMode::Repeat;
+    // Przezroczystosc i mieszanie.
+    BlendMode blendMode = BlendMode::Disabled;
+    // Ustawienia glebokosci.
+    bool depthTest = true;
+    bool depthWrite = true;
+    // Tryb usuwania scianek.
+    CullMode cullMode = CullMode::Disabled;
+    // Bazowy kolor materialu (tint).
+    std::array<float, 4> color = {1.0f, 1.0f, 1.0f, 1.0f};
+    // Wlasciwosci oswietlenia (do wykorzystania w przyszlosci).
+    std::array<float, 4> ambientColor = {0.2f, 0.2f, 0.2f, 1.0f};
+    std::array<float, 4> diffuseColor = {0.8f, 0.8f, 0.8f, 1.0f};
+    std::array<float, 4> specularColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 4> emissionColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    float shininess = 32.0f;
+};
+
+// Jeden obiekt sceny laczacy siatke, material/teksture i animacje transformacji.
 struct SceneObject {
     std::string meshName;
     std::string textureName;
+    std::string materialName;
     Transform transform{};
     RotationSpeed rotation{};
 };
@@ -189,10 +266,11 @@ struct AppConfig {
     // Definicje shaderow i wybor aktywnego programu.
     ShaderManifest shaderManifest;
     std::string activeShaderProgram = "default";
-    // Zasoby sceny: geometria, tekstury i obiekty wykorzystujace te zasoby.
+    // Zasoby sceny: geometria, tekstury, materialy i obiekty wykorzystujace te zasoby.
     std::vector<MeshAsset> meshes;
     std::vector<TextureAsset> textures;
     std::vector<FontAsset> fonts;
+    std::vector<Material> materials;
     std::string activeTexture;
     std::vector<SceneObject> sceneObjects;
     std::vector<TextLabel> textLabels;
@@ -202,6 +280,10 @@ struct AppConfig {
     InputState input;
     GridConfig grid;
     SkyboxConfig skybox;
+    // Opcjonalny zarzadca warstw - jesli ustawiony, renderer automatycznie
+    // wywoluje sceneManager->update() i sceneManager->buildConfig() przed kazda klatka.
+    SceneManager* sceneManager = nullptr;
+
     std::function<void(float, AppConfig&)> onUpdate;
 };
 

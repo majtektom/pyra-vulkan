@@ -2,6 +2,8 @@
 
 #include <memory>
 
+#include "engine/MaterialManager.hpp"
+#include "engine/SceneManager.hpp"
 #include "engine/Types.hpp"
 
 namespace engine3d {
@@ -28,9 +30,20 @@ public:
     // Uruchamia petle glowne renderowania i obslugi okna.
     void run();
 
+    // Zarzadca materialow - definiuje wlasciwosci renderowania obiektow.
+    MaterialManager& materials() { return materialManager_; }
+    const MaterialManager& materials() const { return materialManager_; }
+
+    // Zarzadca warstw - pozwala dodawac i przelaczac sceny (menu, gra, itp.).
+    SceneManager& scenes() { return sceneManager_; }
+    const SceneManager& scenes() const { return sceneManager_; }
+
 private:
     // Wlasciwa logika renderowania siedzi w osobnej klasie, zeby fasada byla mala i czytelna.
     std::unique_ptr<VulkanRenderer> renderer_;
+
+    MaterialManager materialManager_;
+    SceneManager sceneManager_;
 };
 
 // Wygodny punkt wejscia dla przykladow: tworzy silnik, uruchamia go i obsluguje bledy.

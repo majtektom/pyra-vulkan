@@ -1,0 +1,606 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en"><head>
+
+  
+    <meta http-equiv="Content-type" content="text/html; charset=UTF-8">
+    <meta http-equiv="Content-style-type" content="text/css">
+    <meta http-equiv="Content-language" content="en"><title>MD5Mesh and MD5Anim files formats specifications (Doom 3's models)</title>
+    
+    <meta name="author" content="David Henry">
+    <meta name="keywords" content="OpenGL, MD5, MD5 format, Doom 3, Specifications, md5mesh, md5anim,
+      skeletal animation">
+    <meta name="description" content="MD5Mesh and MD5Anim files formats specifications (Doom 3's models) -
+    reading, rendering and animating">
+
+    <style type="text/css">
+        body {
+            font-family: sans-serif;
+            margin-left: 10%;
+            margin-right: 10%;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 0em;
+        }
+
+        p#headline {
+            text-align: center;
+            margin-bottom: 2em;
+        }
+
+        p {
+            text-align: justify;
+        }
+
+        li {
+            padding-right: 2em;
+        }
+
+        pre {
+            margin-left: 2em;
+            margin-right: 2em;
+        }
+    </style><!-- Last modifications : monday, 6th february of 2006 --></head><body>
+    <h1>MD5Mesh and MD5Anim files formats<br>(Doom 3's models)</h1>
+    <p id="headline">Written by David Henry, 21<sup>th</sup> august of 2005</p>
+
+    <p><em><strong>NOTE:</strong> this has nothing to do with the cryptographic hash
+    function also called “<acronym title="Message Digest 5">MD5</acronym>”.</em></p>
+
+    <h2>Introduction</h2>
+    <p>The MD5 model format comes from <em>id Software</em>'s Doom 3 first person
+    shooter, released in august 2004. The mesh data and animation data are separated
+    in distinct files. These are ASCII files and are human readable. Here are
+    some generalities about the MD5 format:</p>
+
+    <ul>
+      <li>Model's geometric data are stored in *.md5mesh files;</li>
+      <li>Animations are stored in *.md5anim files;</li>
+      <li>Supports Skeletal Animation;</li>
+      <li>Supports Vertex Skinning;</li>
+      <li>Uses quaternions for orientation.</li>
+    </ul>
+
+    <p>Textures are in separate files (TGA, DDS, or whatever you want). In Doom 3,
+    they are controlled by the *.mtr files in the <code>/materials</code> directory from
+    the game's *.pk4 files. The MTR files are not covered here.</p>
+
+    <h2>Working with quaternions</h2>
+
+    <p>The MD5 Mesh and MD5 Anim formats work with quaternions. Quaternions are
+    <span style="text-decoration: line-through;">magic</span> mathematical objects which can represent
+    an orientation. Quaternions are an extension of the complex numbers. If you just discover them now,
+    or don't know how to use them, take a look at a computer graphics math book or at an online FAQ
+    about them.</p>
+
+    <p>Quaternions are an alternative to matrices for representing a rotation. Quaternions can't
+    hold information about position (like 4x4 matrices), just the orientation. They can hold
+    the same information as 3x3 rotation matrices.</p>
+
+    <p>There is not a lot of things to know about quaternions here, just some formulas:</p>
+
+    <ul>
+      <li>Quaternion multiplication (Quat × Quat);</li>
+      <li>Rotation of a point by a quaternion;</li>
+      <li>Quaternion inverse;</li>
+      <li>Quaternion normalization;</li>
+      <li>Quaternion interpolation (SLERP), for smooth animation.</li>
+    </ul>
+
+    <p>Quaternions are represented by four components: w, x, y and z. Orientation quaternions are unit
+    quaternions.</p>
+
+    <p>In the MD5 Mesh and MD5 Anim files, only the x, y and z components are stored. You'll have to
+    compute the w-component yourself, given the three others.</p>
+
+    <h3>Computing the w-component</h3>
+
+    <p>Since we deal with only unit quaternions (their length is 1.0), we can obtain the last component
+    with this formula:</p>
+
+<pre>float t = 1.0f - (q.x * q.x) - (q.y * q.y) - (q.z * q.z);
+
+if (t &lt; 0.0f)
+  {
+    q.w = 0.0f;
+  }
+else
+  {
+    q.w = -sqrt (t);
+  }</pre>
+
+    <h3>Others quaternion operations</h3>
+
+    <p>A realy quick overview of needed quaternion operations and formulas. For more about them,
+    refer to a 3D Math book, an online FAQ or Wikipedia.</p>
+
+    <p>The quaternion multiplication allows to concatenate two rotations. The product of two quaternions
+    Q<sub>a</sub> and Q<sub>b</sub> is given by the following formula&nbsp;:</p>
+
+<pre>Q<sub>a</sub>.Q<sub>b</sub> = (w<sub>a</sub>, v<sub>a</sub>)(w<sub>b</sub>, v<sub>b</sub>) = (w<sub>a</sub>w<sub>b</sub> - v<sub>a</sub>·v<sub>b</sub>, w<sub>a</sub>v<sub>b</sub> + w<sub>b</sub>v<sub>a</sub> + w<sub>a</sub>×w<sub>b</sub>)</pre>
+
+    <p>After expanding and making simplifications, we have the following result&nbsp;:</p>
+
+<pre>r.w = (qa.w * qb.w) - (qa.x * qb.x) - (qa.y * qb.y) - (qa.z * qb.z);
+r.x = (qa.x * qb.w) + (qa.w * qb.x) + (qa.y * qb.z) - (qa.z * qb.y);
+r.y = (qa.y * qb.w) + (qa.w * qb.y) + (qa.z * qb.x) - (qa.x * qb.z);
+r.z = (qa.z * qb.w) + (qa.w * qb.z) + (qa.x * qb.y) - (qa.y * qb.x);</pre>
+
+    <p>Be careful! Quaternions are non-commutative, i.e. Q<sub>a</sub> × Q<sub>b</sub> ≠
+    Q<sub>b</sub> × Q<sub>a</sub>.</p>
+
+    <p>The rotation of a point by a quaternion is given by the formula:</p>
+
+<pre>R = Q.P.Q<sup>*</sup></pre>
+
+    <p>Where R is the resultant quaternion, Q is the orientation quaternion by which you want to
+    perform a rotation, Q<sup>*</sup> the conjugate of Q and P is the point converted to a quaternion.
+    To convert a 3D vector to a quaternion, copy the x, y and z components and set the w component
+    to 0. This is the same for quaternion to vector conversion: take the x, y and z components and
+    forget the w.</p>
+
+    <p>Note: here the “.” is the multiplication operator.</p>
+
+    <p>Quaternion inverse can be obtained, <strong>for unit quaternions</strong>, by negating the
+    x, y and z components (this is equal to the conjugate quaternion):</p>
+
+<pre>inverse(&lt;w, x, y, z&gt;) = conjugate(&lt;w, x, y, z&gt;) = &lt;w, -x, -y, -z&gt;</pre>
+
+    <p>Quaternion normalization is exactly the same as for vectors, but with four components.</p>
+
+    <p>I will not cover the quaternions spherical linear interpolation (SLERP) here, but you can
+    look at the sample code (at the end of this document), or in books, or in the web for the
+    formula. Spherical linear interpolation is used to interpolate two orientations. It is
+    usefull for skeletal animation.</p>
+
+    <h2>MD5 Mesh</h2>
+
+    <p>The MD5 Mesh files have the “md5mesh” extension. They contain the geometric data
+    of the models:</p>
+
+    <ul>
+      <li>Model's bind-pose skeleton;</li>
+      <li>One or multiple meshes. Each mesh have its proper data:
+      <ul>
+        <li>Vertices;</li>
+        <li>Triangles;</li>
+        <li>Vertex weights;</li>
+        <li>A shader name.</li>
+      </ul></li>
+    </ul>
+
+    <h3>Reading a md5mesh file</h3>
+
+    <p>When parsing the MD5 Mesh file, you can find comments. They start with the “//” string and
+    goes to the end of the line. They are here just for humans who want to take a look at the file
+    with a text editor, they don't affect model's data. You can ignore them.</p>
+
+    <p>Before loading the geometric data, you will find some precious variables needed to check
+    if this is a valid md5mesh file and for allocating memory:</p>
+
+<pre>MD5Version 10
+commandline "<em>&lt;string&gt;</em>"
+
+numJoints <em>&lt;int&gt;</em>
+numMeshes <em>&lt;int&gt;</em></pre>
+
+    <p>The first line tell you the version of the format. This is an integer. Doom 3's MD5 version
+    is 10. This document covers the version 10 of the format. Olders (or newers) may differ in some
+    points in the structure of the format.</p>
+
+    <p>Then comes the <code>commmandline</code> string used by Doom 3 with the <code>exportmodels</code>
+    console command. I have nothing to tell you about it.</p>
+
+    <p><code>numJoints</code> is the number of joints of the model's skeleton. <code>numMeshes</code> is
+    the number of meshes of the model contained in the md5mesh file.</p>
+
+    <p>After that you have the bind-pose skeleton's joints:</p>
+
+<pre>joints {
+    "<em>name</em>" <em>parent</em> ( <em>pos.x</em> <em>pos.y</em> <em>pos.z</em> ) ( <em>orient.x</em> <em>orient.y</em> <em>orient.z</em> )
+    ...
+}</pre>
+
+    <p><code>name</code> (string) is the joint's name. <code>parent</code> (int) is the joint's parent
+    index. If it is equal to -1, then the joint has no parent joint and is what we call a <em>root</em>
+    joint. <code>pos.x</code>, <code>pos.y</code> and <code>pos.z</code> (float) are the joint's
+    position in space. <code>orient.x</code>, <code>orient.y</code> and <code>orient.z</code> (float)
+    are the joint's orientation quaternion x, y and z components. After reading a joint, you must
+    calculate the w component.</p>
+
+    <p>After the skeleton, there are the meshes. Each mesh is in the form:</p>
+
+<pre>mesh {
+    shader "<em>&lt;string&gt;</em>"
+
+    numverts <em>&lt;int&gt;</em>
+    vert <em>vertIndex</em> ( <em>s</em> <em>t</em> ) <em>startWeight</em> <em>countWeight</em>
+    vert ...
+
+    numtris <em>&lt;int&gt;</em>
+    tri <em>triIndex</em> <em>vertIndex[0]</em> <em>vertIndex[1]</em> <em>vertIndex[2]</em>
+    tri ...
+
+    numweights <em>&lt;int&gt;</em>
+    weight <em>weightIndex</em> <em>joint</em> <em>bias</em> ( <em>pos.x</em> <em>pos.y</em> <em>pos.z</em> )
+    weight ...
+}</pre>
+
+    <p>The <code>shader</code> string is defined in the MTR files (<code>/materials</code> directory)
+    of Doom 3 and tell you what are the textures to apply to the mesh and how to combine them.</p>
+
+    <p><code>numverts</code> (int) is the number of vertices of the mesh. After this variable, you have
+    the vertex list. <code>vertIndex</code> (int) is the vertex index. <code>s</code> and <code>t</code>
+    (float) are the texture coordinates (also called UV coords). In the MD5 Mesh format, a vertex
+    hasn't a proper position. Instead, its position is computed from vertex weights (this is
+    explained later in this document). <code>countWeight</code> (int) is the number of weights,
+    starting from the <code>startWeight</code> (int) index, which are used to calculate the final
+    vertex position.</p>
+
+    <p><code>numtris</code> is the number of triangles of the mesh. <code>triIndex</code> (int)
+    is the index of the triangle. Each is defined by three vertex indices composing it:
+    <code>vertIndex[0]</code>, <code>vertIndex[1]</code> and <code>vertIndex[2]</code> (int).</p>
+
+    <p><code>numweights</code> (int) is the number of weights of the mesh. <code>weightIndex</code> (int)
+    is the weight index. <code>joint</code> (int) is the joint it depends of. <code>bias</code> (float)
+    is a factor in the ]0.0, 1.0] range which defines the contribution of this weight when computing
+    a vertex position. <code>pos.x</code>, <code>pos.y</code> and <code>pos.z</code> (float) are the
+    weight's position in space.</p>
+
+    <h3>The bind-pose skeleton</h3>
+
+    <p>The model's skeleton stored in the MD5 Mesh files is what we call the “bind-pose skeleton”.
+    It is generally in a position in which the model has been created.</p>
+
+    <p>Its joints are already in their final position, you don't have to make any precomputation
+    on it, like adding the parent joint's position and rotating it or anything. Their position
+    are in object space and independent of others joints.</p>
+
+    <h3>Computing vertex positions</h3>
+
+    <p>As said before, the vertex positions must be calculated from the weights. Each vertex has
+    one or more weights, each of them having a position dependent of a joint (the position is
+    in joint's local space), and a factor telling us how much it affects the vertex position.
+    The sum of all weight factors of a vertex should be 1.0. This technique is called
+    “vertex skinning” and allows a vertex to depend on more than one joint of the skeleton
+    for better animation rendering.</p>
+
+    <p>First, each vertex' weight position must be converted from joint local space to
+    object space. Then, sum all the weights multiplied by their bias value:</p>
+
+<pre>finalPos = (weight[0].pos * weight[0].bias) + ... + (weight[N].pos * weight[N].bias)</pre>
+
+    <p>The vertex data that comes from the MD5 Mesh file has a <code>start</code> index and a
+    <code>count</code> value. The <code>start</code> index is the index to the first weight
+    used by the vertex. Then, all vertex' weight comes just right after this one. The
+    <code>count</code> value indicates the number of weights used from the first weight.
+    Here is the code to compute the final vertex positions (in object space) from their
+    weights:</p>
+
+<pre>/* setup vertices */
+for (i = 0; i &lt; mesh-&gt;num_verts; ++i)
+  {
+    vec3_t finalVertex = { 0.0f, 0.0f, 0.0f };
+
+    /* calculate final vertex to draw with weights */
+    for (j = 0; j &lt; mesh-&gt;vertices[i].count; ++j)
+      {
+        const md5_weight_t *weight = &amp;mesh-&gt;weights[mesh-&gt;vertices[i].start + j];
+        const md5_joint_t *joint = &amp;joints[weight-&gt;joint];
+
+        /* calculate transformed vertex for this weight */
+        vec3_t wv;
+        Quat_rotatePoint (joint-&gt;orient, weight-&gt;pos, wv);
+
+        /* the sum of all weight-&gt;bias should be 1.0 */
+        finalVertex[0] += (joint-&gt;pos[0] + wv[0]) * weight-&gt;bias;
+        finalVertex[1] += (joint-&gt;pos[1] + wv[1]) * weight-&gt;bias;
+        finalVertex[2] += (joint-&gt;pos[2] + wv[2]) * weight-&gt;bias;
+      }
+
+    ...
+  }</pre>
+
+    <h3>Texture coordinates</h3>
+
+    <p>Each vertex has its own texture coordinates. The ST (or UV) texture coordinates
+    for the upper-left corner of the texture are (0.0, 0.0). The ST texture coordinates
+    for the lower-right corner are (1.0, 1.0).</p>
+
+    <p>The vertical direction is the inverse of the standard OpenGL direction for the
+    T coordinate. This is like the DirectDraw Surface way. When loading a texture (other
+    than a DDS file), you'll have to flip it vertically or take the oposite of the T
+    texture coordinate for MD5 Mesh vertices (i.e., <code>1.0 - T</code>).</p>
+
+    <h3>Precomputing normals</h3>
+
+    <p>You will probably need to compute normal vectors, for example for lighting. Here is how
+    to compute them in order to get “weight normals”, like the weight positions (this method
+    also works for tangents and bi-tangents):</p>
+
+    <p>First, compute all model's vertex positions in bind-pose (using the bind-pose
+    skeleton).</p>
+
+    <p>Compute the vertex normals. You now have the normals in object space for the
+    bind-pose skeleton.</p>
+
+    <p>For each weight of a vertex, transform the vertex normal by the inverse joint's
+    orientation quaternion of the weight. You now have the normal in joint's local
+    space.</p>
+
+    <p>Then when calculating the final vertex positions, you will be able to do the same
+    for the normals, except you won't have to translate from the joint's position when
+    converting from joint's local space to object space.</p>
+
+    <h2>MD5 Anim</h2>
+
+    <p>The MD5 Anim files have the “md5anim” extension. They store information about
+    skeletal animation of MD5 Mesh models:</p>
+
+    <ul>
+      <li>Skeleton hierarchy with flags for each joint for animation data;</li>
+      <li>A bounding box for each frame of the animation;</li>
+      <li>A baseframe skeleton from wich the animated skeleton is computed;</li>
+      <li>A list of frames, each containing data to compute a skeleton from the baseframe skeleton.</li>
+    </ul>
+
+    <h3>Reading a md5anim file</h3>
+
+    <p>MD5 Anim files has the same syntax than MD5 Mesh files. Comments begin with “//” and
+    are valable until the end of the line. There is also a header with a version number, a
+    command line and some variables for memory allocation:</p>
+
+<pre>MD5Version 10
+commandline "<em>&lt;string&gt;</em>"
+
+numFrames <em>&lt;int&gt;</em>
+numJoints <em>&lt;int&gt;</em>
+frameRate <em>&lt;int&gt;</em>
+numAnimatedComponents <em>&lt;int&gt;</em></pre>
+
+    <p>The version number is the same for all MD5 files, so it should be 10. The
+    <code>commandline</code> is a Doom 3's internal command.</p>
+
+    <p><code>numFrames</code> (int) is the number of frames of the animation. An animation
+    is composed of multiple frames, each one being a copy of the skeleton at a particular
+    position. Running all frames gives you an animation.</p>
+
+    <p><code>numJoints</code> (int) is the number of joints of the frame skeletons. It
+    must be the same as MD5 Mesh file's joint number to be playable for the model.</p>
+
+    <p><code>frameRate</code> (int) is the number of frames per second to draw for the
+    animation. The duration of a frame can be obtain by simply inverting
+    <code>frameRate</code>.</p>
+
+    <p><code>numAnimatedComponents</code> (int) is the number of parameters per frame
+    used to compute the frame skeletons. These parameters, combined with the baseframe
+    skeleton given in the MD5 Anim file, permit to build a skeleton for each frame.</p>
+
+    <p>After reading the header, comes the skeleton hierarchy. It brings information
+    about the joints for building the skeleton frames from the baseframe data:</p>
+
+<pre>hierarchy {
+    "<em>name</em>"   <em>parent</em> <em>flags</em> <em>startIndex</em>
+    ...
+}</pre>
+
+    <p><code>name</code> (string) is the joint's name. <code>parent</code> (int) is
+    the joint's parent index. If parent is -1, then he joint has no parent. From this
+    two informations, and the number of joints, it could be reasonable to compare
+    with MD5 Mesh's skeleton to ensure that the animation is valid for this model.
+    <code>flags</code> (int) is a set of bit flags which tell you how to compute
+    the skeleton of a frame for this joint. <code>startIndex</code> (int) is an
+    index to the beginning of the parameters used to compute the frame skeletons.</p>
+
+    <p>After the hierarchy comes the frame bounds. There is a bounding box for
+    each frame:</p>
+
+<pre>bounds {
+    ( <em>min.x</em> <em>min.y</em> <em>min.z</em> ) ( <em>max.x</em> <em>max.y</em> <em>max.z</em> )
+    ...
+}</pre>
+
+    <p><code>min.x</code>, <code>min.y</code> and <code>min.z</code> (float)
+    represent the minimum 3D coordinates of the box; <code>max.x</code>,
+    <code>max.y</code> and <code>max.z</code> (float) represent the maximum.
+    These coordinates are in object space. They are usefull for computing
+    <acronym title="Axis Aligned Bouding Box">AABB</acronym> or
+    <acronym title="Oriented Bouding Box">OBB</acronym> for frustum culling
+    and basic collision detection.</p>
+
+    <p>After bounds you'll find the baseframe data. It contains the position
+    and orientation of each joint from which the frame skeletons will be
+    built. There is a line for each joint:</p>
+
+<pre>baseframe {
+    ( <em>pos.x</em> <em>pos.y</em> <em>pos.z</em> ) ( <em>orient.x</em> <em>orient.y</em> <em>orient.z</em> )
+    ...
+}</pre>
+
+    <p><code>pos.x</code>, <code>pos.y</code> and <code>pos.z</code> (float) are
+    the joint's position. <code>orient.x</code>, <code>orient.y</code> and
+    <code>orient.z</code> (float) are the joint's orientation quaternion.</p>
+
+    <p>After the baseframe data, the frame data. There is a chunk of data for
+    each frame. This data are the parameters used to compute the frame's
+    skeleton:</p>
+
+<pre>frame <em>frameIndex</em> {
+    <em>&lt;float&gt;</em> <em>&lt;float&gt;</em> <em>&lt;float&gt;</em> ...
+}</pre>
+
+    <p><code>frameIndex</code> (int) is the index of the frame. Between the brackets,
+    you have an array of float values. There are <code>numAnimatedComponents</code>
+    values. When you have collected all these data for a frame, you can build
+    the skeleton of this frame.</p>
+
+    <h3>Building the frame skeletons</h3>
+
+    <p>From the baseframe data, the hierarchy info and the frame data, you can
+    build a skeleton for a particular frame. Here is how it works for each
+    joint: we start with the baseframe joint's data (position and orientation).
+    Then we replace some of the position and orientation components by a value
+    from the frame's data. The joint's flags (from the hierarchy information)
+    indicate which ones.</p>
+
+    <p><code>flags</code> variable description: starting from the right, the frist
+    three bits are for the position vector and the next three for the orientation
+    quaternion. If a bit is set, then you have to replace the corresponding
+    (x, y, z) component by a value from the frame's data. Which value? This is
+    given by the <code>startIndex</code>. You begin at the <code>startIndex</code>
+    in the frame's data array and increment the position each time you have to
+    replace a value to a component.</p>
+
+    <p>Once you have computed the “animated” joint's position and orientation,
+    you must compute the joint's position and orientation in object space.
+    Before that, don't forget to compute the w component of the “animated”
+    orientation!</p>
+
+    <p>For the position, if the joint has a parent, you must transform the “animated”
+    joint by its parent orientation quaternion, and add the result to the parent's
+    position. If the joint is a <em>root</em> joint (no parent), then just copy
+    the “animated” position.</p>
+
+    <p>For the orientation, if the joint has a parent, you must concatenate the two
+    orientations; first the parent's orientation and then the “animated” orientation.
+    Just multiply (with the formula given at the beginning of the document) parent's
+    orientation by the “animated” orientation and renormalize the result (orientation
+    quaternion must be unit quaternions). If the joint has no parent, then just copy
+    the “animated” orientation.</p>
+
+    <p>Here is the code to build a frame skeleton:</p>
+
+<pre>for (i = 0; i &lt; num_joints; ++i)
+  {
+    const baseframe_joint_t *baseJoint = &amp;baseFrame[i];
+    vec3_t animatedPos;
+    quat4_t animatedOrient;
+    int j = 0;
+
+    memcpy (animatedPos, baseJoint-&gt;pos, sizeof (vec3_t));
+    memcpy (animatedOrient, baseJoint-&gt;orient, sizeof (quat4_t));
+
+    if (jointInfos[i].flags &amp; 1) /* Tx */
+      {
+        animatedPos[0] = animFrameData[jointInfos[i].startIndex + j];
+        ++j;
+      }
+
+    if (jointInfos[i].flags &amp; 2) /* Ty */
+      {
+        animatedPos[1] = animFrameData[jointInfos[i].startIndex + j];
+        ++j;
+      }
+
+    if (jointInfos[i].flags &amp; 4) /* Tz */
+      {
+        animatedPos[2] = animFrameData[jointInfos[i].startIndex + j];
+        ++j;
+      }
+
+    if (jointInfos[i].flags &amp; 8) /* Qx */
+      {
+        animatedOrient[0] = animFrameData[jointInfos[i].startIndex + j];
+        ++j;
+      }
+
+    if (jointInfos[i].flags &amp; 16) /* Qy */
+      {
+        animatedOrient[1] = animFrameData[jointInfos[i].startIndex + j];
+        ++j;
+      }
+
+    if (jointInfos[i].flags &amp; 32) /* Qz */
+      {
+        animatedOrient[2] = animFrameData[jointInfos[i].startIndex + j];
+        ++j;
+      }
+
+    /* compute orient quaternion's w value */
+    Quat_computeW (animatedOrient);
+
+    /* NOTE: we assume that this joint's parent has
+       already been calculated, i.e. joint's ID should
+       never be smaller than its parent ID. */
+    md5_joint_t *thisJoint = &amp;skelFrame[i];
+
+    int parent = jointInfos[i].parent;
+    thisJoint-&gt;parent = parent;
+    strcpy (thisJoint-&gt;name, jointInfos[i].name);
+
+    /* has parent? */
+    if (thisJoint-&gt;parent &lt; 0)
+      {
+        memcpy (thisJoint-&gt;pos, animatedPos, sizeof (vec3_t));
+        memcpy (thisJoint-&gt;orient, animatedOrient, sizeof (quat4_t));
+      }
+    else
+      {
+        md5_joint_t *parentJoint = &amp;skelFrame[parent];
+        vec3_t rpos; /* rotated position */
+
+        /* add positions */
+        Quat_rotatePoint (parentJoint-&gt;orient, animatedPos, rpos);
+        thisJoint-&gt;pos[0] = rpos[0] + parentJoint-&gt;pos[0];
+        thisJoint-&gt;pos[1] = rpos[1] + parentJoint-&gt;pos[1];
+        thisJoint-&gt;pos[2] = rpos[2] + parentJoint-&gt;pos[2];
+
+        /* concatenate rotations */
+        Quat_multQuat(parentJoint-&gt;orient, animatedOrient, thisJoint-&gt;orient);
+        Quat_normalize (thisJoint-&gt;orient);
+      }
+  }</pre>
+
+    <p><code>jointInfos</code> contains the hierarchy information. <code>animFrameData</code>
+    is an array containing the frame data. Also don't forget to copy the parent index
+    from the hierarchy info to your new joint structure. The joint's name can also be
+    usefull sometimes.</p>
+
+    <p>You must do this operation for all frames. At least, the ones you need.</p>
+
+    <h3>Animating the model</h3>
+
+    <p>Animating the model consist of calculating the current frame to draw, the next
+    frame and updating the elapsed time from the beginning of the current frame.</p>
+
+    <p>The current frame index increase when the frame's max time has been reached.
+    Remember that this max time is the inverse of <code>frameRate</code>.</p>
+
+    <p>You can then process to the interpolation of the current frame's skeleton and
+    the next frame's skeleton. The percent of interpolation is obtained by multiplying
+    the elapsed time since the current frame changed by animation's <code>frameRate</code>.</p>
+
+    <h3>Skeleton Interpolation</h3>
+
+    <p>For interpolating two skeletons, you just have to interpolate each joint of them.
+    And for interpolating two joints, you just have to interpolate the position and the
+    orientation.</p>
+
+    <p>For the position, just perform a linear interpolation:</p>
+
+<pre>finalJoint-&gt;pos.x = jointA-&gt;pos.x + interp * (jointB-&gt;pos.x - jointA-&gt;pos.x);
+finalJoint-&gt;pos.y = jointA-&gt;pos.y + interp * (jointB-&gt;pos.y - jointA-&gt;pos.y);
+finalJoint-&gt;pos.z = jointA-&gt;pos.z + interp * (jointB-&gt;pos.z - jointA-&gt;pos.z);</pre>
+
+    <p>For the orientation, it's better to perform a spherical linear interpolation rather
+    a simple linera interpolation, unless the rotations are very small. For the SLERP formula,
+    look on math book or on the web:</p>
+
+<pre>Quat_slerp( jointA-&gt;orient, jointB-&gt;orient, interp, finalJoint-&gt;orient );</pre>
+
+    <p style="border: 1px solid black; padding: 0.5em; background-color: rgb(222, 222, 222);">
+    <strong>Sample code 1:</strong> <a href="http://tfc.duke.free.fr/coding/src/md5.c">md5.c</a> (13.5 KB). Only MD5 Mesh. No
+    texture mapping, no lighting, no animation. This light demo fits in less than 650 lines
+    of code.
+    <br><br>
+    <strong>Sample code 2:</strong> <a href="http://tfc.duke.free.fr/coding/src/md5mesh.c">md5mesh.c</a> (14.2 KB),
+    <a href="http://tfc.duke.free.fr/coding/src/md5anim.c">md5anim.c</a> (12.2 KB), <a href="http://tfc.duke.free.fr/coding/src/md5model.h">md5model.h</a>
+    (3.7 KB). MD5 Mesh and Anim. No texture mapping, no lighting. Less than 1300 lines.</p>
+
+    <p style="border: 1px solid black; text-align: center; margin-top: 2em;">This document is
+    available under the terms of the <a href="http://www.gnu.org/copyleft/fdl.html">GNU
+    Free Documentation License</a> (GFDL)<br>© David Henry – contact : tfc_duke (AT)
+    club-internet (DOT) fr</p>
+  
+</body></html>

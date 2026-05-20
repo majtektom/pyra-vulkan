@@ -8,9 +8,15 @@
 
 namespace engine3d {
 
-// Konstruktor tylko sklada publiczna fasade z konkretnym rendererem Vulkan.
-Engine::Engine(AppConfig config)
-    : renderer_(std::make_unique<VulkanRenderer>(std::move(config))) {}
+// Konstruktor sklada publiczna fasade z konkretnym rendererem Vulkan
+// i przekazuje mu menedzery zasobow.
+Engine::Engine(AppConfig config) {
+    // Rejestrujemy materialy z konfiguracji w menedzerze przed przekazaniem configu.
+    for (const auto& mat : config.materials) {
+        materialManager_.add(mat);
+    }
+    renderer_ = std::make_unique<VulkanRenderer>(std::move(config), &materialManager_);
+}
 
 // Definicja poza klasa trzyma szczegoly implementacyjne w pliku .cpp.
 Engine::~Engine() = default;

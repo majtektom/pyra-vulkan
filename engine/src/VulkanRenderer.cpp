@@ -8,7 +8,11 @@
 #include "VulkanUtil.hpp"
 #include "X11Window.hpp"
 
+#include <iostream>
+
 #include "engine/FontManager.hpp"
+#include "engine/MaterialManager.hpp"
+#include "engine/SceneManager.hpp"
 #include "engine/ShaderManager.hpp"
 #include "engine/GridRenderer.hpp"
 #include "engine/SkyboxRenderer.hpp"
@@ -123,8 +127,9 @@ void destroyDebugUtilsMessengerEXT(
 class VulkanRendererImpl {
 public:
     // Konstruktor przejmuje konfiguracje i buduje menedzery zasobow uzywane pozniej przez renderer.
-    explicit VulkanRendererImpl(AppConfig config)
+    explicit VulkanRendererImpl(AppConfig config, MaterialManager* materialManager)
         : config_(std::move(config)),
+          materialManager_(materialManager),
           fontManager_(std::make_unique<FontManager>(config_.fonts)),
           shaderManager_(std::make_unique<ShaderManager>(config_.shaderManifest)),
           textureManager_(std::make_unique<TextureManager>(config_.textures)) {
@@ -214,6 +219,11 @@ private:
         std::unordered_map<std::uint32_t, FontAtlasGlyph> glyphs;
     };
 
+    struct PushConstants {
+        Matrix4 model;
+        std::array<float, 4> materialColor;
+    };
+
     struct TextGpuResources {
         std::size_t fontIndex = 0;
         VkBuffer vertexBuffer = VK_NULL_HANDLE;
@@ -222,6 +232,7 @@ private:
     };
 
     AppConfig config_;
+    MaterialManager* materialManager_ = nullptr;
     std::unique_ptr<FontManager> fontManager_;
     std::unique_ptr<ShaderManager> shaderManager_;
     std::unique_ptr<TextureManager> textureManager_;
@@ -244,6 +255,7 @@ private:
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+    VkPipeline transparentPipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout textDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout textPipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline textGraphicsPipeline_ = VK_NULL_HANDLE;
@@ -298,6 +310,7 @@ private:
         createDescriptorSetLayout();
         createTextDescriptorSetLayout();
         createGraphicsPipeline();
+        createTransparentGraphicsPipeline();
         createTextGraphicsPipeline();
         createCommandPool();
         createDepthResources();
@@ -392,6 +405,14 @@ private:
             lastTime = now;
 
             config_.input = window_->pollInput().toInputState();
+
+            // Najpierw aktualizujemy warstwy i budujemy konfiguracje z aktywnych warstw.
+            if (config_.sceneManager) {
+                config_.sceneManager->update(deltaTime);
+                config_.sceneManager->buildConfig(config_);
+            }
+
+            // Potem onUpdate moze nadpisac pojedyncze ustawienia (skybox, kamera, itp.).
             if (config_.onUpdate) {
                 config_.onUpdate(deltaTime, config_);
             }
@@ -439,6 +460,12 @@ private:
             vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
             graphicsPipeline_ = VK_NULL_HANDLE;
         }
+
+        if (transparentPipeline_ != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device_, transparentPipeline_, nullptr);
+            transparentPipeline_ = VK_NULL_HANDLE;
+        }
+
         if (textGraphicsPipeline_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, textGraphicsPipeline_, nullptr);
             textGraphicsPipeline_ = VK_NULL_HANDLE;
@@ -1103,21 +1130,29 @@ private:
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
         VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.blendEnable = VK_FALSE;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
         colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                              VK_COLOR_COMPONENT_G_BIT |
                                               VK_COLOR_COMPONENT_B_BIT |
+                                              VK_COLOR_COMPONENT_G_BIT |
                                               VK_COLOR_COMPONENT_A_BIT;
 
-        // Na razie nie mieszamy kolorow z tlem, ale zostawiamy pelny zapis RGBA.
         VkPipelineColorBlendStateCreateInfo colorBlending{};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.attachmentCount = 1;
         colorBlending.pAttachments = &colorBlendAttachment;
 
+        constexpr VkDeviceSize kPushConstantSize = sizeof(Matrix4) + sizeof(std::array<float, 4>);
+
         VkPushConstantRange pushConstantRange{};
         pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(Matrix4);
+        pushConstantRange.size = kPushConstantSize;
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1151,6 +1186,123 @@ private:
         }
 
         // Po utworzeniu pipeline'u osobne moduly shaderow nie sa juz potrzebne.
+        vkDestroyShaderModule(device_, fragShaderModule, nullptr);
+        vkDestroyShaderModule(device_, vertShaderModule, nullptr);
+    }
+
+    // Tworzy pipeline dla obiektow przezroczystych (depthWrite OFF, blending ON).
+    void createTransparentGraphicsPipeline() {
+        const ShaderProgram& shaderProgram = shaderManager_->require(config_.activeShaderProgram);
+        const auto vertShaderCode = readFile(shaderProgram.vertexPath);
+        const auto fragShaderCode = readFile(shaderProgram.fragmentPath);
+
+        const VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        const VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = shaderProgram.vertexEntryPoint.c_str();
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = shaderProgram.fragmentEntryPoint.c_str();
+
+        const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
+            vertShaderStageInfo,
+            fragShaderStageInfo,
+        };
+
+        const auto bindingDescription = Vertex::bindingDescription();
+        const auto attributeDescriptions = Vertex::attributeDescriptions();
+
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = static_cast<float>(swapChainExtent_.width);
+        viewport.height = static_cast<float>(swapChainExtent_.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+
+        VkRect2D scissor{};
+        scissor.offset = {0, 0};
+        scissor.extent = swapChainExtent_;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = &viewport;
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = &scissor;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_FALSE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.blendEnable = VK_TRUE;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                              VK_COLOR_COMPONENT_G_BIT |
+                                              VK_COLOR_COMPONENT_B_BIT |
+                                              VK_COLOR_COMPONENT_A_BIT;
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+        pipelineInfo.pStages = shaderStages.data();
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.layout = pipelineLayout_;
+        pipelineInfo.renderPass = renderPass_;
+        pipelineInfo.subpass = 0;
+
+        if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &transparentPipeline_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create transparent graphics pipeline");
+        }
+
         vkDestroyShaderModule(device_, fragShaderModule, nullptr);
         vkDestroyShaderModule(device_, vertShaderModule, nullptr);
     }
@@ -1240,11 +1392,11 @@ private:
         colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
         colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
         colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
         colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                              VK_COLOR_COMPONENT_G_BIT |
                                               VK_COLOR_COMPONENT_B_BIT |
+                                              VK_COLOR_COMPONENT_G_BIT |
                                               VK_COLOR_COMPONENT_A_BIT;
 
         VkPipelineColorBlendStateCreateInfo colorBlending{};
@@ -2239,8 +2391,25 @@ private:
         lastTextLabels_ = config_.textLabels;
     }
 
+    // Zwraca material dla obiektu jesli jest skonfigurowany.
+    [[nodiscard]] const Material* resolveMaterial(const SceneObject& object) const {
+        if (!object.materialName.empty() && materialManager_) {
+            try {
+                return &materialManager_->require(object.materialName);
+            } catch (...) {
+                // Brak materialu - uzyj domyslnego.
+            }
+        }
+        return nullptr;
+    }
+
     // Wyznacza nazwe tekstury dla obiektu, korzystajac z lokalnego override'u albo globalnego fallbacku.
     [[nodiscard]] std::string resolveTextureName(const SceneObject& object) const {
+        // Sprawdz najpierw material.
+        const Material* material = resolveMaterial(object);
+        if (material && !material->textureName.empty()) {
+            return material->textureName;
+        }
         if (!object.textureName.empty()) {
             return object.textureName;
         }
@@ -2248,6 +2417,15 @@ private:
             return config_.activeTexture;
         }
         return "__default_white";
+    }
+
+    // Zwraca kolor materialu dla obiektu (albo bialy jesli brak materialu).
+    [[nodiscard]] std::array<float, 4> resolveMaterialColor(const SceneObject& object) const {
+        const Material* material = resolveMaterial(object);
+        if (material) {
+            return material->color;
+        }
+        return {1.0f, 1.0f, 1.0f, 1.0f};
     }
 
     // Zwraca zasoby GPU tekstury o podanej nazwie lub zglasza blad konfiguracji.
@@ -2293,6 +2471,7 @@ private:
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
+        createTransparentGraphicsPipeline();
         createTextGraphicsPipeline();
         createDepthResources();
         createFramebuffers();
@@ -2385,6 +2564,7 @@ private:
 
         // Skybox: renderowany pierwszy (depth LEQUAL, bez zapisu depth, zawsze w tle).
         // Kazda klatka ma wlasny UBO, wiec pobieramy deskryptory z biezacej klatki.
+        skyboxRenderer_.setEnabled(config_.skybox.enabled);
         if (skyboxRenderer_.isReady() && skyboxRenderer_.isEnabled()) {
             const std::string faceTexNames[3] = {"skybox_fb", "skybox_lr", "skybox_top"};
             std::array<VkDescriptorSet, 3> frameFaceSets = {
@@ -2398,7 +2578,6 @@ private:
                     frameFaceSets[ti] = descriptorSetsByTexture_[it->second][frameIndex];
                 }
             }
-            skyboxRenderer_.setEnabled(config_.skybox.enabled);
             skyboxRenderer_.recordDrawCommands(
                 commandBuffer,
                 skyboxRenderer_.getPipelineLayout(),
@@ -2416,10 +2595,43 @@ private:
             gridRenderer_.recordDrawCommands(commandBuffer, gridRenderer_.getPipelineLayout(), gridDescSet, 0);
         }
 
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
+        // Sortuj obiekty: opaque najpierw, potem transparent od najdalszych do kamery
+        std::vector<const SceneObject*> sortedObjects;
+        sortedObjects.reserve(config_.sceneObjects.size());
+        std::vector<std::pair<float, const SceneObject*>> transparentObjects;
+        Vec3 camPos = config_.camera.position;
+
         for (const auto& object : config_.sceneObjects) {
-            // Kazdy obiekt moze miec inna teksture, ale korzystac z tej samej geometrii i pipeline'u.
-            const VkDescriptorSet descriptorSet = requireDescriptorSet(object, frameIndex);
+            const Material* mat = resolveMaterial(object);
+            if (mat && mat->blendMode == BlendMode::Alpha) {
+                float dz = object.transform.translation.z - camPos.z;
+                float dy = object.transform.translation.y - camPos.y;
+                float dx = object.transform.translation.x - camPos.x;
+                float dist = dx * dx + dy * dy + dz * dz;
+                transparentObjects.push_back({-dist, &object});
+            } else {
+                sortedObjects.push_back(&object);
+            }
+        }
+        std::sort(transparentObjects.begin(), transparentObjects.end());
+        for (const auto& entry : transparentObjects) {
+            sortedObjects.push_back(entry.second);
+        }
+
+        VkPipeline currentPipeline = VK_NULL_HANDLE;
+        for (const auto* object : sortedObjects) {
+            bool transparent = false;
+            const Material* mat = resolveMaterial(*object);
+            if (mat && mat->blendMode == BlendMode::Alpha) {
+                transparent = true;
+            }
+            VkPipeline neededPipeline = transparent ? transparentPipeline_ : graphicsPipeline_;
+            if (neededPipeline != currentPipeline) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, neededPipeline);
+                currentPipeline = neededPipeline;
+            }
+
+            const VkDescriptorSet descriptorSet = requireDescriptorSet(*object, frameIndex);
             vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -2431,21 +2643,23 @@ private:
                 nullptr
             );
 
-            const MeshGpuResources& mesh = requireMesh(object.meshName);
+            const MeshGpuResources& mesh = requireMesh(object->meshName);
             const VkBuffer vertexBuffers[] = {mesh.vertexBuffer};
             const VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
             vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-            // Push constants przesylaja macierz modelu bez potrzeby tworzenia osobnego UBO per obiekt.
-            const Matrix4 model = buildModelMatrix(object, elapsed);
+            const PushConstants pushData = {
+                buildModelMatrix(*object, elapsed),
+                resolveMaterialColor(*object),
+            };
             vkCmdPushConstants(
                 commandBuffer,
                 pipelineLayout_,
                 VK_SHADER_STAGE_VERTEX_BIT,
                 0,
-                sizeof(Matrix4),
-                &model
+                sizeof(PushConstants),
+                &pushData
             );
 
             vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
@@ -2710,8 +2924,8 @@ private:
 };
 
 // Publiczny wrapper tylko tworzy prywatna implementacje renderera.
-VulkanRenderer::VulkanRenderer(AppConfig config)
-    : impl_(std::make_unique<VulkanRendererImpl>(std::move(config))) {}
+VulkanRenderer::VulkanRenderer(AppConfig config, MaterialManager* materialManager)
+    : impl_(std::make_unique<VulkanRendererImpl>(std::move(config), materialManager)) {}
 
 // Destruktor jest domyslny, bo cala robota dzieje sie w implementacji trzymanej przez unique_ptr.
 VulkanRenderer::~VulkanRenderer() = default;

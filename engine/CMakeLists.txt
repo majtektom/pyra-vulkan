@@ -5,6 +5,8 @@ add_library(engine3d STATIC
     src/FontManager.cpp
     src/GridRenderer.cpp
     src/InputManager.cpp
+    src/MaterialManager.cpp
+    src/SceneManager.cpp
     src/ShaderManager.cpp
     src/SkyboxRenderer.cpp
     src/TextureManager.cpp
@@ -13,6 +15,9 @@ add_library(engine3d STATIC
     src/VulkanUtil.cpp
     src/X11Window.cpp
 )
+
+# Zalaczamy modul core (loadery modeli itp.)
+add_subdirectory(core)
 
 add_shader_bundle(
     text_overlay

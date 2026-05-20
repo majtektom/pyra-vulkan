@@ -6,13 +6,14 @@
 
 namespace engine3d {
 
+class MaterialManager;
 class VulkanRendererImpl;
 
 // Cienki wrapper nad prywatna implementacja renderera Vulkan.
 class VulkanRenderer {
 public:
-    // Tworzy renderer dla podanej konfiguracji sceny.
-    explicit VulkanRenderer(AppConfig config);
+    // Tworzy renderer dla podanej konfiguracji sceny i opcjonalnego menedzera materialow.
+    explicit VulkanRenderer(AppConfig config, MaterialManager* materialManager = nullptr);
 
     // Destruktor zwalnia implementacje, a ta po kolei niszczy zasoby GPU i okna.
     ~VulkanRenderer();

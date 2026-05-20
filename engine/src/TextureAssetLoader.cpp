@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -209,6 +210,16 @@ namespace {
     texture.mipLevels = std::max(1u, mipMapCount);
 
     std::size_t blockSize = 0;
+    char fourCCStr[5] = {};
+    fourCCStr[0] = char(fourCC & 0xFF);
+    fourCCStr[1] = char((fourCC >> 8) & 0xFF);
+    fourCCStr[2] = char((fourCC >> 16) & 0xFF);
+    fourCCStr[3] = char((fourCC >> 24) & 0xFF);
+    const std::uint32_t ddpfFlags = readLittleEndianUInt32({header[76], header[77], header[78], header[79]});
+    std::cout << "[DDS] " << path << " fourCC=" << fourCCStr
+              << " flags=0x" << std::hex << ddpfFlags << std::dec
+              << (ddpfFlags & 1 ? " ALPHA" : "") << "\n";
+
     if (fourCC == makeFourCC('D', 'X', 'T', '1')) {
         texture.format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
         blockSize = 8;
