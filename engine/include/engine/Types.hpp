@@ -68,10 +68,10 @@ struct Vertex {
 // Surowe dane siatki po stronie CPU.
 struct MeshData {
     std::vector<Vertex> vertices;
-    std::vector<uint16_t> indices;
+    std::vector<uint32_t> indices;
 };
 
-// Zestaw plikow shaderow tworzacy jeden program renderujacy.
+    // Zestaw plikow shaderow tworzacy jeden program renderujacy.
 struct ShaderProgram {
     std::string vertexPath;
     std::string fragmentPath;
@@ -208,6 +208,9 @@ struct Material {
     float shininess = 32.0f;
 };
 
+// Dynamiczne meshe - aktualizowane co klatke (np. dla czastek).
+using DynamicMeshList = std::vector<MeshAsset>;
+
 // Jeden obiekt sceny laczacy siatke, material/teksture i animacje transformacji.
 struct SceneObject {
     std::string meshName;
@@ -268,6 +271,7 @@ struct AppConfig {
     std::string activeShaderProgram = "default";
     // Zasoby sceny: geometria, tekstury, materialy i obiekty wykorzystujace te zasoby.
     std::vector<MeshAsset> meshes;
+    DynamicMeshList dynamicMeshes;
     std::vector<TextureAsset> textures;
     std::vector<FontAsset> fonts;
     std::vector<Material> materials;

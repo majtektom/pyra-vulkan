@@ -381,9 +381,9 @@ void Model3ds::buildMeshData(t3DObject* object) {
     if (maxDistSq > ray) ray = std::sqrt(maxDistSq);
 
     for (int i = 0; i < object->numOfFaces; i++) {
-        mesh.indices[i * 3 + 0] = static_cast<uint16_t>(object->pFaces[i].vertIndex[0]);
-        mesh.indices[i * 3 + 1] = static_cast<uint16_t>(object->pFaces[i].vertIndex[1]);
-        mesh.indices[i * 3 + 2] = static_cast<uint16_t>(object->pFaces[i].vertIndex[2]);
+        mesh.indices[i * 3 + 0] = static_cast<uint32_t>(object->pFaces[i].vertIndex[0]);
+        mesh.indices[i * 3 + 1] = static_cast<uint32_t>(object->pFaces[i].vertIndex[1]);
+        mesh.indices[i * 3 + 2] = static_cast<uint32_t>(object->pFaces[i].vertIndex[2]);
     }
 }
 

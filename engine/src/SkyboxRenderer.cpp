@@ -222,7 +222,7 @@ void SkyboxRenderer::init(
     setV(18, -odl, odl - przes, odl, 0.0f, 1.0f);
     setV(19, odl, odl - przes, odl, 0.0f, 0.0f);
 
-    std::vector<uint16_t> indices = {
+    std::vector<uint32_t> indices = {
         1, 2, 0, 3,
         5, 4, 6, 7,
         9, 10, 8, 11,
@@ -239,7 +239,7 @@ void SkyboxRenderer::init(
         vertexBuffer_, vertexBufferMemory_
     );
 
-    VkDeviceSize ibSize = sizeof(uint16_t) * indices.size();
+    VkDeviceSize ibSize = sizeof(uint32_t) * indices.size();
     vk::createDeviceLocalBufferWithStaging(
         device, physicalDevice, commandPool, graphicsQueue,
         indices.data(), ibSize,
@@ -307,7 +307,7 @@ void SkyboxRenderer::recordDrawCommands(
     const VkBuffer vb[] = {vertexBuffer_};
     const VkDeviceSize offset[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vb, offset);
-    vkCmdBindIndexBuffer(commandBuffer, indexBuffer_, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(commandBuffer, indexBuffer_, 0, VK_INDEX_TYPE_UINT32);
 
     for (int face = 0; face < 5; ++face) {
         const int texIdx = kFaceMap[face];

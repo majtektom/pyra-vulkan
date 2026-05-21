@@ -1,4 +1,4 @@
-#include "core/object/3ds.h"
+#include "3ds.h"
 #include "engine/Engine.hpp"
 #include "engine/CameraController.hpp"
 #include "engine/InputManager.hpp"
@@ -69,8 +69,20 @@ int main() {
     engine3d::AppConfig config;
     const std::string skyboxDir = "assets/skybox/noc";
 
-    config.windowTitle = "engine3d: flyaround + materials + layers";
+    config.windowTitle = "engine3d: model viewer";
     config.clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+
+    config.shaderManifest.entries = {
+        {
+            "default",
+            {
+                std::string(EXAMPLE_SHADER_DIR) + "/model_viewer.vert.spv",
+                std::string(EXAMPLE_SHADER_DIR) + "/model_viewer.frag.spv",
+                "vertexMain",
+                "fragmentMain",
+            },
+        },
+    };
 
     // Textury uzywane przez materialy.
     config.textures = {

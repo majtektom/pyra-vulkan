@@ -1,4 +1,4 @@
-#include "core/object/3ds.h"
+#include "3ds.h"
 #include "engine/Engine.hpp"
 #include "engine/CameraController.hpp"
 #include "engine/InputManager.hpp"

@@ -133,11 +133,8 @@ public:
           fontManager_(std::make_unique<FontManager>(config_.fonts)),
           shaderManager_(std::make_unique<ShaderManager>(config_.shaderManifest)),
           textureManager_(std::make_unique<TextureManager>(config_.textures)) {
-        if (!config_.sceneObjects.empty() && config_.meshes.empty()) {
+        if (!config_.sceneObjects.empty() && config_.meshes.empty() && config_.dynamicMeshes.empty()) {
             throw std::runtime_error("engine3d requires at least one mesh asset");
-        }
-        if (config_.sceneObjects.empty() && config_.textLabels.empty()) {
-            throw std::runtime_error("engine3d requires at least one scene object or text label");
         }
         if (!config_.textLabels.empty() && config_.fonts.empty()) {
             throw std::runtime_error("text rendering requires at least one configured font asset");
@@ -266,6 +263,21 @@ private:
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<MeshGpuResources> meshes_;
     std::unordered_map<std::string, std::size_t> meshLookup_;
+
+    struct DynamicMeshGpu {
+        std::string name;
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+        void* vertexMapped = nullptr;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
+        void* indexMapped = nullptr;
+        uint32_t indexCount = 0;
+        size_t vertexBufferSize = 0;
+        size_t indexBufferSize = 0;
+    };
+    std::vector<DynamicMeshGpu> dynamicMeshes_;
+    std::unordered_map<std::string, std::size_t> dynamicMeshLookup_;
     std::vector<TextureGpuResources> textures_;
     std::unordered_map<std::string, std::size_t> textureLookup_;
     std::vector<FontGpuResources> fonts_;
@@ -316,6 +328,7 @@ private:
         createDepthResources();
         createFramebuffers();
         createMeshBuffers();
+        createDynamicMeshBuffers();
         createGlobalUniformBuffers();
         createTextureResources();
         createFontResources();
@@ -416,6 +429,9 @@ private:
             if (config_.onUpdate) {
                 config_.onUpdate(deltaTime, config_);
             }
+
+            // Aktualizacja dynamicznych siatek (np. czastek) po onUpdate.
+            updateDynamicMeshes();
 
             drawFrame();
         }
@@ -529,6 +545,18 @@ private:
                     vkFreeMemory(device_, mesh.vertexBufferMemory, nullptr);
                 }
             }
+
+            // Dynamiczne siatki (np. czastki) - unmap i zniszcz bufory.
+            for (auto& mesh : dynamicMeshes_) {
+                if (mesh.vertexMapped) vkUnmapMemory(device_, mesh.vertexBufferMemory);
+                if (mesh.indexMapped) vkUnmapMemory(device_, mesh.indexBufferMemory);
+                if (mesh.indexBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, mesh.indexBuffer, nullptr);
+                if (mesh.indexBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device_, mesh.indexBufferMemory, nullptr);
+                if (mesh.vertexBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, mesh.vertexBuffer, nullptr);
+                if (mesh.vertexBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device_, mesh.vertexBufferMemory, nullptr);
+            }
+            dynamicMeshes_.clear();
+            dynamicMeshLookup_.clear();
 
             // Tekstura w Vulkanie sklada sie z kilku obiektow: samplera, view, image oraz pamieci.
             for (auto& texture : textures_) {
@@ -1649,7 +1677,7 @@ private:
                 gpuMesh.vertexBufferMemory
             );
 
-            const VkDeviceSize indexBufferSize = sizeof(uint16_t) * meshAsset.mesh.indices.size();
+            const VkDeviceSize indexBufferSize = sizeof(uint32_t) * meshAsset.mesh.indices.size();
             createDeviceLocalBufferWithStaging(
                 meshAsset.mesh.indices.data(),
                 indexBufferSize,
@@ -1660,6 +1688,68 @@ private:
 
             meshLookup_.emplace(gpuMesh.name, meshes_.size());
             meshes_.push_back(gpuMesh);
+        }
+    }
+
+    // Tworzy bufory dla dynamicznych siatek (HOST_VISIBLE, aktualizowane co klatke).
+    void createDynamicMeshBuffers() {
+        dynamicMeshes_.clear();
+        dynamicMeshLookup_.clear();
+
+        for (const auto& meshAsset : config_.dynamicMeshes) {
+            if (meshAsset.mesh.vertices.empty() || meshAsset.mesh.indices.empty()) continue;
+
+            DynamicMeshGpu gpu{};
+            gpu.name = meshAsset.name;
+            gpu.indexCount = static_cast<uint32_t>(meshAsset.mesh.indices.size());
+            gpu.vertexBufferSize = sizeof(Vertex) * meshAsset.mesh.vertices.size();
+            gpu.indexBufferSize = sizeof(uint32_t) * meshAsset.mesh.indices.size();
+
+            createBuffer(
+                gpu.vertexBufferSize,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                gpu.vertexBuffer,
+                gpu.vertexBufferMemory
+            );
+            vkMapMemory(device_, gpu.vertexBufferMemory, 0, gpu.vertexBufferSize, 0, &gpu.vertexMapped);
+            std::memcpy(gpu.vertexMapped, meshAsset.mesh.vertices.data(), gpu.vertexBufferSize);
+
+            createBuffer(
+                gpu.indexBufferSize,
+                VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                gpu.indexBuffer,
+                gpu.indexBufferMemory
+            );
+            vkMapMemory(device_, gpu.indexBufferMemory, 0, gpu.indexBufferSize, 0, &gpu.indexMapped);
+            std::memcpy(gpu.indexMapped, meshAsset.mesh.indices.data(), gpu.indexBufferSize);
+
+            dynamicMeshLookup_.emplace(gpu.name, dynamicMeshes_.size());
+            dynamicMeshes_.push_back(gpu);
+        }
+    }
+
+    // Aktualizuje dane dynamicznych siatek (kopiuje CPU->GPU).
+    // Bufory sa pre-alokowane na maksymalna ilosc czastek.
+    void updateDynamicMeshes() {
+        for (auto& gpu : dynamicMeshes_) {
+            const auto it = std::find_if(config_.dynamicMeshes.begin(), config_.dynamicMeshes.end(),
+                [&](const MeshAsset& a) { return a.name == gpu.name; });
+            if (it == config_.dynamicMeshes.end()) continue;
+
+            const auto& mesh = it->mesh;
+            size_t vertsSize = sizeof(Vertex) * mesh.vertices.size();
+            size_t idxSize = sizeof(uint32_t) * mesh.indices.size();
+
+            if (vertsSize == 0 || idxSize == 0) {
+                gpu.indexCount = 0;
+                continue;
+            }
+
+            gpu.indexCount = static_cast<uint32_t>(mesh.indices.size());
+            std::memcpy(gpu.vertexMapped, mesh.vertices.data(), vertsSize);
+            std::memcpy(gpu.indexMapped, mesh.indices.data(), idxSize);
         }
     }
 
@@ -2518,12 +2608,22 @@ private:
     }
 
     // Pobiera zasoby GPU siatki wskazanej przez obiekt sceny.
+    [[nodiscard]] const MeshGpuResources* findMesh(const std::string& meshName) const {
+        const auto it = meshLookup_.find(meshName);
+        if (it != meshLookup_.end()) return &meshes_[it->second];
+        return nullptr;
+    }
+
+    [[nodiscard]] const DynamicMeshGpu* findDynamicMesh(const std::string& meshName) const {
+        const auto it = dynamicMeshLookup_.find(meshName);
+        if (it != dynamicMeshLookup_.end()) return &dynamicMeshes_[it->second];
+        return nullptr;
+    }
+
     [[nodiscard]] const MeshGpuResources& requireMesh(const std::string& meshName) const {
-        const auto iterator = meshLookup_.find(meshName);
-        if (iterator == meshLookup_.end()) {
-            throw std::runtime_error("scene object references unknown mesh: " + meshName);
-        }
-        return meshes_[iterator->second];
+        const auto* mesh = findMesh(meshName);
+        if (mesh) return *mesh;
+        throw std::runtime_error("scene object references unknown mesh: " + meshName);
     }
 
     // Nagrywa wszystkie polecenia potrzebne do wyrenderowania jednej klatki.
@@ -2643,11 +2743,22 @@ private:
                 nullptr
             );
 
-            const MeshGpuResources& mesh = requireMesh(object->meshName);
-            const VkBuffer vertexBuffers[] = {mesh.vertexBuffer};
-            const VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+            const auto* staticMesh = findMesh(object->meshName);
+            const auto* dynMesh = findDynamicMesh(object->meshName);
+            if (staticMesh) {
+                const VkBuffer vertexBuffers[] = {staticMesh->vertexBuffer};
+                const VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+                vkCmdBindIndexBuffer(commandBuffer, staticMesh->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            } else if (dynMesh) {
+                if (dynMesh->indexCount == 0) continue;
+                const VkBuffer vertexBuffers[] = {dynMesh->vertexBuffer};
+                const VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+                vkCmdBindIndexBuffer(commandBuffer, dynMesh->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            } else {
+                continue;
+            }
 
             const PushConstants pushData = {
                 buildModelMatrix(*object, elapsed),
@@ -2662,7 +2773,10 @@ private:
                 &pushData
             );
 
-            vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
+            uint32_t indexCount = 0;
+            if (staticMesh) indexCount = staticMesh->indexCount;
+            else if (dynMesh) indexCount = dynMesh->indexCount;
+            vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
         }
 
         if (textGraphicsPipeline_ != VK_NULL_HANDLE) {

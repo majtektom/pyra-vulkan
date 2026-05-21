@@ -5,10 +5,10 @@
 target_sources(engine3d PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/object/3ds.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/object/mediaLibrary.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/object/particleSystem.cpp
 )
 
 target_include_directories(engine3d PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/object
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
