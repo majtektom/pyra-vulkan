@@ -8,6 +8,7 @@ cbuffer GlobalUniformBufferObject : register(b0)
 cbuffer SkyboxPushConstants
 {
     float4 cameraPosition;
+    float exposure;
 };
 
 Texture2D texSampler : register(t1, space0);
@@ -51,5 +52,5 @@ VertexOutput vertexMain(VertexInput input)
 
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
-    return texSampler.Sample(texSamplerState, input.texCoord);
+    return texSampler.Sample(texSamplerState, input.texCoord) * exposure;
 }

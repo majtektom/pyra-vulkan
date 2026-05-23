@@ -47,24 +47,44 @@ uniknięcia aliasingu na oddalonych powierzchniach.
 
 ## Font Atlas
 
-Czcionki TTF są rasteryzowane przez **FreeType** do atlasu — jednej dużej tekstury
+Czcionki TTF są rasteryzowane przez **SDL3_ttf** do atlasu — jednej dużej tekstury
 zawierającej wszystkie glify:
 
 ```
 FontAtlasLoader::load(fontAsset, codepoints)
 │
-├─ FreeType: otwórz plik .ttf
-├─ Ustaw pixelHeight (np. 24 → 24 piksele)
+├─ TTF_OpenFont() — otwórz plik .ttf z zadanym rozmiarem w pikselach
 ├─ Dla każdego codepoint (domyślnie ASCII 32-126):
-│   ├─ FT_Load_Char() — rasteryzuj glif
-│   ├─ Zapisz metryki: bearingX, bearingY, advanceX, width, height
-│   └─ Skopiuj bitmapę do atlasu
-├─ Spakuj glify w atlas (prosty algorytm: rząd poziomych glifów)
-└─ Zwróć FontAtlasData: piksele R8 + metryki glifów
+│   ├─ Konwertuj na UTF-8
+│   ├─ TTF_RenderText_Blended() — renderuj glif do SDL_Surface (RGBA)
+│   ├─ TTF_GetGlyphMetrics() — pobierz metryki (minX, maxX, minY, maxY, advance)
+│   │   ├─ bearingX = minX  (odległość od kursora do lewej krawędzi)
+│   │   ├─ bearingY = maxY  (odległość od baseline do góry glifu, dodatnia = ponad)
+│   │   └─ advanceX = advance (szerokość przesunięcia kursora)
+│   ├─ Wyodrębnij kanał alfa z powierzchni RGBA → R8
+│   └─ Spakuj w atlas (rząd poziomych glifów, zawijanie gdy pełny wiersz)
+├─ Oblicz lineHeight = TTF_GetFontHeight()
+└─ Zwróć FontAtlasData: piksele R8 + metryki glifów + UV
 ```
 
 Format atlasu: `VK_FORMAT_R8_UNORM` — jeden bajt na piksel, wartość 0-255 = krycie.
 W shaderze fragmentu, coverage = `texture(fontAtlas, uv).r`.
+
+### Metryki glifów
+
+Kluczowe metryki z `TTF_GetGlyphMetrics()`:
+
+| Metryka | Znaczenie | Użycie w silniku |
+|---------|-----------|-----------------|
+| `minX` | lewy bearing (odległość kursora od lewej krawędzi glifu) | `bearingX` |
+| `maxX` | prawa krawędź glifu względem kursora | `width ≈ maxX - minX` (przybliżone) |
+| `minY` | dolna krawędź względem baseline (zwykle ≤ 0) | — |
+| `maxY` | górna krawędź względem baseline (zwykle > 0) | `bearingY` |
+| `advance` | przesunięcie kursora po glifie | `advanceX` |
+
+**Uwaga**: `width` i `height` quada glifu pochodzą z wymiarów powierzchni SDL
+(`glyphSurf->w`, `glyphSurf->h`), a nie z metryk. Metryki są używane tylko
+do pozycjonowania (`bearingX`, `bearingY`) i przesuwania kursora (`advanceX`).
 
 ---
 

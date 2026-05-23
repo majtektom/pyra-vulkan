@@ -51,6 +51,7 @@ public:
 
     void setGridEnabled(bool enabled);
     void setSkyboxEnabled(bool enabled, const std::string& directory = "");
+    void setSkyboxExposure(float exposure);
     void setClearColor(float r, float g, float b, float a);
     void setViewportSize(uint32_t width, uint32_t height);
     void setTextLabel(const std::string& text, const std::string& fontName,

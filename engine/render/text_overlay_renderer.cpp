@@ -1,5 +1,6 @@
 #include "text_overlay_renderer.h"
 #include "vulkan_util.h"
+#include "utf8.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -145,6 +146,7 @@ void TextOverlayRenderer::init(
 }
 
 void TextOverlayRenderer::loadFont(const FontAsset& fontAsset) {
+    fontAsset_ = fontAsset;
     fontAtlas_ = FontAtlasLoader::load(fontAsset, {});
 
     VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -254,58 +256,68 @@ void TextOverlayRenderer::deleteVertexBuffer() {
     vertexBufferCapacity_ = 0;
 }
 
-void TextOverlayRenderer::setText(const std::string& text, float x, float y, float scale,
+void TextOverlayRenderer::addText(const std::string& text, float x, float y, float scale,
                                    const std::array<float, 4>& color,
                                    float screenWidth, float screenHeight) {
     if (!fontLoaded_ || fontAtlas_.glyphs.empty()) return;
+    labels_.push_back({text, x, y, scale, color, screenWidth, screenHeight});
+}
+
+void TextOverlayRenderer::clearTexts() {
+    labels_.clear();
+}
+
+void TextOverlayRenderer::buildTexts() {
+    if (!fontLoaded_ || labels_.empty()) { vertexCount_ = 0; return; }
+
+    // Collect all wanted codepoints from texts
+    wantedCodepoints_.clear();
+    for (const auto& label : labels_) {
+        for (auto cp : utf8::decode(label.text)) wantedCodepoints_.insert(cp);
+    }
+    ensureGlyphs();
+    if (!fontLoaded_ || fontAtlas_.glyphs.empty()) { vertexCount_ = 0; return; }
 
     std::vector<TextVertex> vertices;
-    float cursorX = x;
-    float baselineY = y;
 
-    for (char c : text) {
-        uint32_t cp = static_cast<uint32_t>(static_cast<unsigned char>(c));
-        auto it = fontAtlas_.glyphs.find(cp);
-        if (it == fontAtlas_.glyphs.end()) {
-            it = fontAtlas_.glyphs.find(static_cast<uint32_t>('?'));
-            if (it == fontAtlas_.glyphs.end()) continue;
+    for (const auto& label : labels_) {
+        float cursorX = label.x;
+        float baselineY = label.y;
+
+        auto codepoints = utf8::decode(label.text);
+        for (uint32_t cp : codepoints) {
+            auto it = fontAtlas_.glyphs.find(cp);
+            if (it == fontAtlas_.glyphs.end()) {
+                it = fontAtlas_.glyphs.find(static_cast<uint32_t>('?'));
+                if (it == fontAtlas_.glyphs.end()) continue;
+            }
+
+            const auto& g = it->second;
+            float gx = cursorX + g.bearingX * label.scale;
+            float gy = baselineY - g.bearingY * label.scale;
+            float gw = g.width * label.scale;
+            float gh = g.height * label.scale;
+
+            float ndcX0 = (gx      / label.screenWidth)  * 2.0f - 1.0f;
+            float ndcX1 = ((gx+gw) / label.screenWidth)  * 2.0f - 1.0f;
+            float ndcY0 = (gy      / label.screenHeight) * 2.0f - 1.0f;
+            float ndcY1 = ((gy+gh) / label.screenHeight) * 2.0f - 1.0f;
+
+            TextVertex v0, v1, v2, v3;
+            v0.pos[0] = ndcX0; v0.pos[1] = ndcY0; v0.texCoord[0] = g.u0; v0.texCoord[1] = g.v0;
+            v1.pos[0] = ndcX1; v1.pos[1] = ndcY0; v1.texCoord[0] = g.u1; v1.texCoord[1] = g.v0;
+            v2.pos[0] = ndcX1; v2.pos[1] = ndcY1; v2.texCoord[0] = g.u1; v2.texCoord[1] = g.v1;
+            v3.pos[0] = ndcX0; v3.pos[1] = ndcY1; v3.texCoord[0] = g.u0; v3.texCoord[1] = g.v1;
+
+            for (int i = 0; i < 4; ++i) {
+                v0.color[i] = v1.color[i] = v2.color[i] = v3.color[i] = label.color[i];
+            }
+
+            vertices.push_back(v0); vertices.push_back(v1); vertices.push_back(v2);
+            vertices.push_back(v2); vertices.push_back(v3); vertices.push_back(v0);
+
+            cursorX += g.advanceX * label.scale;
         }
-
-        const auto& g = it->second;
-        float gx = cursorX + g.bearingX * scale;
-        float gy = baselineY - g.bearingY * scale;
-        float gw = g.width * scale;
-        float gh = g.height * scale;
-
-        float ndcX0 = (gx      / screenWidth)  * 2.0f - 1.0f;
-        float ndcX1 = ((gx+gw) / screenWidth)  * 2.0f - 1.0f;
-        float ndcY0 = (gy      / screenHeight) * 2.0f - 1.0f;
-        float ndcY1 = ((gy+gh) / screenHeight) * 2.0f - 1.0f;
-
-        TextVertex v0, v1, v2, v3;
-        // lewy górny
-        v0.pos[0] = ndcX0; v0.pos[1] = ndcY0; v0.texCoord[0] = g.u0; v0.texCoord[1] = g.v0;
-        // prawy górny
-        v1.pos[0] = ndcX1; v1.pos[1] = ndcY0; v1.texCoord[0] = g.u1; v1.texCoord[1] = g.v0;
-        // prawy dolny
-        v2.pos[0] = ndcX1; v2.pos[1] = ndcY1; v2.texCoord[0] = g.u1; v2.texCoord[1] = g.v1;
-        // lewy dolny
-        v3.pos[0] = ndcX0; v3.pos[1] = ndcY1; v3.texCoord[0] = g.u0; v3.texCoord[1] = g.v1;
-
-        for (int i = 0; i < 4; ++i) {
-            v0.color[i] = v1.color[i] = v2.color[i] = v3.color[i] = color[i];
-        }
-
-        // trójkąt 1
-        vertices.push_back(v0);
-        vertices.push_back(v1);
-        vertices.push_back(v2);
-        // trójkąt 2
-        vertices.push_back(v2);
-        vertices.push_back(v3);
-        vertices.push_back(v0);
-
-        cursorX += g.advanceX * scale;
     }
 
     if (vertices.empty()) { vertexCount_ = 0; return; }
@@ -326,6 +338,87 @@ void TextOverlayRenderer::setText(const std::string& text, float x, float y, flo
     vkMapMemory(device_, vertexBufferMemory_, 0, requiredSize, 0, &mapped);
     std::memcpy(mapped, vertices.data(), static_cast<size_t>(requiredSize));
     vkUnmapMemory(device_, vertexBufferMemory_);
+}
+
+void TextOverlayRenderer::ensureGlyphs() {
+    if (!fontLoaded_ || fontAsset_.path.empty()) return;
+
+    bool needRebuild = false;
+    for (auto cp : wantedCodepoints_) {
+        if (!fontAtlas_.glyphs.count(cp)) { needRebuild = true; break; }
+    }
+    if (!needRebuild) return;
+
+    releaseFontResources();
+
+    std::vector<uint32_t> allGlyphs(wantedCodepoints_.begin(), wantedCodepoints_.end());
+    fontAtlas_ = FontAtlasLoader::load(fontAsset_, allGlyphs);
+
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    vk::createImage(device_, physicalDevice_, fontAtlas_.atlasWidth, fontAtlas_.atlasHeight, 1,
+                    fontAtlas_.format, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                    fontImage_, fontImageMemory_);
+
+    vk::transitionImageLayout(device_, commandPool_, graphicsQueue_, fontImage_, fontAtlas_.format,
+                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
+
+    VkBuffer stagingBuffer; VkDeviceMemory stagingMemory;
+    VkDeviceSize dataSize = fontAtlas_.pixelBytes.size();
+    vk::createBuffer(device_, physicalDevice_, dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     stagingBuffer, stagingMemory);
+    void* mapped;
+    vkMapMemory(device_, stagingMemory, 0, dataSize, 0, &mapped);
+    std::memcpy(mapped, fontAtlas_.pixelBytes.data(), dataSize);
+    vkUnmapMemory(device_, stagingMemory);
+
+    VkCommandBufferAllocateInfo ai{}; ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = commandPool_; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount = 1;
+    VkCommandBuffer cmd; vkAllocateCommandBuffers(device_, &ai, &cmd);
+    VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; vkBeginCommandBuffer(cmd, &bi);
+    VkBufferImageCopy r{}; r.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    r.imageSubresource.layerCount = 1; r.imageExtent = {fontAtlas_.atlasWidth, fontAtlas_.atlasHeight, 1};
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, fontImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+    vkQueueSubmit(graphicsQueue_, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue_);
+    vkFreeCommandBuffers(device_, commandPool_, 1, &cmd);
+    vkDestroyBuffer(device_, stagingBuffer, nullptr); vkFreeMemory(device_, stagingMemory, nullptr);
+
+    vk::transitionImageLayout(device_, commandPool_, graphicsQueue_, fontImage_, fontAtlas_.format,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+
+    fontImageView_ = vk::createImageView(device_, fontImage_, fontAtlas_.format, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    fontSampler_ = vk::createClampSampler(device_);
+
+    VkDescriptorPoolSize ps{}; ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; ps.descriptorCount = 1;
+    VkDescriptorPoolCreateInfo pi{}; pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pi.poolSizeCount = 1; pi.pPoolSizes = &ps; pi.maxSets = 1;
+    vkCreateDescriptorPool(device_, &pi, nullptr, &descriptorPool_);
+
+    VkDescriptorSetAllocateInfo da{}; da.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    da.descriptorPool = descriptorPool_; da.descriptorSetCount = 1; da.pSetLayouts = &descriptorSetLayout_;
+    vkAllocateDescriptorSets(device_, &da, &descriptorSet_);
+
+    VkDescriptorImageInfo ii{}; ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ii.imageView = fontImageView_; ii.sampler = fontSampler_;
+    VkWriteDescriptorSet w{}; w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = descriptorSet_; w.dstBinding = 0; w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.descriptorCount = 1; w.pImageInfo = &ii;
+    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+}
+
+void TextOverlayRenderer::releaseFontResources() {
+    if (descriptorSet_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE)
+        vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet_);
+    if (descriptorPool_ != VK_NULL_HANDLE) { vkDestroyDescriptorPool(device_, descriptorPool_, nullptr); descriptorPool_ = VK_NULL_HANDLE; }
+    if (fontSampler_ != VK_NULL_HANDLE) { vkDestroySampler(device_, fontSampler_, nullptr); fontSampler_ = VK_NULL_HANDLE; }
+    if (fontImageView_ != VK_NULL_HANDLE) { vkDestroyImageView(device_, fontImageView_, nullptr); fontImageView_ = VK_NULL_HANDLE; }
+    if (fontImage_ != VK_NULL_HANDLE) { vkDestroyImage(device_, fontImage_, nullptr); vkFreeMemory(device_, fontImageMemory_, nullptr); fontImage_ = VK_NULL_HANDLE; }
 }
 
 void TextOverlayRenderer::recordDrawCommands(VkCommandBuffer commandBuffer) const {

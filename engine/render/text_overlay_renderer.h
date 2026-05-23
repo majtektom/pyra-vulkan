@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -25,16 +26,13 @@ struct TextVertex {
 
     static std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions() {
         std::array<VkVertexInputAttributeDescription, 3> attrs{};
-        attrs[0].binding = 0;
-        attrs[0].location = 0;
+        attrs[0].binding = 0; attrs[0].location = 0;
         attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
         attrs[0].offset = offsetof(TextVertex, pos);
-        attrs[1].binding = 0;
-        attrs[1].location = 1;
+        attrs[1].binding = 0; attrs[1].location = 1;
         attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
         attrs[1].offset = offsetof(TextVertex, texCoord);
-        attrs[2].binding = 0;
-        attrs[2].location = 2;
+        attrs[2].binding = 0; attrs[2].location = 2;
         attrs[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attrs[2].offset = offsetof(TextVertex, color);
         return attrs;
@@ -43,25 +41,24 @@ struct TextVertex {
 
 class TextOverlayRenderer {
 public:
+    struct Label {
+        std::string text;
+        float x, y, scale;
+        std::array<float, 4> color;
+        float screenWidth, screenHeight;
+    };
+
     TextOverlayRenderer();
     ~TextOverlayRenderer();
 
-    void init(
-        VkDevice device,
-        VkPhysicalDevice physicalDevice,
-        VkRenderPass renderPass,
-        VkCommandPool commandPool,
-        VkQueue graphicsQueue,
-        VkExtent2D extent
-    );
-
+    void init(VkDevice, VkPhysicalDevice, VkRenderPass, VkCommandPool, VkQueue, VkExtent2D);
     void cleanup();
-
     void loadFont(const FontAsset& fontAsset);
 
-    void setText(const std::string& text, float x, float y, float scale,
+    void addText(const std::string& text, float x, float y, float scale,
                  const std::array<float, 4>& color, float screenWidth, float screenHeight);
-
+    void clearTexts();
+    void buildTexts();
     void recordDrawCommands(VkCommandBuffer commandBuffer) const;
 
     [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
@@ -69,10 +66,13 @@ public:
     [[nodiscard]] bool isPipelineReady() const { return ready_; }
 
 private:
+    void ensureGlyphs();
     void deleteVertexBuffer();
+    void releaseFontResources();
 
     bool ready_ = false;
     bool fontLoaded_ = false;
+    std::vector<Label> labels_;
 
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
@@ -96,6 +96,8 @@ private:
     VkDeviceSize vertexBufferCapacity_ = 0;
 
     FontAtlasData fontAtlas_;
+    FontAsset fontAsset_;
+    std::set<uint32_t> wantedCodepoints_;
 };
 
 } // namespace engine3d

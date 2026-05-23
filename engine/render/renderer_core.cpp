@@ -182,7 +182,9 @@ public:
         }
 
         if (textOverlayEnabled_ && textOverlayRenderer_.isReady()) {
+            textOverlayRenderer_.buildTexts();
             textOverlayRenderer_.recordDrawCommands(cmd);
+            textOverlayRenderer_.clearTexts();
         }
 
         vkCmdEndRenderPass(cmd);
@@ -516,7 +518,7 @@ public:
         if (!textOverlayRenderer_.isReady()) return;
         float sw = static_cast<float>(swapchain_->extent().width);
         float sh = static_cast<float>(swapchain_->extent().height);
-        textOverlayRenderer_.setText(text, x, y, scale, color, sw, sh);
+        textOverlayRenderer_.addText(text, x, y, scale, color, sw, sh);
     }
 
     SkyboxRenderer skyboxRenderer_;
@@ -831,6 +833,9 @@ void Renderer::setSkyboxEnabled(bool enabled, const std::string& directory) {
     impl_->skyboxDirectory_ = directory;
     impl_->skyboxRenderer_.setEnabled(enabled);
     if (enabled) impl_->initSkyboxRenderer();
+}
+void Renderer::setSkyboxExposure(float exposure) {
+    impl_->skyboxRenderer_.setExposure(exposure);
 }
 void Renderer::setClearColor(float r, float g, float b, float a) {
     impl_->clearColor_ = {{r, g, b, a}};

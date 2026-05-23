@@ -1,4 +1,6 @@
 #include "vulkan_context.h"
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 #include <iostream>
 #include <vector>
 #include <set>
@@ -6,10 +8,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <optional>
-
-#include <X11/Xlib.h>
-#define VK_USE_PLATFORM_XLIB_KHR
-#include <vulkan/vulkan_xlib.h>
 
 namespace engine3d {
 
@@ -101,13 +99,9 @@ void VulkanContext::initialize(const std::string& appName) {
     setupDebugMessenger();
 }
 
-void VulkanContext::createSurface(void* display, unsigned long window) {
-    VkXlibSurfaceCreateInfoKHR createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    createInfo.dpy = (Display*)display;
-    createInfo.window = (Window)window;
-    if (vkCreateXlibSurfaceKHR(instance_, &createInfo, nullptr, &surface_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create window surface");
+void VulkanContext::createSurface(SDL_Window* window) {
+    if (!SDL_Vulkan_CreateSurface(window, instance_, nullptr, &surface_)) {
+        throw std::runtime_error(std::string("failed to create SDL Vulkan surface: ") + SDL_GetError());
     }
     pickPhysicalDevice();
     createLogicalDevice();
@@ -122,11 +116,10 @@ void VulkanContext::createInstance(const std::string& appName) {
     appInfo.pEngineName = "engine3d";
     appInfo.apiVersion = VK_API_VERSION_1_1;
 
-    std::vector<const char*> extensions = { 
-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME, 
-        VK_KHR_SURFACE_EXTENSION_NAME,
-        VK_KHR_XLIB_SURFACE_EXTENSION_NAME
-    };
+    unsigned int sdlExtCount = 0;
+    const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
+    std::vector<const char*> extensions(sdlExts, sdlExts + sdlExtCount);
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

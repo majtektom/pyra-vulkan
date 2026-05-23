@@ -12,7 +12,6 @@
 #include "camera_component.h"
 #include "camera_controller.h"
 #include "entity.h"
-#include "input_manager.h"
 #include "material_manager.h"
 #include "platform.h"
 #include "scene_manager.h"
@@ -63,6 +62,7 @@ public:
     SceneManager* getSceneManager() { return &sceneManager; }
     MaterialSystem* getMaterialSystem() { return materialSystem.get(); }
     MeshManager* getMeshManager() { return meshManager.get(); }
+    CameraController* getCameraController() { return &cameraController; }
 
     float getCurrentFPS() const { return currentFPS; }
 
@@ -104,10 +104,8 @@ private:
     void update(TimeDelta deltaTime);
     void renderFrame();
     TimeDelta calculateDeltaTimeMs();
-    void updateCameraControls(TimeDelta deltaTime);
 
     CameraController cameraController;
-    CameraConfig cameraConfig;
 };
 
 } // namespace engine3d

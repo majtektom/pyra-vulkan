@@ -303,6 +303,7 @@ void SkyboxRenderer::recordDrawCommands(
     pushConstants.cameraPosition[0] = cameraPosition.x;
     pushConstants.cameraPosition[1] = cameraPosition.y;
     pushConstants.cameraPosition[2] = cameraPosition.z;
+    pushConstants.exposure = exposure_;
     vkCmdPushConstants(
         commandBuffer,
         skyboxPipelineLayout,

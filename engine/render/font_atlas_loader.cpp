@@ -2,21 +2,13 @@
 
 #include "utf8.h"
 
+#include <SDL3_ttf/SDL_ttf.h>
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
-
-#ifndef ENGINE3D_HAS_FREETYPE
-#define ENGINE3D_HAS_FREETYPE 0
-#endif
-
-#if ENGINE3D_HAS_FREETYPE
-#include <ft2build.h>
-#include FT_FREETYPE_H
-#endif
 
 namespace engine3d {
 namespace {
@@ -35,47 +27,29 @@ struct RasterizedGlyph {
 
 }  // namespace
 
-// Wczytuje TTF przez FreeType i zamienia wskazany zestaw znakow Unicode na atlas jednokanalowy.
 FontAtlasData FontAtlasLoader::load(const FontAsset& fontAsset, const std::vector<std::uint32_t>& glyphCodepoints) {
-#if !ENGINE3D_HAS_FREETYPE
-    (void)fontAsset;
-    (void)glyphCodepoints;
-    throw std::runtime_error(
-        "TTF font support requires FreeType development headers. Install freetype-devel and rebuild the project."
-    );
-#else
-    FT_Library library = nullptr;
-    if (FT_Init_FreeType(&library) != 0) {
-        throw std::runtime_error("failed to initialize FreeType library");
+    TTF_Font* font = TTF_OpenFont(fontAsset.path.c_str(), static_cast<float>(fontAsset.pixelHeight));
+    if (!font) {
+        throw std::runtime_error("failed to open TTF font: " + fontAsset.path + " — " + SDL_GetError());
     }
 
-    FT_Face face = nullptr;
-    const auto cleanup = [&]() {
-        if (face != nullptr) {
-            FT_Done_Face(face);
-        }
-        if (library != nullptr) {
-            FT_Done_FreeType(library);
-        }
-    };
-
-    if (FT_New_Face(library, fontAsset.path.c_str(), 0, &face) != 0) {
-        cleanup();
-        throw std::runtime_error("failed to open TTF font: " + fontAsset.path);
-    }
-
-    if (FT_Set_Pixel_Sizes(face, 0, fontAsset.pixelHeight) != 0) {
-        cleanup();
-        throw std::runtime_error("failed to set TTF pixel size for font: " + fontAsset.name);
-    }
+    const auto cleanup = [&]() { TTF_CloseFont(font); };
 
     constexpr uint32_t padding = 1;
 
     std::vector<std::uint32_t> requestedGlyphs = glyphCodepoints;
     if (requestedGlyphs.empty()) {
-        for (std::uint32_t codepoint = 32; codepoint <= 126; ++codepoint) {
-            requestedGlyphs.push_back(codepoint);
-        }
+        // ASCII printable (32-126)
+        for (std::uint32_t cp = 32; cp <= 126; ++cp) requestedGlyphs.push_back(cp);
+        // Polish diacritics (Latin Extended-A + Latin-1 Supplement)
+        const std::uint32_t polishGlyphs[] = {
+            0x0104, 0x0105, 0x0106, 0x0107, 0x0118, 0x0119,  // ĄąĆćĘę
+            0x0141, 0x0142, 0x0143, 0x0144,                   // ŁłŃń
+            0x00D3, 0x00F3,                                     // Óó
+            0x015A, 0x015B,                                     // Śś
+            0x0179, 0x017A, 0x017B, 0x017C,                   // ŹźŻż
+        };
+        for (auto cp : polishGlyphs) utf8::appendUnique(requestedGlyphs, cp);
     }
 
     utf8::appendUnique(requestedGlyphs, static_cast<std::uint32_t>(' '));
@@ -89,35 +63,67 @@ FontAtlasData FontAtlasLoader::load(const FontAsset& fontAsset, const std::vecto
     rasterizedGlyphs.reserve(requestedGlyphs.size());
 
     for (std::uint32_t codepoint : requestedGlyphs) {
-        if (FT_Load_Char(face, codepoint, FT_LOAD_RENDER) != 0) {
-            cleanup();
-            throw std::runtime_error("failed to rasterize glyph for codepoint: " + std::to_string(codepoint));
+        char utf8[5] = {};
+        if (codepoint < 0x80) {
+            utf8[0] = static_cast<char>(codepoint);
+        } else if (codepoint < 0x800) {
+            utf8[0] = static_cast<char>(0xC0 | (codepoint >> 6));
+            utf8[1] = static_cast<char>(0x80 | (codepoint & 0x3F));
+        } else if (codepoint < 0x10000) {
+            utf8[0] = static_cast<char>(0xE0 | (codepoint >> 12));
+            utf8[1] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+            utf8[2] = static_cast<char>(0x80 | (codepoint & 0x3F));
+        } else {
+            utf8[0] = static_cast<char>(0xF0 | (codepoint >> 18));
+            utf8[1] = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+            utf8[2] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+            utf8[3] = static_cast<char>(0x80 | (codepoint & 0x3F));
         }
 
-        const FT_GlyphSlot glyph = face->glyph;
-        const uint32_t glyphWidth = static_cast<uint32_t>(glyph->bitmap.width);
-        const uint32_t glyphHeight = static_cast<uint32_t>(glyph->bitmap.rows);
+        SDL_Surface* glyphSurf = TTF_RenderText_Blended(font, utf8, 0, SDL_Color{255, 255, 255, 255});
+        if (!glyphSurf) continue;
 
-        if (penX + glyphWidth + padding > atlasWidth) {
+        int minX, maxX, minY, maxY, advance;
+        if (!TTF_GetGlyphMetrics(font, codepoint, &minX, &maxX, &minY, &maxY, &advance)) {
+            advance = glyphSurf->w;
+            minX = 0; maxX = glyphSurf->w;
+            minY = -TTF_GetFontDescent(font);
+            maxY = TTF_GetFontAscent(font);
+        }
+
+        const uint32_t gw = static_cast<uint32_t>(glyphSurf->w);
+        const uint32_t gh = static_cast<uint32_t>(glyphSurf->h);
+
+        if (penX + gw + padding > atlasWidth) {
             penX = padding;
             penY += rowHeight + padding;
             rowHeight = 0;
         }
 
-        RasterizedGlyph rasterized{};
-        rasterized.codepoint = codepoint;
-        rasterized.width = static_cast<int>(glyphWidth);
-        rasterized.height = static_cast<int>(glyphHeight);
-        rasterized.bearingX = glyph->bitmap_left;
-        rasterized.bearingY = glyph->bitmap_top;
-        rasterized.advanceX = static_cast<int>(glyph->advance.x >> 6);
-        rasterized.atlasX = penX;
-        rasterized.atlasY = penY;
-        rasterized.pixels.assign(glyph->bitmap.buffer, glyph->bitmap.buffer + glyphWidth * glyphHeight);
-        rasterizedGlyphs.push_back(std::move(rasterized));
+        RasterizedGlyph rg{};
+        rg.codepoint = codepoint;
+        rg.width = static_cast<int>(gw);
+        rg.height = static_cast<int>(gh);
+        rg.bearingX = minX;
+        rg.bearingY = TTF_GetFontAscent(font);
+        rg.advanceX = advance;
+        rg.atlasX = penX;
+        rg.atlasY = penY;
 
-        penX += glyphWidth + padding;
-        rowHeight = std::max(rowHeight, glyphHeight);
+        rg.pixels.resize(static_cast<size_t>(gw) * gh);
+        uint8_t* src = static_cast<uint8_t*>(glyphSurf->pixels);
+        for (uint32_t y = 0; y < gh; ++y) {
+            const uint8_t* row = src + static_cast<size_t>(y) * glyphSurf->pitch;
+            for (uint32_t x = 0; x < gw; ++x) {
+                rg.pixels[static_cast<size_t>(y) * gw + x] = row[x * 4 + 3];
+            }
+        }
+
+        rasterizedGlyphs.push_back(std::move(rg));
+        penX += gw + padding;
+        rowHeight = std::max(rowHeight, gh);
+
+        SDL_DestroySurface(glyphSurf);
     }
 
     const uint32_t atlasHeight = std::max(penY + rowHeight + padding, fontAsset.pixelHeight + 2 * padding);
@@ -126,30 +132,30 @@ FontAtlasData FontAtlasLoader::load(const FontAsset& fontAsset, const std::vecto
     atlas.atlasWidth = atlasWidth;
     atlas.atlasHeight = atlasHeight;
     atlas.pixelHeight = fontAsset.pixelHeight;
-    atlas.lineHeight = static_cast<float>(face->size->metrics.height >> 6);
+    atlas.lineHeight = static_cast<float>(TTF_GetFontHeight(font));
     if (atlas.lineHeight <= 0.0f) {
         atlas.lineHeight = static_cast<float>(fontAsset.pixelHeight);
     }
     atlas.pixelBytes.assign(static_cast<std::size_t>(atlasWidth) * atlasHeight, 0);
 
-    for (const auto& glyph : rasterizedGlyphs) {
-        for (int row = 0; row < glyph.height; ++row) {
-            const std::size_t dstOffset = static_cast<std::size_t>(glyph.atlasY + static_cast<uint32_t>(row)) * atlasWidth + glyph.atlasX;
-            const std::size_t srcOffset = static_cast<std::size_t>(row) * static_cast<std::size_t>(glyph.width);
-            std::copy_n(glyph.pixels.data() + srcOffset, glyph.width, atlas.pixelBytes.data() + dstOffset);
+    for (const auto& rg : rasterizedGlyphs) {
+        for (int row = 0; row < rg.height; ++row) {
+            const std::size_t dst = static_cast<std::size_t>(rg.atlasY + static_cast<uint32_t>(row)) * atlasWidth + rg.atlasX;
+            const std::size_t src = static_cast<std::size_t>(row) * static_cast<std::size_t>(rg.width);
+            std::copy_n(rg.pixels.data() + src, rg.width, atlas.pixelBytes.data() + dst);
         }
 
-        FontAtlasGlyph atlasGlyph{};
-        atlasGlyph.advanceX = static_cast<float>(glyph.advanceX);
-        atlasGlyph.bearingX = static_cast<float>(glyph.bearingX);
-        atlasGlyph.bearingY = static_cast<float>(glyph.bearingY);
-        atlasGlyph.width = static_cast<float>(glyph.width);
-        atlasGlyph.height = static_cast<float>(glyph.height);
-        atlasGlyph.u0 = static_cast<float>(glyph.atlasX) / static_cast<float>(atlasWidth);
-        atlasGlyph.v0 = static_cast<float>(glyph.atlasY) / static_cast<float>(atlasHeight);
-        atlasGlyph.u1 = static_cast<float>(glyph.atlasX + static_cast<uint32_t>(glyph.width)) / static_cast<float>(atlasWidth);
-        atlasGlyph.v1 = static_cast<float>(glyph.atlasY + static_cast<uint32_t>(glyph.height)) / static_cast<float>(atlasHeight);
-        atlas.glyphs.emplace(glyph.codepoint, atlasGlyph);
+        FontAtlasGlyph g{};
+        g.advanceX = static_cast<float>(rg.advanceX);
+        g.bearingX = static_cast<float>(rg.bearingX);
+        g.bearingY = static_cast<float>(rg.bearingY);
+        g.width = static_cast<float>(rg.width);
+        g.height = static_cast<float>(rg.height);
+        g.u0 = static_cast<float>(rg.atlasX) / static_cast<float>(atlasWidth);
+        g.v0 = static_cast<float>(rg.atlasY) / static_cast<float>(atlasHeight);
+        g.u1 = static_cast<float>(rg.atlasX + static_cast<uint32_t>(rg.width)) / static_cast<float>(atlasWidth);
+        g.v1 = static_cast<float>(rg.atlasY + static_cast<uint32_t>(rg.height)) / static_cast<float>(atlasHeight);
+        atlas.glyphs.emplace(rg.codepoint, g);
     }
 
     VkBufferImageCopy region{};
@@ -163,7 +169,6 @@ FontAtlasData FontAtlasLoader::load(const FontAsset& fontAsset, const std::vecto
 
     cleanup();
     return atlas;
-#endif
 }
 
 }  // namespace engine3d

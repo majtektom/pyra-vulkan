@@ -40,7 +40,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
         
         vulkanContext = std::make_shared<VulkanContext>();
         vulkanContext->initialize(appName);
-        vulkanContext->createSurface(platform->nativeDisplay(), platform->nativeWindow());
+        vulkanContext->createSurface(platform->nativeWindow());
 
         materialSystem = std::make_unique<MaterialSystem>(vulkanContext, VK_NULL_HANDLE);
         meshManager = std::make_unique<MeshManager>(vulkanContext);
@@ -211,7 +211,6 @@ void Engine::addShader(const std::string& name, const ShaderProgram& program) {
 // 3) aktualizacja menedżera scen, 4) update wszystkich aktywnych bytów.
 // @param deltaTime — czas od poprzedniej klatki w milisekundach
 void Engine::update(TimeDelta deltaTime) {
-    updateCameraControls(deltaTime);
 
     if (onUpdate) {
         onUpdate(std::chrono::duration<float>(deltaTime).count(), *this);
@@ -305,27 +304,6 @@ Engine::TimeDelta Engine::calculateDeltaTimeMs() {
     }
 
     return deltaTimeMs;
-}
-
-// updateCameraControls — odczytuje stan klawiatury i myszy z platformy,
-// kopiuje stan kamery do CameraConfig, wywołuje CameraController::update(),
-// a następnie zapisuje zmodyfikowaną pozycję/orientację z powrotem do komponentu kamery.
-// @param deltaTime — czas od ostatniej klatki, używany do ruchu zależnego od czasu (dt * prędkość)
-void Engine::updateCameraControls(TimeDelta deltaTime) {
-    if (!activeCamera) return;
-
-    InputSnapshot input = platform->pollInput();
-    float dt = std::chrono::duration<float>(deltaTime).count();
-
-    cameraConfig.position = activeCamera->position;
-    cameraConfig.target = activeCamera->target;
-    cameraConfig.up = activeCamera->up;
-
-    cameraController.update(dt, input.keys, input.mouseDeltaX, input.mouseDeltaY, cameraConfig);
-
-    activeCamera->position = cameraConfig.position;
-    activeCamera->target = cameraConfig.target;
-    activeCamera->up = cameraConfig.up;
 }
 
 } // namespace engine3d

@@ -8,8 +8,10 @@ przez ładowanie modeli, system materiałów, shaderów HLSL, po renderowanie te
 
 Silnik nie używa zewnętrznych bibliotek poza:
 - **Vulkan 1.1** — API graficzne niskiego poziomu
-- **X11** — tworzenie okna na Linux
-- **FreeType** — rasteryzacja czcionek TTF
+- **SDL3** — tworzenie okna, obsługa wejścia (klawiatura, mysz)
+- **SDL3_ttf** — rasteryzacja czcionek TTF
+- **SDL3_image** — ładowanie obrazów (zarezerwowane na przyszłość)
+- **SDL3_sound** — odtwarzanie dźwięku (zarezerwowane na przyszłość)
 
 Cała reszta — matematyka 3D, zarządzanie pamięcią, system komponentów — jest napisana od zera.
 
@@ -27,9 +29,9 @@ przykład_vulkan/
 │   │   ├── model_3ds        # loader modeli 3DS
 │   │   └── ...              # shadery, tekstury, czcionki, cząstki
 │   ├── camera/              # kamera i kontroler FPS
-│   ├── platform/            # tworzenie okna X11
+│   ├── platform/            # okno SDL3 + obsługa wejścia
 │   ├── scene/               # zarządzanie sceną
-│   └── input/               # obsługa wejścia (klawiatura, mysz)
+│   └── input/               # (usunięte — input jest w platform.cpp)
 ├── examples/                # przykładowe aplikacje
 │   ├── flyaround/           # latanie po scenie z modelami 3DS
 │   ├── rotating_cube/       # obracające się kostki
@@ -85,7 +87,7 @@ Silnik ma 3 główne warstwy:
 |---------|-----------------|----------|
 | **Core** | Pętla gry, encje/komponenty, typy | `Engine`, `Entity`, `MeshComponent` |
 | **Render** | Wszystko związane z GPU | `MaterialSystem`, `Model3ds`, `VulkanSwapchain` |
-| **Platform** | System operacyjny, okno, wejście | `Platform`, `InputManager` |
+| **Platform** | Okno SDL3, wejście, czcionki | `Platform`, `FontAtlasLoader` |
 
 Każda warstwa zależy tylko od warstw poniżej:
 ```

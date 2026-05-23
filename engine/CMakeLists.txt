@@ -30,7 +30,6 @@ add_library(engine3d STATIC
     render/backend/vulkan_resources.cpp
     render/backend/vulkan_swapchain.cpp
     scene/scene_manager.cpp
-    input/input_manager.cpp
 )
 
 add_shader_bundle(
@@ -56,7 +55,7 @@ add_shader_bundle(
 
 target_compile_definitions(engine3d
     PUBLIC
-        ENGINE3D_HAS_FREETYPE=${ENGINE3D_HAS_FREETYPE}
+        ENGINE3D_HAS_TTF=${ENGINE3D_HAS_TTF}
     PRIVATE
         ENGINE_TEXT_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/text_overlay"
         ENGINE_GRID_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/grid"
@@ -74,14 +73,27 @@ target_include_directories(engine3d
         ${CMAKE_CURRENT_SOURCE_DIR}/input
 )
 
-if(Freetype_FOUND)
-    target_link_libraries(engine3d PRIVATE Freetype::Freetype)
+if(TARGET PkgConfig::SDL3)
+    target_link_libraries(engine3d PUBLIC PkgConfig::SDL3)
+else()
+    target_link_libraries(engine3d PUBLIC sdl3::sdl3)
+endif()
+
+if(TARGET PkgConfig::SDL3_TTF AND SDL3_TTF_FOUND)
+    target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_TTF)
+endif()
+
+if(TARGET PkgConfig::SDL3_IMAGE AND SDL3_IMAGE_FOUND)
+    target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_IMAGE)
+endif()
+
+if(TARGET PkgConfig::SDL3_SOUND AND SDL3_SOUND_FOUND)
+    target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_SOUND)
 endif()
 
 target_link_libraries(engine3d
     PUBLIC
         Vulkan::Vulkan
-        X11::X11
 )
 
 add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders)

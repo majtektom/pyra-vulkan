@@ -6,9 +6,12 @@
 #include "model_3ds.h"
 #include "material_system.h"
 
+#include <SDL3/SDL.h>
+
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -61,10 +64,12 @@ int main() {
     renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     const std::string skyboxDir = "assets/skybox/noc";
+    // const std::string skyboxDir = "assets/skybox/dzien";
     renderer->loadTexture("skybox_fb", skyboxDir + "/box_12.dds");
     renderer->loadTexture("skybox_lr", skyboxDir + "/box_34.dds");
     renderer->loadTexture("skybox_top", skyboxDir + "/box_5.dds");
     renderer->setSkyboxEnabled(true, skyboxDir);
+    renderer->setSkyboxExposure(0.5f);
     // renderer->setGridEnabled(true);
 
     renderer->loadFont("times", "assets/fonts/times.ttf", 48);
@@ -235,17 +240,57 @@ int main() {
 
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
     camera->position = {-60.0f, 15.0f, -62.0f};
+    camera->target = {0.5f, 0.0f, 0.5f};
     camera->fieldOfViewDegrees = 50.0f;
     camera->nearPlane = 1.5f;
     camera->farPlane = 16000.0f;
     engine.setActiveCamera(camera);
 
-    engine.onUpdate = [&](float, Engine& e) {
+    // Inicjalizacja kontrolera kamery (tylko raz)
+    engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
+
+    engine.onUpdate = [&](float dt, Engine& e) {
+        auto* cc = e.getCameraController();
+        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        if (cc && cam) {
+            cc->moveSpeed = 15.0f;
+
+            auto snap = e.getPlatform()->pollInput();
+            float ts = cc->mouseSensitivity;
+            cc->rotateYaw(-static_cast<float>(snap.mouseDeltaX) * ts);
+            cc->rotatePitch(-static_cast<float>(snap.mouseDeltaY) * ts);
+
+            float vel = cc->moveSpeed * dt;
+            if (snap.keys[SDL_SCANCODE_W]) cc->moveForward(vel);
+            if (snap.keys[SDL_SCANCODE_S]) cc->moveForward(-vel);
+            if (snap.keys[SDL_SCANCODE_A]) cc->moveRight(-vel);
+            if (snap.keys[SDL_SCANCODE_D]) cc->moveRight(vel);
+            if (snap.keys[SDL_SCANCODE_SPACE]) cc->moveUp(vel);
+            if (snap.keys[SDL_SCANCODE_LCTRL]) cc->moveUp(-vel);
+
+            cc->update(dt, *cam);
+        }
+
         std::ostringstream oss;
         oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
         e.getRenderer()->setTextLabel(oss.str(), "times",
-                                       e.getRenderer()->width() - 190.0f, 90.0f, 1.0f,
+                                       e.getRenderer()->width() - 190.0f, 35.0f, 1.0f,
                                        {1.0f, 1.0f, 0.2f, 1.0f});
+
+        if (cam) {
+            std::ostringstream pos;
+            pos << "pos: " << std::fixed << std::setprecision(0)
+                << cam->position.x << " " << cam->position.y << " " << cam->position.z;
+            e.getRenderer()->setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f,
+                                          {0.7f, 0.7f, 1.0f, 1.0f});
+
+            Vec3 dir = normalize(subtract(cam->target, cam->position));
+            std::ostringstream look;
+            look << "dir: " << std::fixed << std::setprecision(2)
+                 << dir.x << " " << dir.y << " " << dir.z;
+            e.getRenderer()->setTextLabel(look.str(), "times", 10.0f, 60.0f, 0.7f,
+                                          {0.7f, 0.7f, 1.0f, 1.0f});
+        }
     };
 
     engine.run();

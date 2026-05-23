@@ -1,144 +1,117 @@
-#define VK_USE_PLATFORM_XLIB_KHR
-
 #include "platform.h"
 
-#include <X11/Xlib.h>
-#include <X11/keysym.h>
+#include <SDL3/SDL.h>
+#if ENGINE3D_HAS_TTF
+#include <SDL3_ttf/SDL_ttf.h>
+#endif
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
 namespace engine3d {
-namespace {
-
-constexpr int kMouseLeft = 0;
-constexpr int kMouseMiddle = 2;
-constexpr int kMouseRight = 3;
-constexpr int kMouseScrollUp = 4;
-constexpr int kMouseScrollDown = 5;
-
-} // namespace
 
 Platform::Platform(const std::string& title, uint32_t width, uint32_t height)
     : width_(width), height_(height) {
-    display_ = XOpenDisplay(nullptr);
-    if (!display_) {
-        throw std::runtime_error("Failed to open X display");
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+        throw std::runtime_error(std::string("SDL3 init failed: ") + SDL_GetError());
+    }
+#if ENGINE3D_HAS_TTF
+    TTF_Init();
+#endif
+
+    window_ = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height),
+                                SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    if (!window_) {
+        SDL_Quit();
+        throw std::runtime_error(std::string("SDL3 window creation failed: ") + SDL_GetError());
     }
 
-    int screen = DefaultScreen(display_);
-    Window root = RootWindow(display_, screen);
+    SDL_SetWindowRelativeMouseMode(window_, false);
 
-    XSetWindowAttributes attribs{};
-    attribs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask |
-                         ButtonPressMask | ButtonReleaseMask |
-                         PointerMotionMask | StructureNotifyMask |
-                         FocusChangeMask;
-
-    window_ = XCreateWindow(display_, root, 0, 0, width, height, 0,
-                            CopyFromParent, InputOutput, CopyFromParent,
-                            CWEventMask, &attribs);
-
-    XStoreName(display_, window_, title.c_str());
-    XMapWindow(display_, window_);
-
-    wmDeleteMessage_ = XInternAtom(display_, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(display_, window_, &wmDeleteMessage_, 1);
-
-    {
-        Pixmap blank = XCreateBitmapFromData(display_, window_, "", 1, 1);
-        XColor dummy;
-        invisibleCursor_ = XCreatePixmapCursor(display_, blank, blank, &dummy, &dummy, 0, 0);
-        XFreePixmap(display_, blank);
+    // Tworzenie niewidzialnego kursora (1x1 przezroczysta bitmapa)
+    uint8_t blankData[4] = {0, 0, 0, 0};
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(1, 1, SDL_PIXELFORMAT_RGBA8888, blankData, 4);
+    if (surface) {
+        invisibleCursor_ = SDL_CreateColorCursor(surface, 0, 0);
+        SDL_DestroySurface(surface);
     }
+
+    SDL_ShowWindow(window_);
 }
 
 Platform::~Platform() {
-    if (display_ && window_) {
-        XUnmapWindow(display_, window_);
-        XDestroyWindow(display_, window_);
-    }
     if (invisibleCursor_) {
-        XFreeCursor(display_, invisibleCursor_);
+        SDL_DestroyCursor(invisibleCursor_);
     }
-    if (display_) {
-        XCloseDisplay(display_);
+    if (window_) {
+        SDL_DestroyWindow(window_);
     }
+#if ENGINE3D_HAS_TTF
+    TTF_Quit();
+#endif
+    SDL_Quit();
 }
 
 void Platform::processEvents() {
-    if (pointerGrabbed_) {
-        int cx = static_cast<int>(width_) / 2;
-        int cy = static_cast<int>(height_) / 2;
-        mouseX_ = cx;
-        mouseY_ = cy;
-        XWarpPointer(display_, None, window_, 0, 0, 0, 0, cx, cy);
-    }
-
     mouseDeltaX_ = 0;
     mouseDeltaY_ = 0;
 
-    while (XPending(display_)) {
-        XEvent event;
-        XNextEvent(display_, &event);
-
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
         switch (event.type) {
-        case ClientMessage:
-            if (static_cast<unsigned long>(event.xclient.data.l[0]) == wmDeleteMessage_) {
-                shouldClose_ = true;
-            }
-            break;
-        case DestroyNotify:
+        case SDL_EVENT_QUIT:
             shouldClose_ = true;
             break;
-        case ConfigureNotify:
-            if (static_cast<uint32_t>(event.xconfigure.width) != width_ ||
-                static_cast<uint32_t>(event.xconfigure.height) != height_) {
-                width_ = event.xconfigure.width;
-                height_ = event.xconfigure.height;
-                resized_ = true;
-            }
+        case SDL_EVENT_WINDOW_RESIZED:
+            width_ = static_cast<uint32_t>(event.window.data1);
+            height_ = static_cast<uint32_t>(event.window.data2);
+            resized_ = true;
             break;
-        case KeyPress: {
-            int kc = static_cast<int>(event.xkey.keycode);
-            if (kc >= 0 && kc < 256) keys_[kc] = true;
-            KeySym ks = XLookupKeysym(&event.xkey, 0);
-            if (ks == XK_Escape) {
+        case SDL_EVENT_KEY_DOWN: {
+            SDL_Scancode sc = event.key.scancode;
+            if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
+                keys_[static_cast<int>(sc)] = true;
+            }
+            if (event.key.key == SDLK_ESCAPE) {
                 shouldClose_ = true;
             }
             break;
         }
-        case KeyRelease: {
-            int kc = static_cast<int>(event.xkey.keycode);
-            if (kc >= 0 && kc < 256) keys_[kc] = false;
+        case SDL_EVENT_KEY_UP: {
+            SDL_Scancode sc = event.key.scancode;
+            if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
+                keys_[static_cast<int>(sc)] = false;
+            }
             break;
         }
-        case ButtonPress:
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (!pointerGrabbed_) {
                 grabPointer(true);
             }
-            if (event.xbutton.button == Button1) mouseButtons_[kMouseLeft] = true;
-            else if (event.xbutton.button == Button3) mouseButtons_[kMouseRight] = true;
+            if (event.button.button == SDL_BUTTON_LEFT)  mouseButtons_[0] = true;
+            if (event.button.button == SDL_BUTTON_RIGHT) mouseButtons_[1] = true;
             break;
-        case ButtonRelease:
-            if (event.xbutton.button == Button1) mouseButtons_[kMouseLeft] = false;
-            else if (event.xbutton.button == Button3) mouseButtons_[kMouseRight] = false;
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (event.button.button == SDL_BUTTON_LEFT)  mouseButtons_[0] = false;
+            if (event.button.button == SDL_BUTTON_RIGHT) mouseButtons_[1] = false;
             break;
-        case FocusOut:
+        case SDL_EVENT_MOUSE_MOTION:
+            if (pointerGrabbed_) {
+                mouseDeltaX_ += static_cast<int>(event.motion.xrel);
+                mouseDeltaY_ += static_cast<int>(event.motion.yrel);
+            }
+            mouseX_ = static_cast<int>(event.motion.x);
+            mouseY_ = static_cast<int>(event.motion.y);
+            break;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
             if (pointerGrabbed_) {
                 grabPointer(false);
             }
             break;
-        case FocusIn:
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
             if (!pointerGrabbed_) {
                 std::fill(std::begin(keys_), std::end(keys_), false);
             }
-            break;
-        case MotionNotify:
-            mouseDeltaX_ += event.xmotion.x - mouseX_;
-            mouseDeltaY_ += event.xmotion.y - mouseY_;
-            mouseX_ = event.xmotion.x;
-            mouseY_ = event.xmotion.y;
             break;
         }
     }
@@ -148,15 +121,13 @@ void Platform::grabPointer(bool grab) {
     if (grab == pointerGrabbed_) return;
     pointerGrabbed_ = grab;
     if (grab) {
-        int cx = static_cast<int>(width_) / 2;
-        int cy = static_cast<int>(height_) / 2;
-        mouseX_ = cx;
-        mouseY_ = cy;
-        XGrabPointer(display_, window_, True, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                     GrabModeAsync, GrabModeAsync, window_, invisibleCursor_, CurrentTime);
+        SDL_SetWindowRelativeMouseMode(window_, true);
+        if (invisibleCursor_) {
+            SDL_SetCursor(invisibleCursor_);
+        }
     } else {
-        XUngrabPointer(display_, CurrentTime);
-        XUndefineCursor(display_, window_);
+        SDL_SetWindowRelativeMouseMode(window_, false);
+        SDL_SetCursor(SDL_GetDefaultCursor());
     }
 }
 
@@ -166,8 +137,7 @@ void Platform::clearResizeFlag() { resized_ = false; }
 uint32_t Platform::width() const { return width_; }
 uint32_t Platform::height() const { return height_; }
 
-void* Platform::nativeDisplay() const { return display_; }
-unsigned long Platform::nativeWindow() const { return window_; }
+SDL_Window* Platform::nativeWindow() const { return window_; }
 
 bool Platform::pointerGrabbed() const { return pointerGrabbed_; }
 

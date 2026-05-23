@@ -17,15 +17,31 @@ foreach(config ${CMAKE_CONFIGURATION_TYPES})
 endforeach()
 
 find_package(Vulkan REQUIRED)
-find_package(X11 REQUIRED)
-find_package(Freetype QUIET)
+find_package(PkgConfig REQUIRED)
 
-if(Freetype_FOUND)
-    set(ENGINE3D_HAS_FREETYPE 1)
-else()
-    set(ENGINE3D_HAS_FREETYPE 0)
-    message(WARNING "FreeType headers not found. TTF font loading and on-screen text will be unavailable until you install freetype-devel.")
+# SDL3
+find_package(sdl3 CONFIG QUIET)
+if(NOT sdl3_FOUND)
+    pkg_check_modules(SDL3 IMPORTED_TARGET sdl3)
 endif()
+if(NOT SDL3_FOUND AND NOT TARGET PkgConfig::SDL3)
+    message(FATAL_ERROR "SDL3 not found. Install libsdl3-dev or sdl3 package.")
+endif()
+
+# SDL3_ttf
+pkg_check_modules(SDL3_TTF IMPORTED_TARGET sdl3-ttf)
+if(NOT SDL3_TTF_FOUND)
+    message(WARNING "SDL3_ttf not found. Font rendering will be unavailable.")
+    set(ENGINE3D_HAS_TTF 0)
+else()
+    set(ENGINE3D_HAS_TTF 1)
+endif()
+
+# SDL3_image (optional, for future use)
+pkg_check_modules(SDL3_IMAGE IMPORTED_TARGET sdl3-image QUIET)
+
+# SDL3_sound (optional, for future use)
+pkg_check_modules(SDL3_SOUND IMPORTED_TARGET sdl3-sound QUIET)
 
 set(SHADER_SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
 set(SHADER_BINARY_ROOT ${PROJECT_SHADER_OUTPUT_DIR})

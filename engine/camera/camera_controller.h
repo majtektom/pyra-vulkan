@@ -2,71 +2,44 @@
 
 #include "math.h"
 
+struct SDL_Window;
+
 namespace engine3d {
 
-struct InputState;
-struct CameraConfig;
+class CameraComponent;
 
-// CameraController to odpowiednik Plazer::Camera ze starego projektu (camera.h/camera.cpp).
-// Obsluguje pierwszoosobowe latanie (FPS-style): pitch, yaw, ruch WASD.
-// Nie zawiera kodu Vulkan - dziala wylacznie na CPU, modyfikujac CameraConfig.
 class CameraController {
 public:
     CameraController();
 
-    // Wywoluj co klatke z czasem delta i stanem inputu.
-    // Na podstawie wcisnietych klawiszy i ruchu myszy aktualizuje kamere w cfg.
-    // Wzorowane na Plazer::Camera::SetPrespective() i ChangeHeading/ChangePitch.
-    void update(float deltaTime, const bool* keys, int mouseDeltaX, int mouseDeltaY,
-                CameraConfig& cfg);
+    void rotatePitch(float degrees);
+    void rotateYaw(float degrees);
+    void moveForward(float velocityDelta);
+    void moveRight(float velocityDelta);
+    void moveUp(float velocityDelta);
+    void stop();
 
-    void setPosition(const Vec3& pos) {
-        position_ = pos;
-        realPosition_ = pos;
-        lastPosition_ = pos;
-        initializedFromConfig_ = true;
-    }
+    // Wywołaj co klatkę — stosuje tarcie, całkuje prędkości, aktualizuje cam.
+    void update(float deltaTime, CameraComponent& cam);
+
+    // Ustaw pozycję i kierunek patrzenia (kąty Eulera z wektora forward).
+    void setPositionAndTarget(const Vec3& pos, const Vec3& target);
+    void setPosition(const Vec3& pos);
     [[nodiscard]] Vec3 getPosition() const { return position_; }
 
-    void stop();
-    void stopY() { stopY_ = true; }
-
-    // Ustawia/odczytuje kat pochylenia (pitch) i obrotu (yaw) w radianach.
-    void setYaw(float yawDegrees) { headingDegrees_ = yawDegrees; }
+    void setYaw(float deg) { headingDegrees_ = deg; }
     [[nodiscard]] float getYaw() const { return headingDegrees_; }
-    void setPitch(float pitchDegrees) { pitchDegrees_ = pitchDegrees; }
+    void setPitch(float deg) { pitchDegrees_ = deg; }
     [[nodiscard]] float getPitch() const { return pitchDegrees_; }
 
-    // Wspolczynniki szybkosci i czulosci myszy.
-    void setMoveSpeed(float speed) { acceleration_ = speed; }
-    [[nodiscard]] float getMoveSpeed() const { return acceleration_; }
-    void setMouseSensitivity(float sens) { mouseSensitivityDegrees_ = sens; }
-    [[nodiscard]] float getMouseSensitivity() const { return mouseSensitivityDegrees_; }
+    float moveSpeed = 2.0f;
+    float mouseSensitivity = 0.25f;
+    float friction = 1.7f;
 
 private:
-    void changePitch(float degreesDelta, float frameScale);
-    void changeHeading(float degreesDelta, float frameScale);
-    void changeForwardVelocity(float velocityDelta);
-    void changeStrafeVelocity(float velocityDelta);
-    void synchronizeFromConfig(const CameraConfig& cfg);
-
-    float headingDegrees_ = 0.0f;
-    float pitchDegrees_ = 0.0f;
-    Vec3 position_{0.0f, 0.0f, 0.0f};
-    Vec3 lastPosition_{0.0f, 0.0f, 0.0f};
-    Vec3 realPosition_{0.0f, 0.0f, 0.0f};
-    Vec3 directionVector_{0.0f, 0.0f, 0.0f};
-    Vec3 directionVectorLR_{0.0f, 0.0f, 0.0f};
-    float maxPitchRateDegrees_ = 3.5f;
-    float maxHeadingRateDegrees_ = 3.5f;
-    float maxForwardVelocity_ = 0.12f;
-    float forwardVelocity_ = 0.0f;
-    float strafeVelocity_ = 0.0f;
-    float acceleration_ = 2.0f;
-    float friction_ = 1.7f;
-    float mouseSensitivityDegrees_ = 0.25f;
-    bool stopY_ = false;
-    bool initializedFromConfig_ = false;
+    float headingDegrees_ = 0.0f, pitchDegrees_ = 0.0f;
+    Vec3 position_, realPosition_;
+    float forwardVelocity_ = 0.0f, strafeVelocity_ = 0.0f, verticalVelocity_ = 0.0f;
 };
 
-}  // namespace engine3d
+} // namespace engine3d

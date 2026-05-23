@@ -54,6 +54,9 @@ public:
     [[nodiscard]] bool isReady() const { return ready_; }
     [[nodiscard]] bool isEnabled() const { return enabled_; }
     void setEnabled(bool e) { enabled_ = e; }
+
+    void setExposure(float e) { exposure_ = e; }
+    [[nodiscard]] float getExposure() const { return exposure_; }
     [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
 
 private:
@@ -70,7 +73,10 @@ private:
 
     struct PushConstants {
         alignas(16) float cameraPosition[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float exposure = 1.0f;
     };
+
+    float exposure_ = 0.7f;
 
     // W Vulkanowym ukladzie sceny to mapowanie daje poprawniejsze sasiedztwo scian
     // niz doslowne przepisanie starego switch(i) z OpenGL.

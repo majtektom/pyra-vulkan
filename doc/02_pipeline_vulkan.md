@@ -7,7 +7,7 @@ Proces inicjalizacji Vulkan składa się z następujących kroków:
 ```
 VulkanContext::initialize()
 ├─ createInstance()         # VkInstance + warstwy walidacyjne
-├─ createSurface()          # VkSurfaceKHR przez X11
+├─ createSurface()          # VkSurfaceKHR przez SDL_Vulkan_CreateSurface
 ├─ pickPhysicalDevice()     # wybór GPU
 ├─ createLogicalDevice()    # VkDevice + kolejki (graphics + present)
 └─ createCommandPool()      # pula buforów komend
@@ -16,15 +16,16 @@ VulkanContext::initialize()
 ### 1. createInstance()
 Tworzy instancję Vulkan z rozszerzeniami:
 - `VK_EXT_DEBUG_UTILS_EXTENSION_NAME` — komunikaty walidacyjne
-- `VK_KHR_SURFACE_EXTENSION_NAME` — powierzchnia renderowania
-- `VK_KHR_XLIB_SURFACE_EXTENSION_NAME` — integracja z X11
+- Rozszerzenia powierzchni pobierane automatycznie przez `SDL_Vulkan_GetInstanceExtensions()`
+  (SDL3 samo dobiera odpowiednie rozszerzenia dla platformy: X11, Wayland, Windows, macOS)
 
 Jeśli dostępna jest warstwa `VK_LAYER_KHRONOS_validation`, jest automatycznie włączana.
 Błędy walidacji są wypisywane na `stderr`.
 
 ### 2. createSurface()
-Tworzy `VkSurfaceKHR` powiązane z oknem X11. Powierzchnia to "płótno", na którym
-Vulkan będzie rysował.
+Tworzy `VkSurfaceKHR` przez `SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)`.
+SDL3 automatycznie obsługuje różnice między platformami — nie trzeba ręcznie
+wybierać między `VK_KHR_XLIB_SURFACE` a `VK_KHR_WAYLAND_SURFACE`.
 
 ### 3. pickPhysicalDevice()
 Wylicza dostępne GPU i wybiera pierwsze, które obsługuje:

@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+struct SDL_Window;
+
 namespace engine3d {
 
 class VulkanContext {
@@ -17,7 +19,7 @@ public:
     VulkanContext& operator=(const VulkanContext&) = delete;
 
     void initialize(const std::string& appName);
-    void createSurface(void* display, unsigned long window);
+    void createSurface(SDL_Window* window);
 
     VkInstance instance() const { return instance_; }
     VkSurfaceKHR surface() const { return surface_; }

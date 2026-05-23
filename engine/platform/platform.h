@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <string>
 
-typedef struct _XDisplay Display;
+struct SDL_Window;
+struct SDL_Cursor;
 
 namespace engine3d {
 
@@ -28,17 +29,15 @@ public:
     uint32_t width() const;
     uint32_t height() const;
 
-    void* nativeDisplay() const;
-    unsigned long nativeWindow() const;
+    SDL_Window* nativeWindow() const;
 
     void grabPointer(bool grab);
     bool pointerGrabbed() const;
     InputSnapshot pollInput();
 
 private:
-    Display* display_ = nullptr;
-    unsigned long window_ = 0;
-    unsigned long wmDeleteMessage_ = 0;
+    SDL_Window* window_ = nullptr;
+    SDL_Cursor* invisibleCursor_ = nullptr;
     bool shouldClose_ = false;
     bool resized_ = false;
     uint32_t width_ = 0;
@@ -51,7 +50,6 @@ private:
     int mouseX_ = 0;
     int mouseY_ = 0;
     bool pointerGrabbed_ = false;
-    unsigned long invisibleCursor_ = 0;
 };
 
 } // namespace engine3d
