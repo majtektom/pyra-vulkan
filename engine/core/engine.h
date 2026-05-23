@@ -21,7 +21,10 @@
 #include "../render/backend/vulkan_context.h"
 #include "../render/material_system.h"
 #include "../render/render_pass.h"
-#include "../render/mesh_manager.h"
+#include "../object/mesh_manager.h"
+#include "../object/skybox_renderer.h"
+#include "../object/grid_renderer.h"
+#include "../font/text_overlay_renderer.h"
 
 namespace engine3d {
 
@@ -66,6 +69,14 @@ public:
 
     float getCurrentFPS() const { return currentFPS; }
 
+    void setSkyboxEnabled(bool enabled, const std::string& directory = "");
+    void setSkyboxExposure(float exposure);
+    void setGridEnabled(bool enabled);
+    void loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight = 48);
+    void setTextLabel(const std::string& text, const std::string& fontName,
+                      float x, float y, float scale = 1.0f,
+                      const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f});
+
     void setShaderManifest(const ShaderManifest& manifest);
     void addShader(const std::string& name, const ShaderProgram& program);
 
@@ -106,6 +117,12 @@ private:
     TimeDelta calculateDeltaTimeMs();
 
     CameraController cameraController;
+
+    SkyboxRenderer skyboxRenderer_;
+    GridRenderer gridRenderer_;
+    TextOverlayRenderer textOverlayRenderer_;
+    bool skyboxEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
+    std::string skyboxDirectory_;
 };
 
 } // namespace engine3d

@@ -30,8 +30,8 @@ int main() {
 
     auto* renderer = engine.getRenderer();
     renderer->setClearColor(0.05f, 0.05f, 0.1f, 1.0f);
-    renderer->setGridEnabled(true);
-    renderer->loadFont("times", "assets/fonts/times.ttf", 48);
+    engine.setGridEnabled(true);
+    engine.loadFont("times", "assets/fonts/times.ttf", 48);
 
     CParticleSystem particleSys;
     if (!particleSys.load("assets/textures/particles/przyklad.particle")) {
@@ -146,7 +146,7 @@ int main() {
 
         std::ostringstream oss;
         oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
-        e.getRenderer()->setTextLabel(oss.str(), "times",
+        e.setTextLabel(oss.str(), "times",
                                        e.getRenderer()->width() - 200.0f, 30.0f, 1.0f,
                                        {1.0f, 1.0f, 0.2f, 1.0f});
 
@@ -154,14 +154,14 @@ int main() {
             std::ostringstream pos;
             pos << "pos: " << std::fixed << std::setprecision(0)
                 << cam->position.x << " " << cam->position.y << " " << cam->position.z;
-            e.getRenderer()->setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f,
+            e.setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f,
                                           {0.7f, 0.7f, 1.0f, 1.0f});
 
             Vec3 dir = normalize(subtract(cam->target, cam->position));
             std::ostringstream look;
             look << "dir: " << std::fixed << std::setprecision(2)
                  << dir.x << " " << dir.y << " " << dir.z;
-            e.getRenderer()->setTextLabel(look.str(), "times", 10.0f, 55.0f, 0.7f,
+            e.setTextLabel(look.str(), "times", 10.0f, 55.0f, 0.7f,
                                           {0.7f, 0.7f, 1.0f, 1.0f});
         }
     };

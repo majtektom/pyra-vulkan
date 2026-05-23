@@ -13,15 +13,6 @@ add_library(engine3d STATIC
     render/texture_manager.cpp
     render/shader_manager.cpp
     render/material_manager.cpp
-    render/font_manager.cpp
-    render/font_atlas_loader.cpp
-    render/grid_renderer.cpp
-    render/skybox_renderer.cpp
-    render/text_overlay_renderer.cpp
-    render/model_3ds.cpp
-    render/media_library.cpp
-    render/particle_system.cpp
-    render/mesh_manager.cpp
     render/opaque_pass.cpp
     render/transparent_pass.cpp
     render/material_system.cpp
@@ -29,6 +20,15 @@ add_library(engine3d STATIC
     render/backend/vulkan_context.cpp
     render/backend/vulkan_resources.cpp
     render/backend/vulkan_swapchain.cpp
+    object/model_3ds.cpp
+    object/media_library.cpp
+    object/mesh_manager.cpp
+    font/font_manager.cpp
+    font/font_atlas_loader.cpp
+    object/grid_renderer.cpp
+    object/skybox_renderer.cpp
+    particle/particle_system.cpp
+    font/text_overlay_renderer.cpp
     scene/scene_manager.cpp
 )
 
@@ -70,7 +70,10 @@ target_include_directories(engine3d
         ${CMAKE_CURRENT_SOURCE_DIR}/camera
         ${CMAKE_CURRENT_SOURCE_DIR}/scene
         ${CMAKE_CURRENT_SOURCE_DIR}/platform
-        ${CMAKE_CURRENT_SOURCE_DIR}/input
+        ${CMAKE_CURRENT_SOURCE_DIR}/object
+        ${CMAKE_CURRENT_SOURCE_DIR}/font
+        ${CMAKE_CURRENT_SOURCE_DIR}/particle
+        ${CMAKE_CURRENT_SOURCE_DIR}/text
 )
 
 if(TARGET PkgConfig::SDL3)

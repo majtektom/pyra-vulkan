@@ -8,7 +8,12 @@ OpaquePass::OpaquePass() : name_("OpaquePass") {}
 
 void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
                          VkPipelineLayout pipelineLayout, const TextureDescriptorLookup& getTextureDescSet) {
-    const auto& packets = scene.getOpaquePackets();
+    auto packets = scene.getOpaquePackets();
+    
+    // Sort front-to-back (nearest first) for early-Z optimization
+    std::sort(packets.begin(), packets.end(), [](const RenderPacket& a, const RenderPacket& b) {
+        return a.distanceToCamera < b.distanceToCamera;
+    });
     
     for (const auto& packet : packets) {
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;

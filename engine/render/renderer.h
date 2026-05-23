@@ -2,7 +2,7 @@
 
 #include <memory>
 #include <string>
-#include <vector>
+#include <functional>
 
 #include "types.h"
 #include "math.h"
@@ -15,12 +15,13 @@ class CameraComponent;
 class MaterialManager;
 class ShaderManager;
 class TextureManager;
-class FontManager;
 class Platform;
 class MeshComponent;
 class TransformComponent;
 class VulkanContext;
 
+// Renderer — rdzeń Vulkan: swapchain, descriptor sety, UBO, tekstury, rysowanie sceny.
+// Nie zawiera skyboxa, grida, tekstu ani fontów — tym zarządza Engine.
 class Renderer {
 public:
     Renderer(Platform* platform, MaterialManager* materialManager, std::shared_ptr<VulkanContext> context);
@@ -33,34 +34,26 @@ public:
 
     bool initialize(const std::string& appName, bool enableValidationLayers = true);
     void cleanup();
-    void render(const RenderScene& scene, CameraComponent* camera);
+    void render(const RenderScene& scene, CameraComponent* camera,
+                std::function<void(VkCommandBuffer, uint32_t)> onAfterOpaque = nullptr,
+                std::function<void(VkCommandBuffer, uint32_t)> onAfterTransparent = nullptr);
     void waitIdle();
 
-    void setCamera(CameraComponent* camera);
-    void setShaderManager(ShaderManager* manager);
-    void setTextureManager(TextureManager* manager);
-    void setFontManager(FontManager* manager);
-
-    void loadMesh(const std::string& name, const MeshData& meshData);
-    void loadDynamicMesh(const std::string& name, const MeshData& meshData);
-    void updateDynamicMesh(const std::string& name, const MeshData& meshData);
-    void setDynamicMeshTexture(const std::string& meshName, const std::string& textureName);
     void loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
-    void loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight = 48);
-    void loadShader(const std::string& name, const ShaderProgram& program);
-
-    void setGridEnabled(bool enabled);
-    void setSkyboxEnabled(bool enabled, const std::string& directory = "");
-    void setSkyboxExposure(float exposure);
     void setClearColor(float r, float g, float b, float a);
-    void setViewportSize(uint32_t width, uint32_t height);
-    void setTextLabel(const std::string& text, const std::string& fontName,
-                      float x, float y, float scale = 1.0f,
-                      const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f});
 
     uint32_t width() const;
     uint32_t height() const;
-    VkRenderPass getRenderPass() const;
+
+    // Vulkan — potrzebne do inicjalizacji sub-rendererów (skybox, grid, text)
+    VkDevice device() const;
+    VkPhysicalDevice physicalDevice() const;
+    VkRenderPass renderPass() const;
+    VkDescriptorSetLayout descriptorSetLayout() const;
+    VkCommandPool commandPool() const;
+    VkQueue graphicsQueue() const;
+    VkExtent2D extent() const;
+    VkDescriptorSet getTextureDescriptorSet(const std::string& texName, uint32_t frame) const;
 
 private:
     class RendererImpl;

@@ -4,7 +4,7 @@
 #include "mesh_component.h"
 #include "../render/backend/vulkan_context.h"
 #include "../render/material_system.h"
-#include "../render/mesh_manager.h"
+#include "../object/mesh_manager.h"
 
 #include <chrono>
 #include <cmath>
@@ -50,16 +50,16 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
         textureManager = std::make_unique<TextureManager>();
         fontManager = std::make_unique<FontManager>();
         
-        renderer->setShaderManager(shaderManager.get());
-        renderer->setTextureManager(textureManager.get());
-        renderer->setFontManager(fontManager.get());
-        
         if (!renderer->initialize(appName, enableValidationLayers)) {
             return false;
         }
 
-        materialSystem->setRenderPass(renderer->getRenderPass());
-        
+        materialSystem->setRenderPass(renderer->renderPass());
+
+        // Init sub-renderers
+        textOverlayRenderer_.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
+                                  renderer->commandPool(), renderer->graphicsQueue(), renderer->extent());
+
         initialized = true;
         return true;
     } catch (const std::exception& e) {
@@ -271,11 +271,28 @@ void Engine::renderFrame() {
         }
     }
 
-    if (activeCamera) {
-        renderer->setCamera(activeCamera);
-    }
-
-    renderer->render(renderScene, activeCamera);
+    renderer->render(renderScene, activeCamera,
+        [this](VkCommandBuffer cmd, uint32_t frame) {
+            if (skyboxEnabled_ && skyboxRenderer_.isReady()) {
+                std::array<VkDescriptorSet, 3> fs = {};
+                fs[0] = renderer->getTextureDescriptorSet("skybox_fb", frame);
+                fs[1] = renderer->getTextureDescriptorSet("skybox_lr", frame);
+                fs[2] = renderer->getTextureDescriptorSet("skybox_top", frame);
+                skyboxRenderer_.recordDrawCommands(cmd, skyboxRenderer_.getPipelineLayout(),
+                                                    activeCamera ? activeCamera->position : Vec3{}, fs);
+            }
+            if (gridEnabled_ && gridRenderer_.isReady()) {
+                gridRenderer_.recordDrawCommands(cmd, gridRenderer_.getPipelineLayout(),
+                                                  renderer->getTextureDescriptorSet("", frame), frame);
+            }
+        },
+        [this](VkCommandBuffer cmd, uint32_t) {
+            if (textOverlayReady_ && textOverlayRenderer_.isReady()) {
+                textOverlayRenderer_.buildTexts();
+                textOverlayRenderer_.recordDrawCommands(cmd);
+                textOverlayRenderer_.clearTexts();
+            }
+        });
 }
 
 Engine::TimeDelta Engine::calculateDeltaTimeMs() {
@@ -304,6 +321,47 @@ Engine::TimeDelta Engine::calculateDeltaTimeMs() {
     }
 
     return deltaTimeMs;
+}
+
+void Engine::setSkyboxEnabled(bool enabled, const std::string& directory) {
+    skyboxEnabled_ = enabled;
+    skyboxDirectory_ = directory;
+    skyboxRenderer_.setEnabled(enabled);
+    if (enabled && renderer) {
+        SkyboxConfig cfg; cfg.enabled = true; cfg.directory = directory; cfg.size = 3500; cfg.verticalOffset = 100;
+        skyboxRenderer_.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
+                             renderer->descriptorSetLayout(), renderer->commandPool(), renderer->graphicsQueue(),
+                             renderer->extent(), cfg, "bin/assets/shaders/skybox");
+    }
+}
+
+void Engine::setSkyboxExposure(float e) { skyboxRenderer_.setExposure(e); }
+
+void Engine::setGridEnabled(bool enabled) {
+    gridEnabled_ = enabled;
+    gridRenderer_.setEnabled(enabled);
+    if (enabled && renderer) {
+        GridConfig cfg; cfg.enabled = true; cfg.size = 200; cfg.spacing = 5;
+        gridRenderer_.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
+                           renderer->descriptorSetLayout(), renderer->commandPool(), renderer->graphicsQueue(),
+                           renderer->extent(), cfg, "bin/assets/shaders/grid");
+    }
+}
+
+void Engine::loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight) {
+    if (!textOverlayRenderer_.isPipelineReady()) return;
+    FontAsset asset{name, path, pixelHeight};
+    textOverlayRenderer_.loadFont(asset);
+    textOverlayReady_ = true;
+    if (fontManager) fontManager->add(asset);
+}
+
+void Engine::setTextLabel(const std::string& text, const std::string&, float x, float y, float scale,
+                           const std::array<float, 4>& color) {
+    if (!textOverlayRenderer_.isReady()) return;
+    float sw = renderer ? (float)renderer->width() : 1024.0f;
+    float sh = renderer ? (float)renderer->height() : 768.0f;
+    textOverlayRenderer_.addText(text, x, y, scale, color, sw, sh);
 }
 
 } // namespace engine3d

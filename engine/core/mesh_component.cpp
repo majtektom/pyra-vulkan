@@ -1,7 +1,7 @@
 #include "mesh_component.h"
 #include "entity.h"
 #include "transform_component.h"
-#include "../render/mesh_manager.h"
+#include "../object/mesh_manager.h"
 
 namespace engine3d {
 
