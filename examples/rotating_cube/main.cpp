@@ -1,144 +1,107 @@
-#include "engine/Engine.hpp"
+#include "engine.h"
+#include "renderer.h"
+#include "mesh_component.h"
+#include "transform_component.h"
+#include "camera_component.h"
 
-#include <cmath>
-#include <string>
-#include <utility>
+using namespace engine3d;
 
 int main() {
-    // Przyklad tworzy kilka kostek, aby pokazac jednoczesna obsluge wielu tekstur i obiektow sceny.
-    engine3d::AppConfig config;
-    config.windowTitle = "engine3d: rotating cube";
+    Engine engine;
 
-    // Shader programu definiuje sposob transformacji wierzcholkow i probkowania tekstur na kostce.
-    config.shaderManifest.entries = {
-        {
-            "default",
-            {
-                std::string(EXAMPLE_SHADER_DIR) + "/cube.vert.spv",
-                std::string(EXAMPLE_SHADER_DIR) + "/cube.frag.spv",
-                "vertexMain",
-                "fragmentMain",
-            },
-        },
+    if (!engine.initialize("engine3d: rotating cube", 1024, 768)) {
+        return 1;
+    }
+
+    MeshData cubeMesh;
+    cubeMesh.vertices = {
+        {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+        {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+        {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+        {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+        {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+        {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+        {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+        {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+        {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+        {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+        {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+        {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+        {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+        {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+        {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+        {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+        {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+        {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+        {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+        {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+        {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
+        {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
+        {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
+        {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
+    };
+    cubeMesh.indices = {
+        0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4,
+        8, 9, 10, 10, 11, 8, 12, 13, 14, 14, 15, 12,
+        16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
+    };
+    engine.getMeshManager()->loadMesh("cube", cubeMesh);
+
+    auto createMaterial = [&](const std::string& name, const std::string& texName, const std::string& texPath) {
+        engine.getRenderer()->loadTexture(texName, texPath);
+        Material mat;
+        mat.name = name;
+        mat.textureName = texName;
+        mat.shaderProgram = "rotating_cube";
+        mat.vertexEntryPoint = "vertexMain";
+        mat.fragmentEntryPoint = "fragmentMain";
+        engine.getMaterialManager()->add(mat);
+        return engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
     };
 
-    // Kazda nazwa logiczna wskazuje inny plik tekstury, dzieki czemu obiekty moga wybierac asset po nazwie.
-    config.textures = {
-        {"bmp_metal", "assets/textures/metal.bmp"},
-        {"tga_cactus", "assets/sprite/cactus.tga"},
-        {"dds_metal", "assets/textures/drewno.dds"},
+    auto mat1 = createMaterial("metal", "metal_tex", "assets/textures/metal.bmp");
+    auto mat2 = createMaterial("cactus", "cactus_tex", "assets/sprite/cactus.tga");
+    auto mat3 = createMaterial("wood", "wood_tex", "assets/textures/drewno.dds");
+
+    auto makeCube = [&](const std::string& name, const Vec3& pos,
+                        const Vec3& scale, std::shared_ptr<MaterialInstance> mat) {
+        auto* e = engine.createEntity(name);
+        auto* mc = e->addComponent<MeshComponent>("cube");
+        mc->materialInstance = mat;
+        auto* tc = e->addComponent<TransformComponent>();
+        tc->translation = pos;
+        tc->scale = scale;
     };
 
-#if ENGINE3D_HAS_FREETYPE
-    // Font TTF i kilka etykiet 2D pokazuja, jak nakladka tekstowa moze opisywac scene ponad renderem 3D.
-    config.fonts = {
-        {"ui", "assets/fonts/times.ttf", 40},
-    };
+    makeCube("cube1", {-2.2f, 0.0f, 0.0f}, {0.8f, 0.8f, 0.8f}, mat1);
+    makeCube("cube2", {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, mat2);
+    makeCube("cube3", {2.2f, 0.0f, 0.0f}, {0.8f, 0.8f, 0.8f}, mat3);
 
-    config.textLabels = {
-        {"ui", "engine3d: rotating cube", 24.0f, 18.0f, 1.0f, {1.0f, 0.95f, 0.8f, 1.0f}},
-        {"ui", "BMP | TGA | DDS", 24.0f, 62.0f, 0.75f, {0.7f, 0.9f, 1.0f, 0.92f}},
-        {"ui", "FPS: --", static_cast<float>(config.width) - 24.0f, 18.0f, 0.75f, {0.95f, 1.0f, 0.85f, 0.95f}, engine3d::TextHorizontalAlign::Right},
-    };
+    auto* camera = engine.createEntity("camera")->addComponent<CameraComponent>();
+    camera->position = {0.0f, 0.0f, 5.5f};
+    camera->fieldOfViewDegrees = 45.0f;
+    engine.setActiveCamera(camera);
 
-    // Callback moze zmieniac tresc etykiet w runtime; gdy pojawia sie nowe znaki, atlas fontu przebuduje sie automatycznie.
-    config.updateTextLabels = [](float elapsedSeconds, uint32_t viewportWidth, uint32_t, std::vector<engine3d::TextLabel>& labels) {
-        if (labels.size() < 3) {
-            return;
+    engine.onUpdate = [](float dt, Engine& e) {
+        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        if (cam) {
+            cam->position = {0.0f, 0.0f, 5.5f};
+            cam->target = {0.0f, 0.0f, 0.0f};
+            cam->up = {0.0f, 1.0f, 0.0f};
         }
-
-        const bool showPolish = (static_cast<int>(elapsedSeconds) / 3) % 2 == 1;
-        labels[1].text = showPolish ? "Zażółć gęślą jaźń" : "BMP | TGA | DDS";
-
-        static float previousElapsedSeconds = elapsedSeconds;
-        const float deltaSeconds = elapsedSeconds - previousElapsedSeconds;
-        previousElapsedSeconds = elapsedSeconds;
-
-        if (deltaSeconds > 0.0f) {
-            const int fps = static_cast<int>(std::lround(1.0f / deltaSeconds));
-            labels[2].text = "FPS: " + std::to_string(fps);
-        }
-
-        labels[2].x = static_cast<float>(viewportWidth) - 24.0f;
-    };
-#endif
-
-    // Kamera jest bardziej oddalona niz w trojkacie, bo scena zawiera kilka kostek obok siebie.
-    config.camera.position = {0.0f, 0.0f, 5.5f};
-
-    // Jedna siatka kostki jest wspoldzielona przez wszystkie obiekty sceny.
-    config.meshes = {
-        {
-            "cube",
-            {
-                {
-                    {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-
-                    {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-
-                    {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-
-                    {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-
-                    {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-
-                    {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                },
-                {
-                    0, 1, 2, 2, 3, 0,
-                    4, 5, 6, 6, 7, 4,
-                    8, 9, 10, 10, 11, 8,
-                    12, 13, 14, 14, 15, 12,
-                    16, 17, 18, 18, 19, 16,
-                    20, 21, 22, 22, 23, 20,
-                },
-            },
-        },
+        auto rotate = [&](const std::string& name, float rx, float ry, float rz) {
+            auto* entity = e.getEntity(name);
+            if (auto* tc = entity->getComponent<TransformComponent>()) {
+                tc->rotation.x += dt * rx;
+                tc->rotation.y += dt * ry;
+                tc->rotation.z += dt * rz;
+            }
+        };
+        rotate("cube1", 0.65f, 1.0f, 0.0f);
+        rotate("cube2", 0.0f, -1.2f, 0.4f);
+        rotate("cube3", 0.3f, 0.9f, -0.5f);
     };
 
-    // Scene objects korzystaja z tej samej geometrii, ale kazdy wybiera inna teksture i inny ruch.
-    config.sceneObjects = {
-        engine3d::SceneObject{
-            "cube",
-            "bmp_metal",
-            "",
-            engine3d::Transform{{-2.2f, 0.0f, 0.0f}, {}, {0.8f, 0.8f, 0.8f}},
-            {0.65f, 1.0f, 0.0f},
-        },
-        engine3d::SceneObject{
-            "cube",
-            "tga_cactus",
-            "",
-            engine3d::Transform{{0.0f, 0.0f, 0.0f}, {}, {1.0f, 1.0f, 1.0f}},
-            {0.0f, -1.2f, 0.4f},
-        },
-        engine3d::SceneObject{
-            "cube",
-            "dds_metal",
-            "",
-            engine3d::Transform{{2.2f, 0.0f, 0.0f}, {}, {0.8f, 0.8f, 0.8f}},
-            {0.3f, 0.9f, -0.5f},
-        },
-    };
-
-    // Uruchamiamy silnik z gotowa scena demonstracyjna.
-    return engine3d::runEngine(std::move(config));
+    engine.run();
+    return 0;
 }

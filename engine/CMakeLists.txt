@@ -1,23 +1,37 @@
 add_library(engine3d STATIC
-    src/CameraController.cpp
-    src/Engine.cpp
-    src/FontAtlasLoader.cpp
-    src/FontManager.cpp
-    src/GridRenderer.cpp
-    src/InputManager.cpp
-    src/MaterialManager.cpp
-    src/SceneManager.cpp
-    src/ShaderManager.cpp
-    src/SkyboxRenderer.cpp
-    src/TextureManager.cpp
-    src/TextureAssetLoader.cpp
-    src/VulkanRenderer.cpp
-    src/VulkanUtil.cpp
-    src/X11Window.cpp
+    core/engine.cpp
+    core/component.cpp
+    core/entity.cpp
+    core/transform_component.cpp
+    core/mesh_component.cpp
+    camera/camera_component.cpp
+    camera/camera_controller.cpp
+    platform/platform.cpp
+    render/renderer_core.cpp
+    render/vulkan_util.cpp
+    render/texture_asset_loader.cpp
+    render/texture_manager.cpp
+    render/shader_manager.cpp
+    render/material_manager.cpp
+    render/font_manager.cpp
+    render/font_atlas_loader.cpp
+    render/grid_renderer.cpp
+    render/skybox_renderer.cpp
+    render/text_overlay_renderer.cpp
+    render/model_3ds.cpp
+    render/media_library.cpp
+    render/particle_system.cpp
+    render/mesh_manager.cpp
+    render/opaque_pass.cpp
+    render/transparent_pass.cpp
+    render/material_system.cpp
+    render/base_material_instance.cpp
+    render/backend/vulkan_context.cpp
+    render/backend/vulkan_resources.cpp
+    render/backend/vulkan_swapchain.cpp
+    scene/scene_manager.cpp
+    input/input_manager.cpp
 )
-
-# Zalaczamy modul core (loadery modeli itp.)
-add_subdirectory(core)
 
 add_shader_bundle(
     text_overlay
@@ -34,6 +48,11 @@ add_shader_bundle(
     skybox.vert.hlsl=skybox.hlsl@vertexMain
     skybox.frag.hlsl=skybox.hlsl@fragmentMain
 )
+add_shader_bundle(
+    default
+    default.vert.hlsl=default.hlsl@vertexMain
+    default.frag.hlsl=default.hlsl@fragmentMain
+)
 
 target_compile_definitions(engine3d
     PUBLIC
@@ -46,7 +65,13 @@ target_compile_definitions(engine3d
 
 target_include_directories(engine3d
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/render
+        ${CMAKE_CURRENT_SOURCE_DIR}/camera
+        ${CMAKE_CURRENT_SOURCE_DIR}/scene
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/input
 )
 
 if(Freetype_FOUND)

@@ -1,36 +1,21 @@
-#include "3ds.h"
-#include "engine/Engine.hpp"
-#include "engine/CameraController.hpp"
-#include "engine/InputManager.hpp"
-#include "engine/Math.hpp"
+#include "engine.h"
+#include "renderer.h"
+#include "mesh_component.h"
+#include "transform_component.h"
+#include "camera_component.h"
+#include "model_3ds.h"
+#include "material_system.h"
 
-#include <cmath>
+#include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
-#include <utility>
 
-// Przykladowa warstwa gry - dziedziczy po engine3d::Layer
-// i definiuje wlasna scene, kamere, grid, skybox.
-class GameLayer : public engine3d::Layer {
-public:
-    GameLayer(std::string name, std::shared_ptr<engine3d::CameraController> cameraCtrl)
-        : Layer(std::move(name)), cameraCtrl_(std::move(cameraCtrl)) {}
+using namespace engine3d;
 
-    void update(float deltaTime) override {
-        // Kamera jest aktualizowana w onUpdate, nie ma potrzeby robic tego drugi raz.
-        // Tutaj mogly byc aktualizacje logiki gry, AI, fizyka itp.
-    }
-
-    void setInput(const engine3d::InputState& input) { input_ = input; }
-
-private:
-    std::shared_ptr<engine3d::CameraController> cameraCtrl_;
-    engine3d::InputState input_;
-};
-
-// Sprawdza czy plik tekstury ma kanal alpha (szybki odczyt naglowka).
 bool textureHasAlpha(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) return false;
@@ -47,13 +32,11 @@ bool textureHasAlpha(const std::string& path) {
             return uint32_t(uint8_t(h[off])) | (uint32_t(uint8_t(h[off+1])) << 8)
                  | (uint32_t(uint8_t(h[off+2])) << 16) | (uint32_t(uint8_t(h[off+3])) << 24);
         };
-        uint32_t pfFlags = read32(header, 76); // ddspf.dwFlags
-        // DDPF_ALPHAPIXELS = 0x1, DDPF_FOURCC = 0x4
-        if (pfFlags & 1) return true; // explicit ALPHAPIXELS flag set
-        // For compressed formats, also check if FourCC is DXT3/DXT5 (always have alpha)
+        uint32_t pfFlags = read32(header, 76);
+        if (pfFlags & 1) return true;
         if (pfFlags & 4) {
             uint32_t fourCC = read32(header, 80);
-            return fourCC == 0x33545844 || fourCC == 0x35545844; // DXT3 or DXT5
+            return fourCC == 0x33545844 || fourCC == 0x35545844;
         }
         return false;
     }
@@ -66,194 +49,124 @@ bool textureHasAlpha(const std::string& path) {
 }
 
 int main() {
-    engine3d::AppConfig config;
+    Engine engine;
+
+    if (!engine.initialize("engine3d: flyaround", 1024, 768)) {
+        return 1;
+    }
+
+    auto* renderer = engine.getRenderer();
+    auto* mats = engine.getMaterialManager();
+
+    renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
     const std::string skyboxDir = "assets/skybox/noc";
+    renderer->loadTexture("skybox_fb", skyboxDir + "/box_12.dds");
+    renderer->loadTexture("skybox_lr", skyboxDir + "/box_34.dds");
+    renderer->loadTexture("skybox_top", skyboxDir + "/box_5.dds");
+    renderer->setSkyboxEnabled(true, skyboxDir);
+    // renderer->setGridEnabled(true);
 
-    config.windowTitle = "engine3d: flyaround + materials + layers";
-    config.clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    renderer->loadFont("times", "assets/fonts/times.ttf", 48);
 
-    config.shaderManifest.entries = {
-        {
-            "default",
-            {
-                std::string(EXAMPLE_SHADER_DIR) + "/cube.vert.spv",
-                std::string(EXAMPLE_SHADER_DIR) + "/cube.frag.spv",
-                "vertexMain",
-                "fragmentMain",
-            },
-        },
+    renderer->loadTexture("drewno", "assets/textures/drewno.dds");
+    renderer->loadTexture("cegla", "assets/textures/blacha.dds");
+    renderer->loadTexture("metal", "assets/textures/metal.bmp");
+    renderer->loadTexture("trawa", "assets/textures/trawa.dds");
+    renderer->loadTexture("podloga", "assets/textures/piasek.bmp");
+
+    auto addMat = [&](const std::string& name, const std::string& tex) {
+        Material m; m.name = name; m.textureName = tex; mats->add(m);
+    };
+    addMat("drewno", "drewno");
+    addMat("cegla", "cegla");
+    addMat("metal", "metal");
+    addMat("trawa", "trawa");
+    addMat("podloga", "podloga");
+
+    {
+        MeshData floor;
+        floor.vertices = {
+            {{{-6200.0f, 0.0f, -6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,0}}},
+            {{{ 6200.0f, 0.0f, -6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{1280,0}}},
+            {{{ 6200.0f, 0.0f,  6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{1280,1280}}},
+            {{{-6200.0f, 0.0f,  6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,1280}}},
+        };
+        floor.indices = {0, 3, 2, 2, 1, 0};
+        engine.getMeshManager()->loadMesh("floor", floor);
+    }
+
+    {
+        MeshData cube;
+        const float s = 0.75f;
+        auto vert = [&](float x, float y, float z, float nx, float ny, float nz, float u, float v) {
+            cube.vertices.push_back({{x, y, z}, {nx, ny, nz}, {1,1,1}, {u, v}});
+        };
+        auto face = [&](float x1, float y1, float z1, float x2, float y2, float z2,
+                        float x3, float y3, float z3, float x4, float y4, float z4,
+                        float nx, float ny, float nz) {
+            auto b = static_cast<uint32_t>(cube.vertices.size());
+            vert(x1,y1,z1, nx,ny,nz, 0,0); vert(x2,y2,z2, nx,ny,nz, 1,0);
+            vert(x3,y3,z3, nx,ny,nz, 1,1); vert(x4,y4,z4, nx,ny,nz, 0,1);
+            cube.indices.insert(cube.indices.end(), {b+0,b+1,b+2, b+2,b+3,b+0});
+        };
+        face(-s,-s, s,  s,-s, s,  s, s, s, -s, s, s,  0,0,1);
+        face( s,-s,-s, -s,-s,-s, -s, s,-s,  s, s,-s, 0,0,-1);
+        face(-s,-s,-s, -s,-s, s, -s, s, s, -s, s,-s, -1,0,0);
+        face( s,-s, s,  s,-s,-s,  s, s,-s,  s, s, s,  1,0,0);
+        face(-s, s, s,  s, s, s,  s, s,-s, -s, s,-s,  0,1,0);
+        face(-s,-s,-s,  s,-s,-s,  s,-s, s, -s,-s, s,  0,-1,0);
+        engine.getMeshManager()->loadMesh("cube", cube);
+    }
+
+    auto addObj = [&](const std::string& name, const std::string& meshName,
+                      const std::string& matName, const Vec3& pos) {
+        auto* e = engine.createEntity(name);
+        auto* mc = e->addComponent<MeshComponent>(meshName);
+        mc->materialName = matName;
+        auto* tc = e->addComponent<TransformComponent>();
+        tc->translation = pos;
+        tc->scale = {2.0f, 2.0f, 2.0f};
     };
 
-    // Textury uzywane przez materialy.
-    config.textures = {
-        {"bmp_metal", "assets/textures/metal.bmp"},
-        {"dds_wood", "assets/textures/drewno.dds"},
-        {"dds_grass", "assets/textures/trawa.dds"},
-        {"dds_brick", "assets/textures/blacha.dds"},
-        {"piasek", "assets/textures/piasek.bmp", true},
-        {"skybox_fb", skyboxDir + "/box_12.dds"},
-        {"skybox_lr", skyboxDir + "/box_34.dds"},
-        {"skybox_top", skyboxDir + "/box_5.dds"},
-    };
+    addObj("floor", "floor", "podloga", {0,0,0});
+    addObj("cube_drewno", "cube", "drewno", {0,1,0});
+    addObj("cube_cegla", "cube", "cegla", {-5,1,-5});
+    addObj("cube_metal", "cube", "metal", {5,1,5});
+    addObj("cube_trawa", "cube", "trawa", {-5,1,5});
+    addObj("cube_drewno2", "cube", "drewno", {5,1,-5});
 
-    // Materialy definiuja wyglad obiektow: teksture, kolor, filtrowanie, mieszanie itp.
-    config.materials = {
-        {"drewno", "dds_wood"},
-        {"cegla", "dds_brick"},
-        {"metal", "bmp_metal"},
-        {"trawa", "dds_grass"},
-        {"podloga", "piasek"},
-    };
-
-    // Kamera (przykladowa, warstwa moze nadpisac).
-    config.camera.position = {-60.0f, 15.0f, -62.0f};
-    config.camera.target = {0.0f, 0.0f, 0.0f};
-    config.camera.fieldOfViewDegrees = 50.0f;
-    config.camera.nearPlane = 1.5f;
-    config.camera.farPlane = 16000.0f;
-
-    config.grid.enabled = true;
-    config.grid.size = 200.0f;
-    config.grid.spacing = 5.0f;
-
-    config.skybox.enabled = true;
-    config.skybox.directory = skyboxDir;
-    config.skybox.size = 3500.0f;
-    config.skybox.verticalOffset = 100.0f;
-
-#if ENGINE3D_HAS_FREETYPE
-    config.fonts = {
-        {"ui", "assets/fonts/times.ttf", 36},
-    };
-
-    config.textLabels = {
-        {"ui", "engine3d: flyaround  |  WASD + Mysz + Spacja/Shift  |  Q = skybox  |  L = layers", 24.0f, 24.0f, 0.8f, {1.0f, 1.0f, 0.85f, 1.0f}},
-        {"ui", "FPS: --", static_cast<float>(config.width) - 24.0f, 24.0f, 0.8f, {0.9f, 1.0f, 0.8f, 0.95f}, engine3d::TextHorizontalAlign::Right},
-        {"ui", "ESC = quit", 24.0f, 56.0f, 0.5f, {0.7f, 0.7f, 0.7f, 0.85f}},
-    };
-
-    config.updateTextLabels = [](float elapsedSeconds, uint32_t viewportWidth, uint32_t, std::vector<engine3d::TextLabel>& labels) {
-        if (labels.size() < 2) return;
-        static float prev = elapsedSeconds;
-        const float dt = elapsedSeconds - prev;
-        prev = elapsedSeconds;
-        if (dt > 0.0f) {
-            const int fps = static_cast<int>(std::lround(1.0f / dt));
-            labels[1].text = "FPS: " + std::to_string(fps);
-        }
-        labels[1].x = static_cast<float>(viewportWidth) - 24.0f;
-    };
-#endif
-
-    auto cameraCtrl = std::make_shared<engine3d::CameraController>();
-
-    // Tworzymy warstwe gry z wlasnymi obiektami.
-    auto gameLayer = std::make_unique<GameLayer>("game", cameraCtrl);
-    gameLayer->camera = config.camera;
-    gameLayer->grid = config.grid;
-    gameLayer->skybox = config.skybox;
-    gameLayer->sceneObjects = {
-        // Obiekty uzywaja materialName zamiast bezposrednio tekstury.
-        engine3d::SceneObject{"floor", "", "podloga", {{0.0f, 0.0f, 0.0f}, {}, {1.0f, 1.0f, 1.0f}}, {0.0f, 0.0f, 0.0f}},
-        engine3d::SceneObject{"cube", "", "drewno", {{0.0f, 0.0f, 0.0f}, {}, {2.0f, 2.0f, 2.0f}}},
-        engine3d::SceneObject{"cube", "", "cegla", {{-5.0f, 0.0f, -5.0f}, {}, {1.5f, 1.5f, 1.5f}}},
-        engine3d::SceneObject{"cube", "", "metal", {{5.0f, 0.0f, 5.0f}, {}, {1.5f, 1.5f, 1.5f}}},
-        engine3d::SceneObject{"cube", "", "trawa", {{-5.0f, 0.0f, 5.0f}, {}, {1.5f, 1.5f, 1.5f}}},
-        engine3d::SceneObject{"cube", "", "drewno", {{5.0f, 0.0f, -5.0f}, {}, {1.5f, 1.5f, 1.5f}}},
-    };
-
-    config.meshes = {
-        {
-            "cube",
-            {
-                {
-                    {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                    {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                    {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                    {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, 0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                    {{{-0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, 0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 0.0f}}},
-                    {{{0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1.0f, 1.0f}}},
-                    {{{-0.75f, -0.75f, -0.75f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1.0f}}},
-                },
-                {
-                    0, 1, 2, 2, 3, 0,
-                    4, 5, 6, 6, 7, 4,
-                    8, 9, 10, 10, 11, 8,
-                    12, 13, 14, 14, 15, 12,
-                    16, 17, 18, 18, 19, 16,
-                    20, 21, 22, 22, 23, 20,
-                },
-            },
-        },
-        {
-            "floor",
-            {
-                {
-                    {{{-6200.0f, -10.0f, -6200.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 0.0f}}},
-                    {{{ 6200.0f, -10.0f, -6200.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1280.0f, 0.0f}}},
-                    {{{ 6200.0f, -10.0f,  6200.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{1280.0f, 1280.0f}}},
-                    {{{-6200.0f, -10.0f,  6200.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 1.0f, 1.0f}}, {{0.0f, 1280.0f}}},
-                },
-                {
-                    0, 1, 2, 2, 3, 0,
-                },
-            },
-        },
-    };
-
-    // Wczytujemy modele 3DS i dodajemy jako obiekty sceny.
     auto addModel = [&](const std::string& path, const std::string& prefix,
-                        const engine3d::Vec3& position, bool disableAlpha = false,
+                        const Vec3& position, bool disableAlpha = false,
                         const std::string& fallbackTexture = "") {
-        auto model = std::make_unique<engine3d::Model3ds>();
-        if (!model->load(path)) {
+        Model3ds model;
+        if (!model.load(path)) {
             std::cerr << prefix << " load skipped: " << path << "\n";
             return;
         }
-        std::cout << "Loaded " << prefix << ": " << model->objectList.size()
-                  << " meshes, " << model->materialList.size() << " materials\n";
+        std::cout << "Loaded " << prefix << ": " << model.objectList.size()
+                  << " meshes, " << model.materialList.size() << " materials\n";
 
-        std::vector<std::string> finalMatNames(model->materialList.size());
-        for (size_t mi = 0; mi < model->materialList.size(); ++mi) {
-            const auto& mat = *model->materialList[mi];
+        std::vector<std::string> finalMatNames(model.materialList.size());
+        for (size_t mi = 0; mi < model.materialList.size(); ++mi) {
+            const auto& mat = *model.materialList[mi];
             std::string matName = prefix + "_mat" + std::to_string(mi)
                 + (mat.name.empty() ? "" : "_" + mat.name);
-
-            std::string texFile;
-            size_t ts = mat.texturePath.find_last_of("/\\");
-            if (ts != std::string::npos) texFile = mat.texturePath.substr(ts + 1);
-            else texFile = mat.texturePath;
 
             bool texExists = !mat.texturePath.empty();
             if (texExists) {
                 FILE* test = fopen(mat.texturePath.c_str(), "rb");
-                if (test) { fclose(test); } else {
+                if (test) {
+                    fclose(test);
+                } else {
                     texExists = false;
-                    std::cerr << "  [" << prefix << "] texture '" << texFile
-                              << "' NOT FOUND at: " << mat.texturePath << "\n";
                 }
             }
 
+            std::string texName = matName;
+            std::string texPathToLoad = mat.texturePath;
             std::string texPathForAlpha = mat.texturePath;
             if (!texExists && !fallbackTexture.empty()) {
-                texFile = fallbackTexture;
                 std::string fbPath = fallbackTexture;
                 FILE* test = fopen(fbPath.c_str(), "rb");
                 if (!test && fbPath.find('/') == std::string::npos) {
@@ -264,47 +177,38 @@ int main() {
                     fclose(test);
                     matName += "_fb";
                     texExists = true;
+                    texPathToLoad = fbPath;
                     texPathForAlpha = fbPath;
-                    config.textures.push_back({matName, fbPath});
-                    std::cout << "  [" << prefix << "] using fallback texture: " << fbPath << "\n";
                 }
             }
 
-            std::string opacityInfo;
-            if (!mat.opacityMapPath.empty()) {
-                std::string opFile;
-                size_t os = mat.opacityMapPath.find_last_of("/\\");
-                if (os != std::string::npos) opFile = mat.opacityMapPath.substr(os + 1);
-                else opFile = mat.opacityMapPath;
-                opacityInfo = " + opacity '" + opFile + "'";
-            }
-            std::cout << "  [" << prefix << "] material " << mi << ": '"
-                      << mat.name << "' transp=" << mat.transparency
-                      << (texExists ? " + texture '" + texFile + "'" : " (no texture)")
-                      << opacityInfo << "\n";
-
-            if (texExists && matName.find("_fb") == std::string::npos) {
-                config.textures.push_back({matName, mat.texturePath});
+            if (texExists) {
+                renderer->loadTexture(matName, texPathToLoad);
             }
 
-            engine3d::Material modelMat;
+            // Użyj funkcji konwersji, zachowując cullMode z loadera
+            Material modelMat = Convert3dsMaterialToEngineMaterial(mat);
             modelMat.name = matName;
             modelMat.textureName = texExists ? matName : "";
-            modelMat.color = mat.diffuseColor;
-            modelMat.color[3] = mat.transparency;
+            // BlendMode i depthWrite mogą być nadpisane dla przezroczystości
             bool useAlpha = !disableAlpha && (mat.transparency < 0.99f || (texExists && textureHasAlpha(texPathForAlpha)));
-            modelMat.blendMode = useAlpha ? engine3d::BlendMode::Alpha : engine3d::BlendMode::Disabled;
-            config.materials.push_back(modelMat);
+            modelMat.blendMode = useAlpha ? BlendMode::Alpha : BlendMode::Disabled;
+            modelMat.depthWrite = !useAlpha;
+            // Materiały z alfą (liście itp.) renderuj dwustronnie jeśli model nie ma flagi twoSided
+            if (useAlpha) {
+                modelMat.cullMode = CullMode::Disabled;
+            }
+            mats->add(modelMat);
 
             finalMatNames[mi] = matName;
         }
 
-        for (size_t i = 0; i < model->objectList.size(); ++i) {
-            const auto& obj = *model->objectList[i];
+        for (size_t i = 0; i < model.objectList.size(); ++i) {
+            const auto& obj = *model.objectList[i];
             std::string meshName = prefix + "_" + (obj.strName.empty()
                 ? std::to_string(i) : obj.strName);
 
-            config.meshes.push_back({meshName, obj.mesh});
+            engine.getMeshManager()->loadMesh(meshName, obj.mesh);
 
             std::string matName;
             if (!finalMatNames.empty()) {
@@ -315,68 +219,35 @@ int main() {
                 matName = finalMatNames[mi];
             }
 
-            std::cout << "  [" << prefix << "] mesh " << i << ": '"
-                      << obj.strName << "'"
-                      << " (" << obj.mesh.vertices.size() << " verts)"
-                      << " -> material '" << (matName.empty() ? "none" : matName) << "'"
-                      << "\n";
-
-            gameLayer->sceneObjects.push_back({
-                meshName, "", matName,
-                {position, {}, {0.3f, 0.3f, 0.3f}},
-                {0.0f, 0.0f, 0.0f},
-            });
+            auto* e = engine.createEntity(meshName);
+            auto* mc = e->addComponent<MeshComponent>(meshName);
+            mc->materialName = matName;
+            auto* tc = e->addComponent<TransformComponent>();
+            tc->translation = position;
+            tc->scale = {0.3f, 0.3f, 0.3f};
         }
     };
 
-    addModel("assets/models/3ds/bronie/M4.3DS",  "m4",  {-20.0f, 0.0f, 0.0f}, true, "assets/models/3ds/bronie/m4.dds");
-    addModel("assets/models/3ds/drzewko5.3DS",  "DRZEWKO",  {20.0f, 0.0f, 10.0f});
-    addModel("assets/models/3ds/trawa/grass.3ds",  "2",  {15.0f, 0.0f, 0.0f});
-    addModel("assets/models/3ds/D1.3DS",  "D1",  {25.0f, 0.0f, 0.0f});
+    addModel("assets/models/3ds/bronie/M4.3DS", "m4", {-20.0f, 10.0f, 0.0f}, true, "assets/models/3ds/bronie/m4.dds");
+    addModel("assets/models/3ds/drzewko5.3DS", "DRZEWKO", {20.0f, 0.0f, 10.0f});
+    addModel("assets/models/3ds/trawa/grass.3ds", "grass", {15.0f, 0.0f, 0.0f});
+    addModel("assets/models/3ds/D1.3DS", "D1", {35.0f, 0.0f, 0.0f});
 
-    gameLayer->setActive(true);
+    auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
+    camera->position = {-60.0f, 15.0f, -62.0f};
+    camera->fieldOfViewDegrees = 50.0f;
+    camera->nearPlane = 1.5f;
+    camera->farPlane = 16000.0f;
+    engine.setActiveCamera(camera);
 
-    engine3d::SceneManager sceneManager;
-    sceneManager.addLayer(std::move(gameLayer));
-    config.sceneManager = &sceneManager;
-
-    // Callback aktualizacyjny
-    bool skyboxToggled = false;
-    bool layerToggleHeld = false;
-    bool layersVisible = true;
-
-    config.onUpdate = [&](float dt, engine3d::AppConfig& cfg) {
-        constexpr int KEY_Q = 24;
-        constexpr int KEY_L = 46;
-
-        GameLayer* activeLayer = static_cast<GameLayer*>(sceneManager.getLayer("game"));
-        if (activeLayer) {
-            activeLayer->setInput(cfg.input);
-        }
-
-        cameraCtrl->update(dt, cfg.input.keys, cfg.input.mouseDeltaX, cfg.input.mouseDeltaY, cfg.camera);
-
-        if (cfg.input.keys[KEY_Q] && !skyboxToggled) {
-            cfg.skybox.enabled = !cfg.skybox.enabled;
-            skyboxToggled = true;
-        }
-        if (!cfg.input.keys[KEY_Q]) {
-            skyboxToggled = false;
-        }
-
-        if (cfg.input.keys[KEY_L] && !layerToggleHeld) {
-            layersVisible = !layersVisible;
-            if (layersVisible) {
-                sceneManager.activateLayer("game");
-            } else {
-                sceneManager.deactivateLayer("game");
-            }
-            layerToggleHeld = true;
-        }
-        if (!cfg.input.keys[KEY_L]) {
-            layerToggleHeld = false;
-        }
+    engine.onUpdate = [&](float, Engine& e) {
+        std::ostringstream oss;
+        oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
+        e.getRenderer()->setTextLabel(oss.str(), "times",
+                                       e.getRenderer()->width() - 190.0f, 90.0f, 1.0f,
+                                       {1.0f, 1.0f, 0.2f, 1.0f});
     };
 
-    return engine3d::runEngine(std::move(config));
+    engine.run();
+    return 0;
 }

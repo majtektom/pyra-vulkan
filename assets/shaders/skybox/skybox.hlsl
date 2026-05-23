@@ -11,7 +11,6 @@ cbuffer SkyboxPushConstants
 };
 
 Texture2D texSampler : register(t1, space0);
-
 SamplerState texSamplerState : register(s1, space0);
 
 struct VertexInput

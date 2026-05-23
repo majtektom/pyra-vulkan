@@ -1,55 +1,54 @@
-#include "engine/Engine.hpp"
+#include "engine.h"
+#include "renderer.h"
+#include "mesh_component.h"
+#include "transform_component.h"
+#include "camera_component.h"
 
-#include <string>
-#include <utility>
+using namespace engine3d;
 
 int main() {
-    // Tworzymy konfiguracje minimalnej sceny edukacyjnej: jeden shader, jedna siatka i jeden obiekt.
-    engine3d::AppConfig config;
-    config.windowTitle = "engine3d: rotating triangle";
+    Engine engine;
 
-    // Manifest shaderow mowi silnikowi, z jakich plikow SPIR-V ma korzystac podczas tworzenia pipeline'u.
-    config.shaderManifest.entries = {
-        {
-            "default",
-            {
-                std::string(EXAMPLE_SHADER_DIR) + "/triangle.vert.spv",
-                std::string(EXAMPLE_SHADER_DIR) + "/triangle.frag.spv",
-                "vertexMain",
-                "fragmentMain",
-            },
-        },
+    if (!engine.initialize("engine3d: rotating triangle", 800, 600)) {
+        return 1;
+    }
+
+    MeshData triangleMesh;
+    triangleMesh.vertices = {
+        {{{0.0f, -0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 0.0f, 0.0f}}, {{0.5f, 0.0f}}},
+        {{{0.5f, 0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 1.0f, 0.0f}}, {{1.0f, 1.0f}}},
+        {{{-0.5f, 0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 1.0f}}},
+    };
+    triangleMesh.indices = {0, 1, 2};
+    engine.getMeshManager()->loadMesh("triangle", triangleMesh);
+
+    Material mat;
+    mat.name = "default";
+    engine.getMaterialManager()->add(mat);
+    auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
+
+    auto* entity = engine.createEntity("triangle");
+    auto* mc = entity->addComponent<MeshComponent>("triangle");
+    mc->materialInstance = matInst;
+    auto* tc = entity->addComponent<TransformComponent>();
+
+    auto* camera = engine.createEntity("camera")->addComponent<CameraComponent>();
+    camera->position = {0.0f, 0.0f, 2.0f};
+    camera->fieldOfViewDegrees = 45.0f;
+    engine.setActiveCamera(camera);
+
+    engine.onUpdate = [](float dt, Engine& e) {
+        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        if (cam) {
+            cam->position = {0.0f, 0.0f, 2.0f};
+            cam->target = {0.0f, 0.0f, 0.0f};
+            cam->up = {0.0f, 1.0f, 0.0f};
+        }
+        if (auto* tc = e.getEntity("triangle")->getComponent<TransformComponent>()) {
+            tc->rotation.z += dt * 0.5f;
+        }
     };
 
-    // Kamera jest ustawiona blisko sceny, bo trojkat lezy w plaszczyznie z=0.
-    config.camera.position = {0.0f, 0.0f, 2.4f};
-
-    // Definiujemy jedna siatke trojkata wraz z pozycjami, kolorami i wspolrzednymi UV.
-    config.meshes = {
-        {
-            "triangle",
-            {
-                {
-                    {{{0.0f, -0.65f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 0.25f, 0.25f}}, {{0.5f, 0.0f}}},
-                    {{{0.65f, 0.45f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.2f, 1.0f, 0.35f}}, {{1.0f, 1.0f}}},
-                    {{{-0.65f, 0.45f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.2f, 0.45f, 1.0f}}, {{0.0f, 1.0f}}},
-                },
-                {0, 1, 2},
-            },
-        },
-    };
-
-    // W scenie umieszczamy jeden obiekt korzystajacy z tej siatki i obracajacy sie wokol osi Z.
-    config.sceneObjects = {
-        {
-            "triangle",
-            {},
-            "",
-            {{0.0f, 0.0f, 1.1f}},
-            {},
-        },
-    };
-
-    // Uruchamiamy silnik z przygotowana konfiguracja.
-    return engine3d::runEngine(std::move(config));
+    engine.run();
+    return 0;
 }

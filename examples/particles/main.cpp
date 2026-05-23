@@ -1,68 +1,36 @@
-#include "particleSystem.h"
-#include "engine/Engine.hpp"
-#include "engine/CameraController.hpp"
-#include "engine/InputManager.hpp"
-#include "engine/Math.hpp"
+#include "engine.h"
+#include "renderer.h"
+#include "types.h"
+#include "math.h"
+#include "mesh_component.h"
+#include "transform_component.h"
+#include "camera_component.h"
+#include "particle_system.h"
 
 #include <cmath>
-#include <future>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
-class GameLayer : public engine3d::Layer {
-public:
-    GameLayer(std::string name, std::shared_ptr<engine3d::CameraController> cameraCtrl,
-              engine3d::CParticleSystem* particleSystem)
-        : Layer(std::move(name)), cameraCtrl_(std::move(cameraCtrl)),
-          particleSystem_(particleSystem) {}
-
-    void update(float deltaTime) override {}
-
-    void setInput(const engine3d::InputState& input) { input_ = input; }
-
-private:
-    std::shared_ptr<engine3d::CameraController> cameraCtrl_;
-    engine3d::InputState input_;
-    engine3d::CParticleSystem* particleSystem_;
-};
+using namespace engine3d;
 
 int main() {
     std::srand(42);
+    Engine engine;
 
-    engine3d::AppConfig config;
-    config.windowTitle = "engine3d: particles";
-    config.clearColor = {0.05f, 0.05f, 0.1f, 1.0f};
+    if (!engine.initialize("engine3d: particles", 1024, 768)) {
+        return 1;
+    }
 
-    config.shaderManifest.entries = {
-        {
-            "default",
-            {
-                std::string(EXAMPLE_SHADER_DIR) + "/cube.vert.spv",
-                std::string(EXAMPLE_SHADER_DIR) + "/cube.frag.spv",
-                "vertexMain",
-                "fragmentMain",
-            },
-        },
-    };
+    auto* renderer = engine.getRenderer();
+    renderer->setClearColor(0.05f, 0.05f, 0.1f, 1.0f);
+    renderer->setGridEnabled(true);
+    renderer->loadFont("times", "assets/fonts/times.ttf", 48);
 
-    config.camera.position = {0.0f, 5.0f, -15.0f};
-    config.camera.target = {0.0f, 3.0f, 0.0f};
-    config.camera.fieldOfViewDegrees = 60.0f;
-    config.camera.nearPlane = 0.5f;
-    config.camera.farPlane = 16000.0f;
-
-    config.grid.enabled = true;
-    config.grid.size = 200.0f;
-    config.grid.spacing = 5.0f;
-
-    int numThreads = std::thread::hardware_concurrency();
-    if (numThreads < 1) numThreads = 4;
-
-    engine3d::CParticleSystem particleSys;
-
-    // proba wczytania z pliku .particle
+    CParticleSystem particleSys;
     if (!particleSys.load("assets/textures/particles/przyklad.particle")) {
         std::cout << "No .particle file found, using hardcoded setup\n";
         auto* emitter = particleSys.addEmitter("fountain");
@@ -78,132 +46,93 @@ int main() {
         emitter->createParticles();
     } else {
         std::cout << "Loaded .particle file with " << particleSys.emitterCount() << " emitters\n";
+        for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
+            particleSys.getEmitter(ei)->createParticles();
+        }
     }
 
-    config.fonts = {
-        {"ui", "assets/fonts/times.ttf", 48},
-    };
+    std::vector<std::string> meshNames;
+    int numThreads = std::max(1u, std::thread::hardware_concurrency());
 
-    config.textLabels = {
-        {"ui", "FPS: --", static_cast<float>(config.width) - 24.0f, 24.0f, 0.7f, {0.9f, 1.0f, 0.8f, 0.95f}, engine3d::TextHorizontalAlign::Right},
-        {"ui", "particles: --", 24.0f, 88.0f, 0.6f, {0.8f, 0.8f, 1.0f, 0.9f}},
-        {"ui", "ESC = quit  WASD + Mysz", 24.0f, 56.0f, 0.5f, {0.7f, 0.7f, 0.7f, 0.85f}},
-    };
-
-    config.updateTextLabels = [&](float elapsedSeconds, uint32_t viewportWidth, uint32_t, std::vector<engine3d::TextLabel>& labels) {
-        if (labels.size() < 2) return;
-        static float prev = elapsedSeconds;
-        const float dt = elapsedSeconds - prev;
-        prev = elapsedSeconds;
-        if (dt > 0.0f) {
-            const int fps = static_cast<int>(std::lround(1.0f / dt));
-            labels[0].text = "FPS: " + std::to_string(fps);
-            labels[0].x = static_cast<float>(viewportWidth) - 24.0f;
-        }
-        std::string info;
-        for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
-            if (ei > 0) info += " | ";
-            info += particleSys.infoParticles(ei);
-        }
-        labels[1].text = info;
-    };
-
-    auto cameraCtrl = std::make_shared<engine3d::CameraController>();
-
-    auto gameLayer = std::make_unique<GameLayer>("game", cameraCtrl, &particleSys);
-    gameLayer->camera = config.camera;
-    gameLayer->grid = config.grid;
-
-    // tworzymy osobny obiekt sceny + material dla kazdego emitera
     for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
         auto* e = particleSys.getEmitter(ei);
         if (!e) continue;
 
+        int numP = e->numParticles();
+        if (numP <= 0) continue;
+
         std::string meshName = "particles_" + std::to_string(ei);
-        std::string matName = "particleMat_" + std::to_string(ei);
+        meshNames.push_back(meshName);
 
-        std::string texName = "particle_tex_" + std::to_string(ei);
         std::string texPath = e->textureName();
-        if (!texPath.empty()) {
-            FILE* f = fopen(texPath.c_str(), "rb");
-            if (!f) {
-                std::cerr << "[particles] Texture not found: " << texPath
-                          << " for emitter '" << e->name() << "'\n";
-                texPath.clear();
-            } else {
-                fclose(f);
-            }
-        }
         if (texPath.empty()) texPath = "assets/textures/particles/particle.dds";
+        std::string texName = "particle_tex_" + std::to_string(ei);
+        renderer->loadTexture(texName, texPath);
 
-        config.textures.push_back({texName, texPath});
-
-        engine3d::Material mat;
-        mat.name = matName;
+        Material mat;
+        mat.name = "particleMat_" + std::to_string(ei);
         mat.textureName = texName;
-        mat.blendMode = engine3d::BlendMode::Alpha;
-        config.materials.push_back(mat);
+        mat.blendMode = BlendMode::Alpha;
+        engine.getMaterialManager()->add(mat);
+        auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
 
-        gameLayer->sceneObjects.push_back({
-            meshName, "", matName,
-            {{0.0f, 0.0f, 0.0f}, {}, {1.0f, 1.0f, 1.0f}},
-            {0.0f, 0.0f, 0.0f},
-        });
+        MeshData particleMesh;
+        particleMesh.vertices.resize(static_cast<std::size_t>(numP) * 4);
+        particleMesh.indices.resize(static_cast<std::size_t>(numP) * 6);
+        for (int j = 0; j < numP; j++) {
+            auto vi = static_cast<std::size_t>(j) * 4;
+            auto ii = static_cast<std::size_t>(j) * 6;
+            float s = 0.5f;
+            particleMesh.vertices[vi]   = {{{-s, -s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,0}}};
+            particleMesh.vertices[vi+1] = {{{ s, -s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{1,0}}};
+            particleMesh.vertices[vi+2] = {{{ s,  s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{1,1}}};
+            particleMesh.vertices[vi+3] = {{{-s,  s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,1}}};
+            particleMesh.indices[ii]   = static_cast<uint32_t>(vi);
+            particleMesh.indices[ii+1] = static_cast<uint32_t>(vi+1);
+            particleMesh.indices[ii+2] = static_cast<uint32_t>(vi+2);
+            particleMesh.indices[ii+3] = static_cast<uint32_t>(vi+2);
+            particleMesh.indices[ii+4] = static_cast<uint32_t>(vi+3);
+            particleMesh.indices[ii+5] = static_cast<uint32_t>(vi);
+        }
+        engine.getMeshManager()->loadMesh(meshName, particleMesh);
 
-        int numP = 1;
-        if (auto* e = particleSys.getEmitter(ei)) numP = e->numParticles();
-        engine3d::MeshData initialMesh;
-        initialMesh.vertices.resize(numP * 4);
-        initialMesh.indices.resize(numP * 6);
-        config.dynamicMeshes.push_back({meshName, initialMesh});
+        auto* entity = engine.createEntity("emitter_" + std::to_string(ei));
+        auto* mc = entity->addComponent<MeshComponent>(meshName);
+        mc->materialInstance = matInst;
     }
 
-    float elapsed = 0.0f;
-    config.onUpdate = [&](float dt, engine3d::AppConfig& cfg) {
-        elapsed += dt;
+    auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
+    camera->position = {0.0f, 5.0f, -15.0f};
+    camera->fieldOfViewDegrees = 60.0f;
+    camera->nearPlane = 0.5f;
+    camera->farPlane = 16000.0f;
+    engine.setActiveCamera(camera);
 
-        cameraCtrl->update(dt, cfg.input.keys, cfg.input.mouseDeltaX, cfg.input.mouseDeltaY, cfg.camera);
+    engine.onUpdate = [&particleSys, &meshNames, numThreads](float dt, Engine& e) {
+        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        if (!cam) return;
 
-        {
-            auto fwd = engine3d::normalize(engine3d::subtract(cfg.camera.target, cfg.camera.position));
-            auto right = engine3d::normalize(engine3d::cross(fwd, cfg.camera.up));
-            auto up = engine3d::normalize(engine3d::cross(right, fwd));
-            particleSys.setCameraVectors(right, up);
-        }
-        // aktualizuj emitory rownolegle
-        {
-            std::vector<std::future<void>> futs;
-            int n = particleSys.emitterCount();
-            for (int ei = 0; ei < n; ei++) {
-                auto* e = particleSys.getEmitter(ei);
-                if (!e) continue;
-                futs.push_back(std::async(std::launch::async, [e, dt]() {
-                    e->update(dt);
-                }));
-            }
-            for (auto& f : futs) f.get();
-        }
+        Vec3 forward = normalize(subtract(cam->target, cam->position));
+        Vec3 camRight = normalize(cross(forward, cam->up));
+        Vec3 camUp = normalize(cross(camRight, forward));
 
-        // buduj meshe rownolegle (wewnatrz kazdego emitera)
+        particleSys.setCameraVectors(camRight, camUp);
+        particleSys.updateParallel(dt, numThreads);
+
         for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
-            auto* e = particleSys.getEmitter(ei);
-            if (!e || e->activeParticles() == 0) continue;
-            std::string meshName = "particles_" + std::to_string(ei);
-            for (auto& dm : cfg.dynamicMeshes) {
-                if (dm.name != meshName) continue;
-                particleSys.buildMeshDataParallel(dm.mesh, ei, numThreads);
-                break;
-            }
+            MeshData meshData;
+            particleSys.buildMeshDataParallel(meshData, ei, numThreads);
+            e.getMeshManager()->updateMesh(meshNames[ei], meshData);
         }
 
-        (void)elapsed;
+        std::ostringstream oss;
+        oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
+        oss << " C: " << particleSys.emitterCount();
+        e.getRenderer()->setTextLabel(oss.str(), "times",
+                                       e.getRenderer()->width() - 430.0f, 90.0f, 1.0f,
+                                       {1.0f, 1.0f, 0.2f, 1.0f});
     };
 
-    gameLayer->setActive(true);
-
-    engine3d::SceneManager sceneManager;
-    sceneManager.addLayer(std::move(gameLayer));
-    config.sceneManager = &sceneManager;
-
-    return engine3d::runEngine(std::move(config));
+    engine.run();
+    return 0;
 }
