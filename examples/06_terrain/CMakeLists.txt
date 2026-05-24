@@ -1,0 +1,2 @@
+add_executable(06_terrain_example main.cpp)
+target_link_libraries(06_terrain_example PRIVATE engine3d)
