@@ -58,6 +58,7 @@ int main() {
     camera->farPlane = 8000.0f;
     engine.setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
+    engine.enableShaderHotReload(true);
 
     bool cursorGrabbed = true;
     int generatorMode = 0;

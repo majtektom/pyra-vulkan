@@ -32,6 +32,7 @@ class Renderer;
 class FontManager;
 class TextOverlayRenderer;
 class GuiMgr;
+class ShaderHotReload;
 
 class Engine {
 public:
@@ -80,6 +81,9 @@ public:
                       const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f});
     void setGuiMgr(GuiMgr* m) { guiMgr_ = m; }
 
+    void enableShaderHotReload(bool enable);
+    void reloadShader(const std::string& shaderName);
+
     void setShaderManifest(const ShaderManifest& manifest);
     void addShader(const std::string& name, const ShaderProgram& program);
 
@@ -125,6 +129,7 @@ private:
     GridRenderer gridRenderer_;
     TextOverlayRenderer textOverlayRenderer_;
     GuiMgr* guiMgr_ = nullptr;
+    std::unique_ptr<ShaderHotReload> shaderHotReload_;
     bool skyboxEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
     std::string skyboxDirectory_;
 };

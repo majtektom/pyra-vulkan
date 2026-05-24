@@ -15,6 +15,7 @@ public:
     std::shared_ptr<MaterialInstance> getOrCreateMaterialInstance(const Material& materialData);
 
     void setRenderPass(VkRenderPass renderPass) { renderPass_ = renderPass; }
+    void invalidatePipelinesForShader(const std::string& shaderName);
 
 private:
     std::shared_ptr<VulkanContext> context_;

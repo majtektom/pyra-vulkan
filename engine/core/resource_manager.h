@@ -53,6 +53,11 @@ public:
         }
     }
 
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        resources_.clear();
+    }
+
 private:
     std::unordered_map<std::string, std::weak_ptr<T>> resources_;
     std::mutex mutex_;

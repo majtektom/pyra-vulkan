@@ -234,4 +234,16 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
     return pipeline;
 }
 
+void MaterialSystem::invalidatePipelinesForShader(const std::string& shaderName) {
+    auto it = pipelineCache_.begin();
+    while (it != pipelineCache_.end()) {
+        if (it->first.shaderName == shaderName || (shaderName.empty() && it->first.shaderName.empty())) {
+            it = pipelineCache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    materialCache_.clear();
+}
+
 } // namespace engine3d

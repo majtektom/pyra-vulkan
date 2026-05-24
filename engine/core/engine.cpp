@@ -6,6 +6,8 @@
 #include "../render/material_system.h"
 #include "../object/mesh_manager.h"
 #include "../gui/gui.h"
+#include "../render/shader_hot_reload.h"
+#include "../render/material_system.h"
 
 #include <chrono>
 #include <cmath>
@@ -217,6 +219,8 @@ void Engine::update(TimeDelta deltaTime) {
         onUpdate(std::chrono::duration<float>(deltaTime).count(), *this);
     }
 
+    if (shaderHotReload_) shaderHotReload_->check();
+
     sceneManager.update(std::chrono::duration<float>(deltaTime).count());
 
     {
@@ -367,6 +371,33 @@ void Engine::setTextLabel(const std::string& text, const std::string&, float x, 
     float sw = renderer ? (float)renderer->width() : 1024.0f;
     float sh = renderer ? (float)renderer->height() : 768.0f;
     textOverlayRenderer_.addText(text, x, y, scale, color, sw, sh);
+}
+
+void Engine::reloadShader(const std::string&) {
+    if (!materialSystem) return;
+    std::shared_lock<std::shared_mutex> lock(entitiesMutex);
+    for (auto& entity : entities) {
+        auto* mc = entity->getComponent<MeshComponent>();
+        if (mc && mc->materialInstance && !mc->materialName.empty()) {
+            auto* mat = materialManager.get(mc->materialName);
+            if (mat) {
+                mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
+            }
+        }
+    }
+}
+
+void Engine::enableShaderHotReload(bool enable) {
+    if (enable) {
+        shaderHotReload_ = std::make_unique<ShaderHotReload>(
+            "assets/shaders", "bin/assets/shaders");
+        shaderHotReload_->setOnChanged([this](const std::string& shaderName) {
+            if (materialSystem) materialSystem->invalidatePipelinesForShader(shaderName);
+            reloadShader(shaderName);
+        });
+    } else {
+        shaderHotReload_.reset();
+    }
 }
 
 } // namespace engine3d

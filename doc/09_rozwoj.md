@@ -37,10 +37,6 @@ Można ujednolicić: zawsze generuj mipmapy jeśli `mipLevels == 1`.
 Spakuj assety do jednego pliku (jak `.pak` w Quake'u). Łatwiejsza dystrybucja,
 szybsze ładowanie (jeden odczyt zamiast wielu).
 
-### 8. Hot-reloading shaderów
-Wykrywaj zmiany w plikach `.hlsl` i rekompiluj w locie. Ogromnie przyspiesza
-iterację podczas pisania shaderów.
-
 ### 9. Asynchroniczne ładowanie
 Ładuj tekstury i modele w tle (osobny wątek). Pokazuj placeholder podczas ładowania.
 
@@ -123,9 +119,13 @@ GitHub Actions do automatycznego budowania i testowania na każdym pushu.
 Użyj `VulkanMemoryAllocator` zamiast ręcznego `vkAllocateMemory`.
 Redukuje fragmentację i przyspiesza alokację.
 
-### 23. Dynamiczna rekompilacja shaderów
+### 23. Dynamiczna rekompilacja shaderów - zrobione
 Użyj `glslang` lub `shaderc` w runtime zamiast prekompilowanych SPIR-V.
 Hot-reload bez restartu aplikacji.
+
+### 8. Hot-reloading shaderów - zrobione
+Wykrywaj zmiany w plikach `.hlsl` i rekompiluj w locie. Ogromnie przyspiesza
+iterację podczas pisania shaderów.
 
 ---
 

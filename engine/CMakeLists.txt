@@ -1,4 +1,4 @@
-add_library(engine3d STATIC
+add_library(engine3d SHARED
     core/engine.cpp
     core/component.cpp
     core/entity.cpp
@@ -17,6 +17,7 @@ add_library(engine3d STATIC
     render/transparent_pass.cpp
     render/material_system.cpp
     render/base_material_instance.cpp
+    render/shader_hot_reload.cpp
     render/backend/vulkan_context.cpp
     render/backend/vulkan_resources.cpp
     render/backend/vulkan_swapchain.cpp
@@ -47,6 +48,11 @@ add_library(engine3d STATIC
 )
 
 add_shader_bundle(
+    default
+    default.vert.hlsl=default.hlsl@vertexMain
+    default.frag.hlsl=default.hlsl@fragmentMain
+)
+add_shader_bundle(
     text_overlay
     text.vert.hlsl=text.hlsl@vertexMain
     text.frag.hlsl=text.hlsl@fragmentMain
@@ -62,14 +68,15 @@ add_shader_bundle(
     skybox.frag.hlsl=skybox.hlsl@fragmentMain
 )
 add_shader_bundle(
-    default
-    default.vert.hlsl=default.hlsl@vertexMain
-    default.frag.hlsl=default.hlsl@fragmentMain
-)
-add_shader_bundle(
     skinned
     skinned.vert.hlsl=skinned.hlsl@vertexMain
     skinned.frag.hlsl=skinned.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    terrain
+    terrain.vert.hlsl=terrain.hlsl@vertexMain
+    terrain.frag.hlsl=terrain.hlsl@fragmentMain
 )
 
 target_compile_definitions(engine3d
@@ -119,10 +126,5 @@ target_link_libraries(engine3d
         Vulkan::Vulkan
 )
 
-add_shader_bundle(
-    terrain
-    terrain.vert.hlsl=terrain.hlsl@vertexMain
-    terrain.frag.hlsl=terrain.hlsl@fragmentMain
-)
 
 add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders terrain_shaders)
