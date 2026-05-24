@@ -10,6 +10,7 @@ namespace engine3d {
 MaterialSystem::MaterialSystem(std::shared_ptr<VulkanContext> context, VkRenderPass renderPass) 
     : context_(context), renderPass_(renderPass) {
     createDescriptorSetLayout();
+    createBoneDescriptorSetLayout();
 }
 
 MaterialSystem::~MaterialSystem() {
@@ -20,6 +21,9 @@ MaterialSystem::~MaterialSystem() {
     }
     if (descriptorSetLayout_ != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_, nullptr);
+    }
+    if (boneDescriptorSetLayout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, boneDescriptorSetLayout_, nullptr);
     }
 }
 
@@ -36,15 +40,38 @@ void MaterialSystem::createDescriptorSetLayout() {
     samplerLayoutBinding.descriptorCount = 1;
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+    VkDescriptorSetLayoutBinding normalSamplerBinding{};
+    normalSamplerBinding.binding = 2;
+    normalSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    normalSamplerBinding.descriptorCount = 1;
+    normalSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 3> bindings = {uboLayoutBinding, samplerLayoutBinding, normalSamplerBinding};
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 2;
+    layoutInfo.bindingCount = 3;
     layoutInfo.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(context_->device(), &layoutInfo, nullptr, &descriptorSetLayout_) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout");
     }
+}
+
+VkDescriptorSetLayout MaterialSystem::createBoneDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding boneBinding{};
+    boneBinding.binding = 0;
+    boneBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    boneBinding.descriptorCount = 1;
+    boneBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &boneBinding;
+
+    VkDescriptorSetLayout boneLayout;
+    vkCreateDescriptorSetLayout(context_->device(), &layoutInfo, nullptr, &boneLayout);
+    return boneLayout;
 }
 
 std::shared_ptr<MaterialInstance> MaterialSystem::getOrCreateMaterialInstance(const Material& materialData) {
@@ -77,12 +104,33 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
 
     auto bindingDesc = Vertex::bindingDescription();
     auto attrDescs = Vertex::attributeDescriptions();
+
+    VkVertexInputBindingDescription skinBinding{};
+    skinBinding.binding = 1;
+    skinBinding.stride = sizeof(uint32_t) * 4 + sizeof(float) * 4;
+    skinBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription skinAttrs[2]{};
+    skinAttrs[0].binding = 1;
+    skinAttrs[0].location = 4;
+    skinAttrs[0].format = VK_FORMAT_R32G32B32A32_UINT;
+    skinAttrs[0].offset = 0;
+    skinAttrs[1].binding = 1;
+    skinAttrs[1].location = 5;
+    skinAttrs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    skinAttrs[1].offset = sizeof(uint32_t) * 4;
+
+    VkVertexInputBindingDescription bindings[2] = {bindingDesc, skinBinding};
+    std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
+    allAttrs.push_back(skinAttrs[0]);
+    allAttrs.push_back(skinAttrs[1]);
+
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDesc;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDescs.size());
-    vertexInput.pVertexAttributeDescriptions = attrDescs.data();
+    vertexInput.vertexBindingDescriptionCount = 2;
+    vertexInput.pVertexBindingDescriptions = bindings;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(allAttrs.size());
+    vertexInput.pVertexAttributeDescriptions = allAttrs.data();
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -147,13 +195,14 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
 
     VkPushConstantRange pushConstant{};
     pushConstant.offset = 0;
-    pushConstant.size = sizeof(Matrix4) + sizeof(std::array<float, 4>);
+    pushConstant.size = sizeof(Matrix4) + sizeof(std::array<float, 4>) * 2 + sizeof(float) * 4;
     pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout_;
+    VkDescriptorSetLayout setLayouts[2] = {descriptorSetLayout_, boneDescriptorSetLayout_};
+    layoutInfo.setLayoutCount = 2;
+    layoutInfo.pSetLayouts = setLayouts;
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushConstant;
 

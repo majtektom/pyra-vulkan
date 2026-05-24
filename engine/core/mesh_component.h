@@ -24,6 +24,8 @@ public:
     std::string materialName;
     
     std::shared_ptr<MaterialInstance> materialInstance;
+    VkBuffer skinVertexBuffer = VK_NULL_HANDLE;
+    VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
 };
 
 } // namespace engine3d

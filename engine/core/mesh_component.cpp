@@ -32,6 +32,10 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
 
     packet.material = materialInstance;
     packet.textureName = materialInstance->getTextureName();
+    packet.bumpIntensity = materialInstance->getBumpIntensity();
+    packet.materialColor = materialInstance->getColor();
+    packet.skinVertexBuffer = skinVertexBuffer;
+    packet.boneDescriptorSet = boneDescriptorSet;
     
     packets.push_back(packet);
 }

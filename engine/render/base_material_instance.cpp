@@ -25,6 +25,14 @@ public:
         return data_.textureName;
     }
 
+    float getBumpIntensity() const override {
+        return data_.bumpIntensity;
+    }
+
+    std::array<float,4> getColor() const override {
+        return data_.color;
+    }
+
 private:
     Material data_;
     VulkanPipeline pipeline_;

@@ -21,6 +21,8 @@ add_library(engine3d STATIC
     render/backend/vulkan_resources.cpp
     render/backend/vulkan_swapchain.cpp
     object/model_3ds.cpp
+    object/model_md2.cpp
+    object/gltf/model_gltf.cpp
     object/media_library.cpp
     object/mesh_manager.cpp
     font/font_manager.cpp
@@ -63,6 +65,11 @@ add_shader_bundle(
     default.vert.hlsl=default.hlsl@vertexMain
     default.frag.hlsl=default.hlsl@fragmentMain
 )
+add_shader_bundle(
+    skinned
+    skinned.vert.hlsl=skinned.hlsl@vertexMain
+    skinned.frag.hlsl=skinned.hlsl@fragmentMain
+)
 
 target_compile_definitions(engine3d
     PUBLIC
@@ -82,6 +89,7 @@ target_include_directories(engine3d
         ${CMAKE_CURRENT_SOURCE_DIR}/scene
         ${CMAKE_CURRENT_SOURCE_DIR}/platform
         ${CMAKE_CURRENT_SOURCE_DIR}/object
+        ${CMAKE_CURRENT_SOURCE_DIR}/object/gltf
         ${CMAKE_CURRENT_SOURCE_DIR}/font
         ${CMAKE_CURRENT_SOURCE_DIR}/particle
         ${CMAKE_CURRENT_SOURCE_DIR}/gui
@@ -110,4 +118,4 @@ target_link_libraries(engine3d
         Vulkan::Vulkan
 )
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders)
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders)

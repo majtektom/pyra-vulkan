@@ -154,6 +154,7 @@ enum class CullMode {
 struct Material {
     std::string name;
     std::string textureName;
+    std::string normalMapName;
     std::string shaderProgram;
     TextureFilter minFilter = TextureFilter::Linear;
     TextureFilter magFilter = TextureFilter::Linear;
@@ -172,6 +173,7 @@ struct Material {
     std::array<float, 4> specularColor = {0.0f, 0.0f, 0.0f, 1.0f};
     std::array<float, 4> emissionColor = {0.0f, 0.0f, 0.0f, 1.0f};
     float shininess = 32.0f;
+    float bumpIntensity = 1.0f;
 };
 
 struct CameraConfig {

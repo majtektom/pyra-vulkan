@@ -40,6 +40,7 @@ public:
     void waitIdle();
 
     void loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
+    void linkNormalMap(const std::string& diffuseName, const std::string& normalName);
     void setClearColor(float r, float g, float b, float a);
 
     uint32_t width() const;

@@ -25,9 +25,19 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 matLayout, 0, 1, &descSet, 0, nullptr);
 
+        if (packet.boneDescriptorSet != VK_NULL_HANDLE)
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    matLayout, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
+
         VkBuffer vertexBuffers[] = {packet.vertexBuffer};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+        if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
+            VkBuffer skinVBs[] = {packet.skinVertexBuffer};
+            VkDeviceSize skinOffs[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 1, 1, skinVBs, skinOffs);
+        }
         
         if (packet.indexBuffer != VK_NULL_HANDLE) {
             vkCmdBindIndexBuffer(commandBuffer, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -36,9 +46,13 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
         struct PushConstants {
             Matrix4 model;
             std::array<float, 4> color;
+            std::array<float, 4> lightDir;
+            std::array<float, 4> bumpIntensityPad;
         } push;
         push.model = packet.transform;
-        push.color = {1.0f, 1.0f, 1.0f, 1.0f};
+        push.color = packet.materialColor;
+        push.lightDir = {0.5f, 1.0f, 0.3f, 0.25f};
+        push.bumpIntensityPad = {packet.bumpIntensity, 0.0f, 0.0f, 0.0f};
 
         vkCmdPushConstants(commandBuffer, matLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

@@ -18,7 +18,7 @@
 namespace engine3d {
 
 constexpr int kMaxFrames = 2;
-constexpr int kMaxDescriptorSets = 32;
+constexpr int kMaxDescriptorSets = 64;
 
 struct GlobalUBO {
     Matrix4 view;
@@ -46,6 +46,7 @@ public:
 
             createUniformBuffers();
             createDefaultTexture();
+            createDefaultNormalTexture();
             createDescriptorResources();
 
             passes_.push_back(std::make_unique<OpaquePass>());
@@ -284,6 +285,28 @@ public:
         std::cout << "Loaded texture: " << name << " (" << uploadData.width << "x" << uploadData.height << ")" << std::endl;
     }
 
+    void linkNormalMap(const std::string& diffuseName, const std::string& normalName) {
+        normalMapLinks_[diffuseName] = normalName;
+        auto diffIt = textureDescriptorSets_.find(diffuseName);
+        auto normIt = textures_.find(normalName);
+        if (diffIt == textureDescriptorSets_.end() || normIt == textures_.end()) return;
+        VkDevice device = vulkanContext_->device();
+        VkDescriptorImageInfo normalInfo{};
+        normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalInfo.imageView = normIt->second.imageView;
+        normalInfo.sampler = normIt->second.sampler;
+        for (int i = 0; i < kMaxFrames; i++) {
+            VkWriteDescriptorSet w{};
+            w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w.dstSet = diffIt->second[i];
+            w.dstBinding = 2;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.descriptorCount = 1;
+            w.pImageInfo = &normalInfo;
+            vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+        }
+    }
+
     // Getters for sub-renderers
     VkDevice device() const { return vulkanContext_->device(); }
     VkPhysicalDevice physicalDevice() const { return vulkanContext_->physicalDevice(); }
@@ -322,6 +345,9 @@ public:
         if (defaultSampler_) vkDestroySampler(device, defaultSampler_, nullptr);
         if (defaultImageView_) vkDestroyImageView(device, defaultImageView_, nullptr);
         if (defaultImage_) { vkDestroyImage(device, defaultImage_, nullptr); vkFreeMemory(device, defaultImageMemory_, nullptr); }
+        if (defaultNormalSampler_) vkDestroySampler(device, defaultNormalSampler_, nullptr);
+        if (defaultNormalImageView_) vkDestroyImageView(device, defaultNormalImageView_, nullptr);
+        if (defaultNormalImage_) { vkDestroyImage(device, defaultNormalImage_, nullptr); vkFreeMemory(device, defaultNormalImageMemory_, nullptr); }
     }
 
     uint32_t width() const { return platform_->width(); }
@@ -401,11 +427,46 @@ private:
         defaultSampler_ = vk::createClampSampler(device);
     }
 
+    void createDefaultNormalTexture() {
+        VkDevice device = vulkanContext_->device();
+        VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
+        unsigned char flatNormal[4] = {128, 128, 255, 255};
+        VkBuffer stagingBuffer; VkDeviceMemory stagingBufferMemory;
+        vk::createBuffer(device, physicalDevice, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         stagingBuffer, stagingBufferMemory);
+        void* m; vkMapMemory(device, stagingBufferMemory, 0, 4, 0, &m);
+        std::memcpy(m, flatNormal, 4); vkUnmapMemory(device, stagingBufferMemory);
+        vk::createImage(device, physicalDevice, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, defaultNormalImage_, defaultNormalImageMemory_);
+        vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
+                                  defaultNormalImage_, VK_FORMAT_R8G8B8A8_UNORM,
+                                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
+        VkCommandBuffer cmd = beginSingleTimeCommands();
+        VkBufferImageCopy region{};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = {1, 1, 1};
+        vkCmdCopyBufferToImage(cmd, stagingBuffer, defaultNormalImage_,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        endSingleTimeCommands(cmd);
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
+                                  defaultNormalImage_, VK_FORMAT_R8G8B8A8_UNORM,
+                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+        defaultNormalImageView_ = vk::createImageView(device, defaultNormalImage_, VK_FORMAT_R8G8B8A8_UNORM,
+                                                       VK_IMAGE_ASPECT_COLOR_BIT, 1);
+        defaultNormalSampler_ = vk::createClampSampler(device);
+    }
+
     void createDescriptorResources() {
         VkDevice device = vulkanContext_->device();
         VkDescriptorPoolSize poolSizes[] = {
             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxDescriptorSets},
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxDescriptorSets}
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxDescriptorSets * 2}
         };
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -416,7 +477,7 @@ private:
             throw std::runtime_error("failed to create descriptor pool");
         }
 
-        VkDescriptorSetLayoutBinding bindings[2] = {};
+        VkDescriptorSetLayoutBinding bindings[3] = {};
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         bindings[0].descriptorCount = 1;
@@ -425,10 +486,14 @@ private:
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[1].descriptorCount = 1;
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[2].descriptorCount = 1;
+        bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = 2;
+        layoutInfo.bindingCount = 3;
         layoutInfo.pBindings = bindings;
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout_) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor set layout");
@@ -437,7 +502,7 @@ private:
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;
-        pushRange.size = sizeof(Matrix4) + sizeof(std::array<float,4>);
+        pushRange.size = sizeof(Matrix4) + sizeof(std::array<float,4>) * 2 + sizeof(float) * 4;
 
         VkPipelineLayoutCreateInfo plInfo{};
         plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -469,11 +534,16 @@ private:
         imageInfo.imageView = defaultImageView_;
         imageInfo.sampler = defaultSampler_;
 
+        VkDescriptorImageInfo normalInfo{};
+        normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalInfo.imageView = defaultNormalImageView_;
+        normalInfo.sampler = defaultNormalSampler_;
+
         for (int i = 0; i < kMaxFrames; i++) {
             bufferInfo.buffer = uniformBuffers_[i];
-            VkWriteDescriptorSet w[2] = {};
-            w[0].sType = w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            w[0].dstSet = w[1].dstSet = descriptorSets_[i];
+            VkWriteDescriptorSet w[3] = {};
+            w[0].sType = w[1].sType = w[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w[0].dstSet = w[1].dstSet = w[2].dstSet = descriptorSets_[i];
             w[0].dstBinding = 0;
             w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             w[0].descriptorCount = 1;
@@ -482,7 +552,11 @@ private:
             w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             w[1].descriptorCount = 1;
             w[1].pImageInfo = &imageInfo;
-            vkUpdateDescriptorSets(device, 2, w, 0, nullptr);
+            w[2].dstBinding = 2;
+            w[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w[2].descriptorCount = 1;
+            w[2].pImageInfo = &normalInfo;
+            vkUpdateDescriptorSets(device, 3, w, 0, nullptr);
         }
     }
 
@@ -500,14 +574,26 @@ private:
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         imageInfo.imageView = tex.imageView;
         imageInfo.sampler = tex.sampler;
+        VkDescriptorImageInfo normalInfo{};
+        normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalInfo.imageView = defaultNormalImageView_;
+        normalInfo.sampler = defaultNormalSampler_;
+        auto it = normalMapLinks_.find(name);
+        if (it != normalMapLinks_.end()) {
+            auto nIt = textures_.find(it->second);
+            if (nIt != textures_.end()) {
+                normalInfo.imageView = nIt->second.imageView;
+                normalInfo.sampler = nIt->second.sampler;
+            }
+        }
         for (int i = 0; i < kMaxFrames; i++) {
             VkDescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = uniformBuffers_[i];
             bufferInfo.offset = 0;
             bufferInfo.range = sizeof(GlobalUBO);
-            VkWriteDescriptorSet writes[2] = {};
-            writes[0].sType = writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = writes[1].dstSet = descriptorSets_[i];
+            VkWriteDescriptorSet writes[3] = {};
+            writes[0].sType = writes[1].sType = writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = writes[1].dstSet = writes[2].dstSet = descriptorSets_[i];
             writes[0].dstBinding = 0;
             writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[0].descriptorCount = 1;
@@ -516,9 +602,14 @@ private:
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[1].descriptorCount = 1;
             writes[1].pImageInfo = &imageInfo;
-            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+            writes[2].dstBinding = 2;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].descriptorCount = 1;
+            writes[2].pImageInfo = &normalInfo;
+            vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
         }
         textureDescriptorSets_[name] = descriptorSets_;
+        normalMapLinks_[name] = it != normalMapLinks_.end() ? it->second : "";
     }
 
     void recreateSwapChain() {
@@ -597,8 +688,14 @@ private:
     VkImageView defaultImageView_ = VK_NULL_HANDLE;
     VkSampler defaultSampler_ = VK_NULL_HANDLE;
 
+    VkImage defaultNormalImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory defaultNormalImageMemory_ = VK_NULL_HANDLE;
+    VkImageView defaultNormalImageView_ = VK_NULL_HANDLE;
+    VkSampler defaultNormalSampler_ = VK_NULL_HANDLE;
+
     std::unordered_map<std::string, TextureResources> textures_;
     std::unordered_map<std::string, std::array<VkDescriptorSet, kMaxFrames>> textureDescriptorSets_;
+    std::unordered_map<std::string, std::string> normalMapLinks_;
 
     std::array<VkSemaphore, 2> imageAvailableSemaphores_;
     std::array<VkSemaphore, 2> renderFinishedSemaphores_;
@@ -622,6 +719,7 @@ void Renderer::waitIdle() { if (impl_) impl_->cleanup(); }
 uint32_t Renderer::width() const { return impl_->width(); }
 uint32_t Renderer::height() const { return impl_->height(); }
 void Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { impl_->loadTexture(n, p, m); }
+void Renderer::linkNormalMap(const std::string& d, const std::string& n) { impl_->linkNormalMap(d, n); }
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
 
 VkDevice Renderer::device() const { return impl_->device(); }

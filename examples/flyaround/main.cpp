@@ -4,7 +4,10 @@
 #include "transform_component.h"
 #include "camera_component.h"
 #include "model_3ds.h"
+#include "model_md2.h"
+#include "model_gltf.h"
 #include "material_system.h"
+#include "vulkan_util.h"
 
 #include <SDL3/SDL.h>
 
@@ -238,6 +241,210 @@ int main() {
     addModel("assets/models/3ds/trawa/grass.3ds", "grass", {15.0f, 0.0f, 0.0f});
     addModel("assets/models/3ds/D1.3DS", "D1", {35.0f, 0.0f, 0.0f});
 
+    auto md2Model = std::make_shared<Md2ModelData>();
+    auto md2State = std::make_shared<Md2AnimationState>();
+    {
+        *md2Model = loadMd2Model("assets/models/md2/goblin/goblin.md2");
+        engine.getMeshManager()->loadMesh("goblin_md2", md2Model->triangles);
+        std::cout << "Loaded MD2: " << md2Model->frames[0].vertices.size() << " verts, "
+                  << md2Model->tris.size() << " tris, " << md2Model->frames.size() << " frames" << std::endl;
+
+        md2State->startFrame = 0;
+        md2State->endFrame = (int)md2Model->frames.size() - 1;
+        md2State->interpol = 0.0f;
+        md2State->speed = 10.0f;
+
+        renderer->loadTexture("goblin_tex", "assets/models/md2/goblin/goblin.bmp");
+        renderer->loadTexture("goblin_dot3", "assets/models/md2/goblin/goblinDOT3.bmp");
+        renderer->linkNormalMap("goblin_tex", "goblin_dot3");
+
+        Material matGoblinBump;
+        matGoblinBump.name = "goblin_bump";
+        matGoblinBump.textureName = "goblin_tex";
+        matGoblinBump.bumpIntensity = 1.0f;
+        matGoblinBump.cullMode = CullMode::Disabled;
+        mats->add(matGoblinBump);
+
+        Material matGoblinFlat;
+        matGoblinFlat.name = "goblin_flat";
+        matGoblinFlat.textureName = "goblin_tex";
+        matGoblinFlat.bumpIntensity = 0.0f;
+        matGoblinFlat.cullMode = CullMode::Disabled;
+        mats->add(matGoblinFlat);
+
+        {
+            auto* e = engine.createEntity("goblin_bump");
+            auto* mc = e->addComponent<MeshComponent>("goblin_md2");
+            mc->materialName = "goblin_bump";
+            auto* tc = e->addComponent<TransformComponent>();
+            tc->translation = {-50.0f, 7.0f, -5.0f};
+            tc->rotation = {-90.0f, 0.0f, 0.0f};
+            tc->scale = {0.4f, 0.4f, 0.4f};
+        }
+        {
+            auto* e = engine.createEntity("goblin_flat");
+            auto* mc = e->addComponent<MeshComponent>("goblin_md2");
+            mc->materialName = "goblin_flat";
+            auto* tc = e->addComponent<TransformComponent>();
+            tc->translation = {-50.0f, 7.0f, -20.0f};
+            tc->rotation = {-90.0f, 0.0f, 0.0f};
+            tc->scale = {0.4f, 0.4f, 0.4f};
+        }
+    }
+
+    {
+        auto toyCar = loadGltfModel("assets/models/gLTF/toycar/bin/ToyCar.glb");
+        std::cout << "Loaded ToyCar GLB: " << toyCar.primitives.size() << " primitives\n";
+
+        for (size_t i = 0; i < toyCar.primitives.size(); ++i) {
+            auto& prim = toyCar.primitives[i];
+            std::string name = "toycar_" + std::to_string(i);
+            engine.getMeshManager()->loadMesh(name, prim.mesh);
+
+            std::string texName = name + "_tex";
+            if (!prim.texturePath.empty()) renderer->loadTexture(texName, prim.texturePath);
+            else texName = "metal";
+
+            std::string nmName, ormName, occName, emName;
+            if (!prim.normalMapPath.empty()) { nmName = name + "_n"; renderer->loadTexture(nmName, prim.normalMapPath); }
+            if (!prim.ormPath.empty())        { ormName = name + "_orm"; renderer->loadTexture(ormName, prim.ormPath); }
+            if (!prim.occlusionPath.empty())   { occName = name + "_occ"; renderer->loadTexture(occName, prim.occlusionPath); }
+            if (!prim.emissivePath.empty())    { emName = name + "_em"; renderer->loadTexture(emName, prim.emissivePath); }
+
+            Material mat;
+            mat.name = name;
+            mat.textureName = texName;
+            mat.cullMode = CullMode::Disabled;
+            if (!nmName.empty()) { renderer->linkNormalMap(texName, nmName); mat.bumpIntensity = 1.0f; }
+            mats->add(mat);
+
+            auto* e = engine.createEntity(name);
+            auto* mc = e->addComponent<MeshComponent>(name);
+            mc->materialName = name;
+            auto* tc = e->addComponent<TransformComponent>();
+            tc->translation = {-190.0f, 30.0f, 20.0f};
+            tc->rotation = {0.0f, 0.0f, 0.0f};
+            tc->scale = {0.2f, 0.2f, 0.2f};
+        }
+    }
+
+    auto brainModel = std::make_shared<GltfModel>();
+    VkBuffer brainBoneBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory brainBoneMemory = VK_NULL_HANDLE;
+    VkDevice brainDev = VK_NULL_HANDLE;
+    {
+        *brainModel = loadGltfModel("assets/models/gLTF/BrainStem.glb");
+        std::cout << "Loaded BrainStem: " << brainModel->primitives.size() << " prims, "
+                  << brainModel->animations.size() << " anims, " << brainModel->skins.size() << " skins\n";
+
+        VkDevice dev = renderer->device();
+        brainDev = dev;
+
+        constexpr int kMaxBones = 64;
+        VkDeviceSize boneSize = kMaxBones * sizeof(Matrix4);
+        vk::createBuffer(dev, renderer->physicalDevice(), boneSize,
+                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         brainBoneBuffer, brainBoneMemory);
+
+        VkBuffer boneBuffer = brainBoneBuffer;
+        VkDeviceMemory boneMemory = brainBoneMemory;
+        vk::createBuffer(dev, renderer->physicalDevice(), boneSize,
+                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         boneBuffer, boneMemory);
+
+        VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+        VkDescriptorPoolCreateInfo bonePoolInfo{};
+        bonePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        bonePoolInfo.maxSets = 1;
+        bonePoolInfo.poolSizeCount = 1;
+        bonePoolInfo.pPoolSizes = &bonePoolSize;
+        VkDescriptorPool bonePool;
+        vkCreateDescriptorPool(dev, &bonePoolInfo, nullptr, &bonePool);
+
+        VkDescriptorSetLayoutBinding boneBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo boneLayoutInfo{};
+        boneLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        boneLayoutInfo.bindingCount = 1;
+        boneLayoutInfo.pBindings = &boneBinding;
+        VkDescriptorSetLayout boneLayout;
+        vkCreateDescriptorSetLayout(dev, &boneLayoutInfo, nullptr, &boneLayout);
+
+        VkDescriptorSetAllocateInfo boneAlloc{};
+        boneAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        boneAlloc.descriptorPool = bonePool;
+        boneAlloc.descriptorSetCount = 1;
+        boneAlloc.pSetLayouts = &boneLayout;
+        VkDescriptorSet boneDescSet;
+        vkAllocateDescriptorSets(dev, &boneAlloc, &boneDescSet);
+
+        VkDescriptorBufferInfo boneBufInfo{boneBuffer, 0, boneSize};
+        VkWriteDescriptorSet boneWrite{};
+        boneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        boneWrite.dstSet = boneDescSet;
+        boneWrite.dstBinding = 0;
+        boneWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        boneWrite.descriptorCount = 1;
+        boneWrite.pBufferInfo = &boneBufInfo;
+        vkUpdateDescriptorSets(dev, 1, &boneWrite, 0, nullptr);
+
+        for (size_t i = 0; i < brainModel->primitives.size(); ++i) {
+            auto& prim = brainModel->primitives[i];
+            std::string name = "brain_" + std::to_string(i);
+            engine.getMeshManager()->loadMesh(name, prim.mesh);
+            if (i < 3) std::cout << "  prim[" << i << "] verts=" << prim.mesh.vertices.size()
+                                 << " tris=" << prim.mesh.indices.size()/3
+                                 << " joints=" << (prim.joints.empty() ? "no" : "yes")
+                                 << " tex=" << (prim.texturePath.empty() ? "none" : prim.texturePath)
+                                 << " col=" << prim.mesh.vertices[0].color[0] << "," 
+                                 << prim.mesh.vertices[0].color[1] << ","
+                                 << prim.mesh.vertices[0].color[2] << "\n";
+
+            std::string texName = name + "_tex";
+            if (!prim.texturePath.empty()) renderer->loadTexture(texName, prim.texturePath);
+            else texName = "";
+
+            Material mat;
+            mat.name = name;
+            mat.textureName = texName;
+            mat.color = prim.baseColor;
+            mat.shaderProgram = "skinned";
+            mat.cullMode = CullMode::Disabled;
+            mats->add(mat);
+
+            auto* e = engine.createEntity(name);
+            auto* mc = e->addComponent<MeshComponent>(name);
+            mc->materialName = name;
+            mc->boneDescriptorSet = boneDescSet;
+
+            if (!prim.joints.empty()) {
+                size_t skinSize = prim.joints.size() * (sizeof(uint32_t)*4 + sizeof(float)*4);
+                VkBuffer svb; VkDeviceMemory sm;
+                vk::createBuffer(dev, renderer->physicalDevice(), skinSize,
+                                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                 svb, sm);
+                std::vector<uint8_t> skinData(skinSize);
+                for (size_t v = 0; v < prim.joints.size(); ++v) {
+                    size_t off = v * (sizeof(uint32_t)*4 + sizeof(float)*4);
+                    memcpy(skinData.data() + off, prim.joints[v].data(), sizeof(uint32_t)*4);
+                    memcpy(skinData.data() + off + sizeof(uint32_t)*4, prim.weights[v].data(), sizeof(float)*4);
+                }
+                void* mapped;
+                vkMapMemory(dev, sm, 0, skinSize, 0, &mapped);
+                memcpy(mapped, skinData.data(), skinSize);
+                vkUnmapMemory(dev, sm);
+                mc->skinVertexBuffer = svb;
+            }
+
+            auto* tc = e->addComponent<TransformComponent>();
+            tc->translation = {-40.0f, 10.0f, 20.0f};
+            tc->rotation = {0.0f, 0.0f, 0.0f};
+            tc->scale = {10.0f, 10.0f, 10.0f};
+        }
+    }
+
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
     camera->position = {-60.0f, 15.0f, -62.0f};
     camera->target = {0.5f, 0.0f, 0.5f};
@@ -249,7 +456,11 @@ int main() {
     // Inicjalizacja kontrolera kamery (tylko raz)
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
 
-    engine.onUpdate = [&](float dt, Engine& e) {
+    engine.onUpdate = [&, md2Model, md2State](float dt, Engine& e) {
+        MeshData animMesh;
+        animateMd2(*md2Model, *md2State, dt, animMesh);
+        engine.getMeshManager()->updateMesh("goblin_md2", animMesh);
+
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {
@@ -291,6 +502,33 @@ int main() {
             e.setTextLabel(look.str(), "times", 10.0f, 60.0f, 0.7f,
                                           {0.7f, 0.7f, 1.0f, 1.0f});
         }
+    };
+
+    engine.onUpdate = [origUpdate = std::move(engine.onUpdate), model = brainModel,
+                      boneBuffer = brainBoneBuffer, boneMemory = brainBoneMemory,
+                      dev = brainDev](float dt, Engine& e) mutable {
+        static float animTime = 0.0f;
+        animTime += dt;
+        std::vector<Matrix4> jointMats;
+        evaluateAnimation(*model, 0, animTime, jointMats);
+        static int dbgCount = 0;
+        if (dbgCount == 0) {
+            std::cout << "Anim frame: joints=" << jointMats.size() << " time=" << animTime << "\n";
+            if (!jointMats.empty()) {
+                auto& m = jointMats[0].values;
+                std::cout << "  joint[0]: " << m[0] << " " << m[1] << " " << m[2] << " " << m[3] << "\n"
+                          << "            " << m[4] << " " << m[5] << " " << m[6] << " " << m[7] << "\n";
+            }
+        }
+        if (dbgCount == 120) std::cout << "Anim frame 120: joints=" << jointMats.size() << " time=" << animTime << "\n";
+        dbgCount++;
+        if (!jointMats.empty()) {
+            void* mapped;
+            vkMapMemory(dev, boneMemory, 0, sizeof(Matrix4) * jointMats.size(), 0, &mapped);
+            memcpy(mapped, jointMats.data(), sizeof(Matrix4) * jointMats.size());
+            vkUnmapMemory(dev, boneMemory);
+        }
+        if (origUpdate) origUpdate(dt, e);
     };
 
     engine.run();

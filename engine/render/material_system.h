@@ -50,7 +50,9 @@ private:
     std::unordered_map<PipelineKey, VulkanPipeline, PipelineKeyHasher> pipelineCache_;
 
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout boneDescriptorSetLayout_ = VK_NULL_HANDLE;
     void createDescriptorSetLayout();
+    VkDescriptorSetLayout createBoneDescriptorSetLayout();
     VulkanPipeline getOrCreatePipeline(const Material& materialData);
 };
 
