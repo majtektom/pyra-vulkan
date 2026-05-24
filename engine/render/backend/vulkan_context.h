@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include "vk_mem_alloc.h"
 #include <vector>
 #include <memory>
 #include <string>
@@ -14,7 +15,6 @@ public:
     VulkanContext();
     ~VulkanContext();
 
-    // Prevent copying
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 
@@ -28,6 +28,7 @@ public:
     VkQueue graphicsQueue() const { return graphicsQueue_; }
     VkQueue presentQueue() const { return presentQueue_; }
     VkCommandPool commandPool() const { return commandPool_; }
+    VmaAllocator allocator() const { return allocator_; }
 
 private:
     void createInstance(const std::string& appName);
@@ -44,6 +45,7 @@ private:
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
     VkQueue presentQueue_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
+    VmaAllocator allocator_ = VK_NULL_HANDLE;
 };
 
 } // namespace engine3d

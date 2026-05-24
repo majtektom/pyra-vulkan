@@ -23,6 +23,7 @@ add_library(engine3d STATIC
     object/model_3ds.cpp
     object/model_md2.cpp
     object/gltf/model_gltf.cpp
+    object/terrain.cpp
     object/media_library.cpp
     object/mesh_manager.cpp
     font/font_manager.cpp
@@ -118,4 +119,10 @@ target_link_libraries(engine3d
         Vulkan::Vulkan
 )
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders)
+add_shader_bundle(
+    terrain
+    terrain.vert.hlsl=terrain.hlsl@vertexMain
+    terrain.frag.hlsl=terrain.hlsl@fragmentMain
+)
+
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders terrain_shaders)

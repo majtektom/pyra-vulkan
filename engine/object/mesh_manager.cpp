@@ -13,8 +13,7 @@ void MeshManager::loadMesh(const std::string& name, const MeshData& meshData) {
     gpuMesh->vertexBuffer = std::make_unique<VulkanBuffer>(
         context_, vertexBufferSize,
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT // Simplified for now
-    );
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     gpuMesh->vertexBuffer->upload(meshData.vertices.data(), vertexBufferSize);
 
     gpuMesh->indexCount = static_cast<uint32_t>(meshData.indices.size());
@@ -23,8 +22,7 @@ void MeshManager::loadMesh(const std::string& name, const MeshData& meshData) {
         gpuMesh->indexBuffer = std::make_unique<VulkanBuffer>(
             context_, indexBufferSize,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-        );
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         gpuMesh->indexBuffer->upload(meshData.indices.data(), indexBufferSize);
     }
     

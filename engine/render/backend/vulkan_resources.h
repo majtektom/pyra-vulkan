@@ -21,7 +21,7 @@ public:
 private:
     std::shared_ptr<VulkanContext> context_;
     VkBuffer buffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VmaAllocation allocation_ = VK_NULL_HANDLE;
     VkDeviceSize size_;
 };
 

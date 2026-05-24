@@ -1,0 +1,12 @@
+{
+    "heightMap": "przyk.bmp",
+    "scaleMap": 5,
+    "scaleHeight": 1.0,
+    "scaleTexture": 10,
+    "layers": [
+        { "mask": "mask1.bmp", "texture": "../../textures/snieg.bmp" },
+        { "mask": "mask2.bmp", "texture": "../../textures/grass.dds" },
+        { "mask": "mask3.bmp", "texture": "../../textures/piasek.bmp" },
+        { "mask": "mask.bmp",  "texture": "../../textures/blacha.dds" }
+    ]
+}

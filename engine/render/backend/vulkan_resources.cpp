@@ -1,3 +1,4 @@
+#define VMA_IMPLEMENTATION
 #include "vulkan_resources.h"
 #include <cstring>
 #include <stdexcept>
@@ -16,65 +17,49 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanContext> context,
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateBuffer(context_->device(), &bufferInfo, nullptr, &buffer_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create buffer");
+    VmaAllocationCreateInfo allocInfo{};
+    bool needsUpload = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+    allocInfo.usage = needsUpload ? VMA_MEMORY_USAGE_CPU_TO_GPU : VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VkResult res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
+    if (res != VK_SUCCESS) {
+        allocInfo.flags = 0;
+        res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
     }
-
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(context_->device(), buffer_, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    
-    // Find memory type
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(context_->physicalDevice(), &memProperties);
-    
-    uint32_t typeIndex = 0;
-    bool found = false;
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((memRequirements.memoryTypeBits & (1 << i)) && 
-            (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-            typeIndex = i;
-            found = true;
-            break;
-        }
-    }
-    
-    if (!found) throw std::runtime_error("failed to find suitable memory type");
-    
-    allocInfo.memoryTypeIndex = typeIndex;
-
-    if (vkAllocateMemory(context_->device(), &allocInfo, nullptr, &memory_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate buffer memory");
-    }
-
-    vkBindBufferMemory(context_->device(), buffer_, memory_, 0);
+    if (res != VK_SUCCESS)
+        throw std::runtime_error("failed to create VMA buffer");
 }
 
 VulkanBuffer::~VulkanBuffer() {
-    vkDestroyBuffer(context_->device(), buffer_, nullptr);
-    vkFreeMemory(context_->device(), memory_, nullptr);
+    vmaDestroyBuffer(context_->allocator(), buffer_, allocation_);
 }
 
 void* VulkanBuffer::map() {
+    VmaAllocationInfo info;
+    vmaGetAllocationInfo(context_->allocator(), allocation_, &info);
+    if (info.pMappedData) return info.pMappedData;
     void* data;
-    vkMapMemory(context_->device(), memory_, 0, size_, 0, &data);
+    vmaMapMemory(context_->allocator(), allocation_, &data);
     return data;
 }
 
 void VulkanBuffer::unmap() {
-    vkUnmapMemory(context_->device(), memory_);
+    vmaUnmapMemory(context_->allocator(), allocation_);
 }
 
 void VulkanBuffer::upload(const void* data, VkDeviceSize size) {
-    void* mapped = map();
-    std::memcpy(mapped, data, static_cast<size_t>(size));
-    unmap();
+    VmaAllocationInfo info;
+    vmaGetAllocationInfo(context_->allocator(), allocation_, &info);
+    if (info.pMappedData) {
+        std::memcpy(info.pMappedData, data, static_cast<size_t>(size));
+    } else {
+        void* mapped = map();
+        std::memcpy(mapped, data, static_cast<size_t>(size));
+        unmap();
+    }
 }
 
-// VulkanImage implementation simplified for brevity
 VulkanImage::VulkanImage(std::shared_ptr<VulkanContext> context,
             uint32_t width, uint32_t height,
             VkFormat format, VkImageUsageFlags usage) : context_(context) {}

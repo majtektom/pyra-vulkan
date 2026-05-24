@@ -1,0 +1,20 @@
+{
+    "heightMap": "height.bmp",
+    "scaleMap": 10,
+    "scaleHeight": 2.0,
+    "scaleTexture": 20,
+    "layers": [
+        { "mask": "m1.dds",  "texture": "../../textures/piasek.bmp" },
+        { "mask": "m2.dds",  "texture": "../../textures/piasek.bmp" },
+        { "mask": "m3.dds",  "texture": "../../textures/piasek.bmp" },
+        { "mask": "m4.dds",  "texture": "../../textures/drewno.dds" },
+        { "mask": "m5.dds",  "texture": "../../textures/drewno.dds" },
+        { "mask": "m6.dds",  "texture": "../../textures/piasek.bmp" },
+        { "mask": "m7.dds",  "texture": "../../textures/grass.dds" },
+        { "mask": "m8.dds",  "texture": "../../textures/piasek.bmp" },
+        { "mask": "m9.dds",  "texture": "../../textures/metal.bmp" },
+        { "mask": "m10.dds", "texture": "../../textures/sand.bmp" },
+        { "mask": "m11.dds", "texture": "../../textures/sand.bmp" },
+        { "mask": "m12.dds", "texture": "../../textures/piasek.dds" }
+    ]
+}

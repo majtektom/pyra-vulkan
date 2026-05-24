@@ -119,25 +119,13 @@ Wyświetlaj w UI.
 ### 21. CI/CD
 GitHub Actions do automatycznego budowania i testowania na każdym pushu.
 
-### 22. Alokator Vulkan (VMA)
+### 22. Alokator Vulkan (VMA) - zrobione - vk_mem_alloc.h
 Użyj `VulkanMemoryAllocator` zamiast ręcznego `vkAllocateMemory`.
 Redukuje fragmentację i przyspiesza alokację.
 
 ### 23. Dynamiczna rekompilacja shaderów
 Użyj `glslang` lub `shaderc` w runtime zamiast prekompilowanych SPIR-V.
 Hot-reload bez restartu aplikacji.
-
----
-
-## Wieloplatformowość
-
-### 24. Abstrakcja okna (SDL2 / GLFW)
-Zamiast bezpośredniego X11, użyj biblioteki okienkowej. Automatycznie działa
-na Windows, Linux, macOS.
-
-### 25. Metal i DirectX backend
-Dodaj backendy dla innych API graficznych. Abstrakcyjny interfejs `IRenderer`
-pozwala podmieniać implementację.
 
 ---
 

@@ -81,6 +81,7 @@ namespace {
 VulkanContext::VulkanContext() {}
 
 VulkanContext::~VulkanContext() {
+    if (allocator_) { vmaDestroyAllocator(allocator_); allocator_ = VK_NULL_HANDLE; }
     if (device_) {
         vkDeviceWaitIdle(device_);
         if (commandPool_) vkDestroyCommandPool(device_, commandPool_, nullptr);
@@ -106,6 +107,13 @@ void VulkanContext::createSurface(SDL_Window* window) {
     pickPhysicalDevice();
     createLogicalDevice();
     createCommandPool();
+
+    VmaAllocatorCreateInfo allocInfo{};
+    allocInfo.physicalDevice = physicalDevice_;
+    allocInfo.device = device_;
+    allocInfo.instance = instance_;
+    allocInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+    vmaCreateAllocator(&allocInfo, &allocator_);
 }
 
 void VulkanContext::createInstance(const std::string& appName) {

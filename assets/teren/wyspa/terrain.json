@@ -1,0 +1,16 @@
+{
+    "heightMap": "map.bmp",
+    "scaleMap": 10,
+    "scaleHeight": 1.5,
+    "scaleTexture": 20,
+    "layers": [
+        { "mask": "1mask.dds", "texture": "../../textures/piasek.dds" },
+        { "mask": "2mask.dds", "texture": "../../textures/piasek.bmp" },
+        { "mask": "3mask.dds", "texture": "3_rock_y.bmp" },
+        { "mask": "5mask.dds", "texture": "5_pavement.bmp" },
+        { "mask": "6mask.dds", "texture": "../../textures/sand.bmp" },
+        { "mask": "7mask.dds", "texture": "../../textures/sand.bmp" },
+        { "mask": "8mask.dds", "texture": "../../textures/sand.bmp" },
+        { "mask": "4mask.dds", "texture": "../../textures/trawa.dds" }
+    ]
+}
