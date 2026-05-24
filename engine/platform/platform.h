@@ -15,6 +15,7 @@ struct InputSnapshot {
     bool mouseButtons[5] = {};
     int mouseX = 0;
     int mouseY = 0;
+    int mouseWheel = 0;
 };
 
 class Platform {
@@ -49,6 +50,7 @@ private:
     bool mouseButtons_[5] = {};
     int mouseX_ = 0;
     int mouseY_ = 0;
+    int mouseWheel_ = 0;
     bool pointerGrabbed_ = false;
 };
 

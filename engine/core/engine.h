@@ -30,6 +30,8 @@ namespace engine3d {
 
 class Renderer;
 class FontManager;
+class TextOverlayRenderer;
+class GuiMgr;
 
 class Engine {
 public:
@@ -76,6 +78,7 @@ public:
     void setTextLabel(const std::string& text, const std::string& fontName,
                       float x, float y, float scale = 1.0f,
                       const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f});
+    void setGuiMgr(GuiMgr* m) { guiMgr_ = m; }
 
     void setShaderManifest(const ShaderManifest& manifest);
     void addShader(const std::string& name, const ShaderProgram& program);
@@ -121,6 +124,7 @@ private:
     SkyboxRenderer skyboxRenderer_;
     GridRenderer gridRenderer_;
     TextOverlayRenderer textOverlayRenderer_;
+    GuiMgr* guiMgr_ = nullptr;
     bool skyboxEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
     std::string skyboxDirectory_;
 };

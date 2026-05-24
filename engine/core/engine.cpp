@@ -5,6 +5,7 @@
 #include "../render/backend/vulkan_context.h"
 #include "../render/material_system.h"
 #include "../object/mesh_manager.h"
+#include "../gui/gui.h"
 
 #include <chrono>
 #include <cmath>
@@ -286,12 +287,16 @@ void Engine::renderFrame() {
                                                   renderer->getTextureDescriptorSet("", frame), frame);
             }
         },
-        [this](VkCommandBuffer cmd, uint32_t) {
-            if (textOverlayReady_ && textOverlayRenderer_.isReady()) {
-                textOverlayRenderer_.buildTexts();
-                textOverlayRenderer_.recordDrawCommands(cmd);
-                textOverlayRenderer_.clearTexts();
-            }
+        [this](VkCommandBuffer cmd, uint32_t fi) {
+        if (guiMgr_ && guiMgr_->isReady()) {
+            guiMgr_->build(fi);
+            guiMgr_->recordDrawCommands(cmd, fi);
+        }
+        if (textOverlayReady_ && textOverlayRenderer_.isReady()) {
+            textOverlayRenderer_.buildTexts(fi);
+            textOverlayRenderer_.recordDrawCommands(cmd, fi);
+            textOverlayRenderer_.clearTexts();
+        }
         });
 }
 

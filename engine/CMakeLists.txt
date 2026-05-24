@@ -29,6 +29,17 @@ add_library(engine3d STATIC
     object/skybox_renderer.cpp
     particle/particle_system.cpp
     font/text_overlay_renderer.cpp
+    gui/gui.cpp
+    gui/gui_button.cpp
+    gui/gui_input_text.cpp
+    gui/gui_list_box.cpp
+    gui/gui_static_text.cpp
+    gui/gui_check_box.cpp
+    gui/gui_combo_box.cpp
+    gui/gui_memo.cpp
+    gui/gui_track_bar.cpp
+    gui/gui_scroll_bar.cpp
+    gui/gui_renderer.cpp
     scene/scene_manager.cpp
 )
 
@@ -73,7 +84,7 @@ target_include_directories(engine3d
         ${CMAKE_CURRENT_SOURCE_DIR}/object
         ${CMAKE_CURRENT_SOURCE_DIR}/font
         ${CMAKE_CURRENT_SOURCE_DIR}/particle
-        ${CMAKE_CURRENT_SOURCE_DIR}/text
+        ${CMAKE_CURRENT_SOURCE_DIR}/gui
 )
 
 if(TARGET PkgConfig::SDL3)

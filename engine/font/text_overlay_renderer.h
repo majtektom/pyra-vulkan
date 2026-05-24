@@ -39,6 +39,8 @@ struct TextVertex {
     }
 };
 
+static constexpr uint32_t kTxtMaxFrames = 2;
+
 class TextOverlayRenderer {
 public:
     struct Label {
@@ -58,8 +60,8 @@ public:
     void addText(const std::string& text, float x, float y, float scale,
                  const std::array<float, 4>& color, float screenWidth, float screenHeight);
     void clearTexts();
-    void buildTexts();
-    void recordDrawCommands(VkCommandBuffer commandBuffer) const;
+    void buildTexts(uint32_t frameIndex);
+    void recordDrawCommands(VkCommandBuffer commandBuffer, uint32_t frameIndex) const;
 
     [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
     [[nodiscard]] bool isReady() const { return ready_ && fontLoaded_; }
@@ -67,7 +69,7 @@ public:
 
 private:
     void ensureGlyphs();
-    void deleteVertexBuffer();
+    void deleteVertexBuffer(uint32_t frameIndex);
     void releaseFontResources();
 
     bool ready_ = false;
@@ -90,10 +92,10 @@ private:
     VkImageView fontImageView_ = VK_NULL_HANDLE;
     VkSampler fontSampler_ = VK_NULL_HANDLE;
 
-    VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory vertexBufferMemory_ = VK_NULL_HANDLE;
+    std::array<VkBuffer, kTxtMaxFrames> vertexBuffer_{};
+    std::array<VkDeviceMemory, kTxtMaxFrames> vertexBufferMemory_{};
+    std::array<VkDeviceSize, kTxtMaxFrames> vertexBufferCapacity_{};
     uint32_t vertexCount_ = 0;
-    VkDeviceSize vertexBufferCapacity_ = 0;
 
     FontAtlasData fontAtlas_;
     FontAsset fontAsset_;

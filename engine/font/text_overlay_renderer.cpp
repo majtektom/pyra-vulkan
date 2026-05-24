@@ -244,16 +244,16 @@ void TextOverlayRenderer::loadFont(const FontAsset& fontAsset) {
     fontLoaded_ = true;
 }
 
-void TextOverlayRenderer::deleteVertexBuffer() {
-    if (vertexBuffer_ != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device_, vertexBuffer_, nullptr);
-        vertexBuffer_ = VK_NULL_HANDLE;
+void TextOverlayRenderer::deleteVertexBuffer(uint32_t fi) {
+    if (vertexBuffer_[fi] != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, vertexBuffer_[fi], nullptr);
+        vertexBuffer_[fi] = VK_NULL_HANDLE;
     }
-    if (vertexBufferMemory_ != VK_NULL_HANDLE) {
-        vkFreeMemory(device_, vertexBufferMemory_, nullptr);
-        vertexBufferMemory_ = VK_NULL_HANDLE;
+    if (vertexBufferMemory_[fi] != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, vertexBufferMemory_[fi], nullptr);
+        vertexBufferMemory_[fi] = VK_NULL_HANDLE;
     }
-    vertexBufferCapacity_ = 0;
+    vertexBufferCapacity_[fi] = 0;
 }
 
 void TextOverlayRenderer::addText(const std::string& text, float x, float y, float scale,
@@ -267,7 +267,7 @@ void TextOverlayRenderer::clearTexts() {
     labels_.clear();
 }
 
-void TextOverlayRenderer::buildTexts() {
+void TextOverlayRenderer::buildTexts(uint32_t fi) {
     if (!fontLoaded_ || labels_.empty()) { vertexCount_ = 0; return; }
 
     // Collect all wanted codepoints from texts
@@ -286,6 +286,11 @@ void TextOverlayRenderer::buildTexts() {
 
         auto codepoints = utf8::decode(label.text);
         for (uint32_t cp : codepoints) {
+            if (cp == '\n') {
+                cursorX = label.x;
+                baselineY += fontAtlas_.lineHeight * label.scale;
+                continue;
+            }
             auto it = fontAtlas_.glyphs.find(cp);
             if (it == fontAtlas_.glyphs.end()) {
                 it = fontAtlas_.glyphs.find(static_cast<uint32_t>('?'));
@@ -325,19 +330,19 @@ void TextOverlayRenderer::buildTexts() {
     vertexCount_ = static_cast<uint32_t>(vertices.size());
     VkDeviceSize requiredSize = sizeof(TextVertex) * vertices.size();
 
-    if (vertexBuffer_ == VK_NULL_HANDLE || requiredSize > vertexBufferCapacity_) {
-        deleteVertexBuffer();
-        vertexBufferCapacity_ = requiredSize;
+    if (vertexBuffer_[fi] == VK_NULL_HANDLE || requiredSize > vertexBufferCapacity_[fi]) {
+        deleteVertexBuffer(fi);
+        vertexBufferCapacity_[fi] = requiredSize;
         vk::createBuffer(device_, physicalDevice_, requiredSize,
                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                         vertexBuffer_, vertexBufferMemory_);
+                         vertexBuffer_[fi], vertexBufferMemory_[fi]);
     }
 
     void* mapped;
-    vkMapMemory(device_, vertexBufferMemory_, 0, requiredSize, 0, &mapped);
+    vkMapMemory(device_, vertexBufferMemory_[fi], 0, requiredSize, 0, &mapped);
     std::memcpy(mapped, vertices.data(), static_cast<size_t>(requiredSize));
-    vkUnmapMemory(device_, vertexBufferMemory_);
+    vkUnmapMemory(device_, vertexBufferMemory_[fi]);
 }
 
 void TextOverlayRenderer::ensureGlyphs() {
@@ -421,21 +426,23 @@ void TextOverlayRenderer::releaseFontResources() {
     if (fontImage_ != VK_NULL_HANDLE) { vkDestroyImage(device_, fontImage_, nullptr); vkFreeMemory(device_, fontImageMemory_, nullptr); fontImage_ = VK_NULL_HANDLE; }
 }
 
-void TextOverlayRenderer::recordDrawCommands(VkCommandBuffer commandBuffer) const {
+void TextOverlayRenderer::recordDrawCommands(VkCommandBuffer commandBuffer, uint32_t fi) const {
     if (!ready_ || !fontLoaded_ || vertexCount_ == 0) return;
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
 
-    VkBuffer vb[] = {vertexBuffer_};
+    VkBuffer vb[] = {vertexBuffer_[fi]};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vb, offsets);
     vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
 }
 
 void TextOverlayRenderer::cleanup() {
-    deleteVertexBuffer();
+    for (uint32_t i = 0; i < kTxtMaxFrames; i++) {
+        deleteVertexBuffer(i);
+    }
     if (descriptorSet_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) {
         vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet_);
     }

@@ -55,6 +55,7 @@ Platform::~Platform() {
 void Platform::processEvents() {
     mouseDeltaX_ = 0;
     mouseDeltaY_ = 0;
+    mouseWheel_ = 0;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -103,6 +104,9 @@ void Platform::processEvents() {
             mouseX_ = static_cast<int>(event.motion.x);
             mouseY_ = static_cast<int>(event.motion.y);
             break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            mouseWheel_ += static_cast<int>(event.wheel.y);
+            break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             if (pointerGrabbed_) {
                 grabPointer(false);
@@ -149,6 +153,7 @@ InputSnapshot Platform::pollInput() {
     std::memcpy(snap.mouseButtons, mouseButtons_, sizeof(mouseButtons_));
     snap.mouseX = mouseX_;
     snap.mouseY = mouseY_;
+    snap.mouseWheel = mouseWheel_;
     return snap;
 }
 
