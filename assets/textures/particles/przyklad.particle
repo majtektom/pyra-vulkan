@@ -1,43 +1,43 @@
 ParticleSystem 1.0 "przyklad"
 
 /*opis
-system czasteczkowy zaczynamy od s�owa particles po kt�rym jest string okre�laj�cy nazw� systemu
-mo�ye by� dowolna ilo�� system�w czastkowych( nie mo�na ich zagnie�d�a�)
-potem w klamrach {} mo�na stosowa� tokeny kt�re s� poni�ej
+system czasteczkowy zaczynamy od słowa particles po którym jest string określający nazwę systemu
+możye być dowolna ilość systemów czastkowych( nie można ich zagnieżdżać)
+potem w klamrach {} można stosować tokeny które sa poniżej
 
 real -> to liczba float albo wyrarzenie RealRandom(float,float)
 integer -> liczba calukowita lub wyrarzenie IntRandom(int,int)
-Mo�na u�ywa� nast�puj�ce tokeny
+Można używać następujące tokeny
 RealRandom(float,float)
 IntRandom(int,int)
 numparticles=int//ile czastek
-emitrate=int	//cz�sto�� emisji
+emitrate=int	//częstość emisji
 gravity=Vector(float,float,float) //wektor grawitacji
 texture =string //tekstura ca czastkach
-ZDAZENIA (bez zaznaczenia znacznikiem "at" ustawiaj� pocz�tkow� warto�� czastki):
-	position=Vector(real,real,real) //pozycja uk�adu czastek
-	velocity=Vector(real,real,real) //pr�dko�� cz�stki
-	size=real // wielko�� cz�stki
-	lifeTime=real // czas �ycia
+ZDAZENIA (bez zaznaczenia znacznikiem "at" ustawiają początkową wartość czastki):
+	position=Vector(real,real,real) //pozycja układu czastek
+	velocity=Vector(real,real,real) //prędkość cząstki
+	size=real // wielkość cząstki
+	lifeTime=real // czas życia
 	mass=real	//masa czastek
 	color=Vector4(real,real,real,real) //kolor czastek
 
-at ->zdarzenie w okreslonym czasie (podajemy po nim w jakim czasie �ysia czastki ma by� wywo�any, spos�b u�ycia:
-	at float zdazenie(kt�re� z tych wy�ej)
-fade <float> -> p�ynna zmiana do danego zdarzenia, podajemy go przed at gdy chcemy p�ynn� zmian� danego zdarzenia. Sk�adnia:
+at ->zdarzenie w okreslonym czasie, Podajemy po nim w jakim czasie życia czastki ma być wywołany, sposób użycia:
+	at float zdazenie(któreć z tych wyżej)
+fade <float> -> płynna zmiana do danego zdarzenia, podajemy go przed at gdy chcemy płynnie zmianć danego zdarzenia. Składnia:
 fade <czas trwania zdarzenia> at ...
 */
 /**/
 particles "snieg"
 {
-	numparticles=3100//ile czastek
-	emitrate=400		//cz�sto�� emisji
+	numparticles=9100//ile czastek
+	emitrate=1000		//częstość emisji
 	gravity=Vector(0.0,-5.0,1.0) //wektor grawitacji
 	texture ="./assets/sprite/cactus.tga" //tekstura na czastkach
-	position=Vector(RealRandom(-10.0,10.0),RealRandom(0.0,100.0),RealRandom(-100.0,100.0)) //pozycja uk�adu czastek
-	velocity=Vector(RealRandom(-5.0,5.0),RealRandom(-8.0,0.0),RealRandom(-5.0,5.0)) //pr�dko�� cz�stki
-	size=RealRandom(0.04,0.2) // wielko�� cz�stki
-	lifeTime=RealRandom(5.0,10.0)//// czas �ycia
+	position=Vector(RealRandom(-10.0,10.0),RealRandom(0.0,100.0),RealRandom(-100.0,100.0)) //pozycja układu czastek
+	velocity=Vector(RealRandom(-5.0,5.0),RealRandom(-8.0,0.0),RealRandom(-5.0,5.0)) //prędkość cząstki
+	size=RealRandom(0.1,0.5) // wielkość cząstki
+	lifeTime=RealRandom(5.0,10.0)//// czas życia
 	mass=RealRandom(0.1,1.0)	//masa czastek
 	color=Vector4(1.0,1.0,1.0,RealRandom(0.3,1.0))//kolor czastek
 	
@@ -45,53 +45,51 @@ particles "snieg"
 
 particles "ogien_dzialo"
 {
-	numparticles=70000 //ile czastek
-	emitrate=14000		//cz�sto�� emisji
+	numparticles=120000 //ile czastek
+	emitrate=25000		//częstość emisji
 	gravity=Vector(0.0,2.0,0.0) //wektor grawitacji
 	texture ="assets/textures/particles/og.dds" //tekstura na czastkach
-	position=Vector(RealRandom(3.0,3.2),RealRandom(-2.2,-2.0),RealRandom(-5.2,-5.0)) //pozycja uk�adu czastek
-	velocity=Vector(RealRandom(-2.3,-2.2),0.0,RealRandom(-0.1,0.1)) //pr�dko�� cz�stki
-	size=0.06 // wielko�� cz�stki
-	lifeTime=RealRandom(2.5,5.0)//// czas �ycia
+	position=Vector(RealRandom(3.0,3.2),RealRandom(-2.2,-2.0),RealRandom(-5.2,-5.0)) //pozycja układu czastek
+	velocity=Vector(RealRandom(-6.3,2.2),0.0,RealRandom(-0.9,0.9)) //prędkość cząstki
+	size=0.06 // wielkość cząstki
+	lifeTime=RealRandom(2.5,5.0)//// czas życia
 	mass=RealRandom(1.5,1.6)	//masa czastek
 	color=Vector4(0.1,0.1,1.0,RealRandom(0.2,0.9))//kolor czastek
 	fade 1.0 at 0.3 color=Vector4(1.0,0.0,0.0,0.7)
-	fade 2.5 at 1.0 color=Vector4(1.0,1.0,0.0,0.5)
+	fade 2.5 at 1.0 color=Vector4(0.0,1.0,1.0,0.5)
 	fade 1.3 at 1.0 mass=RealRandom(-0.4,0.1)
 	fade 1.6 at 1.3 mass=RealRandom(-1.3,-0.8)
 	fade 1.0 at 1.6 mass=RealRandom(-2.8,-1.7)
 	fade 3.0 at 2.5 size=0.01
-
-	
 }
 
 particles "ogien1"
 {
-	numparticles=2000 //ile czastek
-	emitrate=1100		//cz�sto�� emisji
+	numparticles=12000 //ile czastek
+	emitrate=2100		//częstość emisji
 	gravity=Vector(0.0,1.0,0.0) //wektor grawitacji
 	texture ="assets/textures/particles/og.dds" //tekstura na czastkach
-	position=Vector(-2.2,-2.0,-5.0) //pozycja uk�adu czastek
-	velocity=Vector(RealRandom(-0.2,0.2),0.0,RealRandom(-0.2,0.2)) //pr�dko�� cz�stki
-	size=0.05 // wielko�� cz�stki
-	lifeTime=RealRandom(1.0,2.0)//// czas �ycia
+	position=Vector(-7.2,-7.0,-7.0) //pozycja układu czastek
+	velocity=Vector(RealRandom(-0.2,0.2),0.0,RealRandom(-0.2,0.2)) //prędkość cząstki
+	size=0.05 // wielkość czastki
+	lifeTime=RealRandom(3.0,8.0)//// czas życia
 	mass=RealRandom(0.3,2.0)	//masa czastek
-	color=Vector4(0.1,0.1,1.0,RealRandom(0.2,0.9))//kolor czastek
+	color=Vector4(0.9,0.1,1.0,RealRandom(0.2,0.9))//kolor czastek
 	fade 0.3 at 0.01 color=Vector4(1.0,0.0,0.0,0.7)
-	fade 0.5 at 0.3 color=Vector4(1.0,1.0,0.0,0.5)
-	fade 2.0 at 1.0 size=0.005
-	
-} 
-particles "prz"
+	fade 4.0 at 0.3 color=Vector4(1.0,1.0,0.0,0.5)
+	fade 6.0 at 1.0 size=0.005
+}
+
+particles "przyklad"
 {
-	numparticles=500 //ile czastek
-	emitrate=100		//cz�sto�� emisji
+	numparticles=5000 //ile czastek
+	emitrate=300		//częstość emisji
 	gravity=Vector(0.0,-1.0,0.0) //wektor grawitacji
 	texture ="./assets/textures/particles/particle.dds" //tekstura na czastkach
-	position=Vector(RealRandom(-3.0,3.0),RealRandom(-3.0,3.0),RealRandom(-10.0,10.0)) //pozycja uk�adu czastek
-	velocity=Vector(0.0,0.0,0.0) //pr�dko�� cz�stki
-	size=0.01 // wielko�� cz�stki
-	lifeTime=RealRandom(5.0,7.0)//// czas �ycia
+	position=Vector(RealRandom(-3.0,3.0),RealRandom(-3.0,3.0),RealRandom(-10.0,10.0)) //pozycja układu czastek
+	velocity=Vector(0.0,0.0,0.0) //prędkość cząstki
+	size=0.03 // wielkość cząstki
+	lifeTime=RealRandom(5.0,7.0)//// czas życia
 	mass=0.0	//masa czastek
 	color=Vector4(RealRandom(0.01,0.99),RealRandom(0.01,0.99),RealRandom(0.01,0.99),1.0)//kolor czastek
 	fade 1.5 at 0.5 size=0.1

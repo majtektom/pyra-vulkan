@@ -60,6 +60,11 @@ struct MeshData {
     std::vector<uint32_t> indices;
 };
 
+struct ParticleInstanceData {
+    float posX, posY, posZ, size;
+    float r, g, b, a;
+};
+
 struct ShaderProgram {
     std::string vertexPath;
     std::string fragmentPath;

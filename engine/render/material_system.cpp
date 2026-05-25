@@ -105,30 +105,56 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
     auto bindingDesc = Vertex::bindingDescription();
     auto attrDescs = Vertex::attributeDescriptions();
 
-    VkVertexInputBindingDescription skinBinding{};
-    skinBinding.binding = 1;
-    skinBinding.stride = sizeof(uint32_t) * 4 + sizeof(float) * 4;
-    skinBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    bool isParticle = (materialData.shaderProgram == "particle");
 
-    VkVertexInputAttributeDescription skinAttrs[2]{};
-    skinAttrs[0].binding = 1;
-    skinAttrs[0].location = 4;
-    skinAttrs[0].format = VK_FORMAT_R32G32B32A32_UINT;
-    skinAttrs[0].offset = 0;
-    skinAttrs[1].binding = 1;
-    skinAttrs[1].location = 5;
-    skinAttrs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    skinAttrs[1].offset = sizeof(uint32_t) * 4;
+    VkVertexInputBindingDescription binding2{};
+    std::vector<VkVertexInputAttributeDescription> binding2Attrs;
+    uint32_t binding2locationStart = 4;
 
-    VkVertexInputBindingDescription bindings[2] = {bindingDesc, skinBinding};
+    if (isParticle) { //TODO: better way to handle this? maybe separate pipeline for particles?
+        binding2.binding = 1;
+        binding2.stride = sizeof(ParticleInstanceData);
+        binding2.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        VkVertexInputAttributeDescription attrPosSize{};
+        attrPosSize.binding = 1;
+        attrPosSize.location = 4;
+        attrPosSize.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attrPosSize.offset = offsetof(ParticleInstanceData, posX);
+        binding2Attrs.push_back(attrPosSize);
+
+        VkVertexInputAttributeDescription attrColor{};
+        attrColor.binding = 1;
+        attrColor.location = 5;
+        attrColor.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attrColor.offset = offsetof(ParticleInstanceData, r);
+        binding2Attrs.push_back(attrColor);
+    } else {
+        binding2.binding = 1;
+        binding2.stride = sizeof(uint32_t) * 4 + sizeof(float) * 4;
+        binding2.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        VkVertexInputAttributeDescription skinAttrs[2]{};
+        skinAttrs[0].binding = 1;
+        skinAttrs[0].location = 4;
+        skinAttrs[0].format = VK_FORMAT_R32G32B32A32_UINT;
+        skinAttrs[0].offset = 0;
+        skinAttrs[1].binding = 1;
+        skinAttrs[1].location = 5;
+        skinAttrs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        skinAttrs[1].offset = sizeof(uint32_t) * 4;
+        binding2Attrs.push_back(skinAttrs[0]);
+        binding2Attrs.push_back(skinAttrs[1]);
+    }
+
+    std::vector<VkVertexInputBindingDescription> bindings = {bindingDesc, binding2};
     std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
-    allAttrs.push_back(skinAttrs[0]);
-    allAttrs.push_back(skinAttrs[1]);
+    allAttrs.insert(allAttrs.end(), binding2Attrs.begin(), binding2Attrs.end());
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 2;
-    vertexInput.pVertexBindingDescriptions = bindings;
+    vertexInput.vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size());
+    vertexInput.pVertexBindingDescriptions = bindings.data();
     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(allAttrs.size());
     vertexInput.pVertexAttributeDescriptions = allAttrs.data();
 

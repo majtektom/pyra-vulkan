@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,8 @@
 #include "object.h"
 
 namespace engine3d {
+
+class Engine;
 
 enum EVENT_TYPES {
     PARTICLE_EVENT_SIZE = 0,
@@ -144,10 +147,10 @@ class CParticleSystem {
         void update(float time);
         /// aktualizacja czastek rownolegle (dzieli na kawalki)
         void updateParallel(float time, int totalThreads);
-        /// buduje siatke z czastek (billboard quady)
-        void buildMeshData(MeshData& meshData, int& particleCount, const Vec3& camRight, const Vec3& camUp);
-        /// buduje siatke z czastek rownolegle (dzieli czastki na kawalki)
-        void buildMeshDataParallel(MeshData& meshData, int& particleCount, const Vec3& camRight, const Vec3& camUp, int threadCount);
+        /// wypelnia dane instancji (pozycja, rozmiar, kolor)
+        void fillInstanceData(std::vector<ParticleInstanceData>& out);
+        /// wypelnia dane instancji rownolegle
+        void fillInstanceDataParallel(std::vector<ParticleInstanceData>& out, int threadCount);
 
         // settery
         void setName(const std::string& n) { m_name = n; }
@@ -183,6 +186,10 @@ class CParticleSystem {
     Vec3 m_camRight{1, 0, 0};
     Vec3 m_camUp{0, 1, 0};
 
+    std::vector<std::string> m_meshNames;
+    int m_numThreads = 1;
+    bool m_initialized = false;
+
     /// odczytanie vektora 3 elementowego
     Vec3Number processVector3(const std::string& str);
     /// odczytanie wektora 4 elementowego
@@ -207,12 +214,13 @@ public:
     void update(float time, const Vec3& camRight, const Vec3& camUp);
     /// rownolegla aktualizacja czastek
     void updateParallel(float time, int threadCount);
-    /// buduje siatke z czastek
-    void buildMeshData(MeshData& meshData, int index = 0);
-    /// buduje siatke z czastek rownolegle
-    void buildMeshDataParallel(MeshData& meshData, int index, int threadCount);
     /// informacje o systemie czastek
     std::string infoParticles(int ktory);
+
+    /// inicjalizuje meshe, materialy i entity dla wszystkich emiterów w silniku
+    void initialize(Engine& engine);
+    /// pełna aktualizacja: wektory kamery, fizyka, budowa siatki, upload do GPU
+    void update(float dt, Engine& engine);
 
     /// ustawia wektory kamery do billboardingu
     void setCameraVectors(const Vec3& right, const Vec3& up) { m_camRight = right; m_camUp = up; }

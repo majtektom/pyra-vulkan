@@ -29,6 +29,8 @@ struct RenderPacket {
     VkBuffer vertexBuffer;
     VkBuffer indexBuffer;
     VkBuffer skinVertexBuffer = VK_NULL_HANDLE;
+    VkBuffer instanceBuffer = VK_NULL_HANDLE;
+    uint32_t instanceCount = 0;
     uint32_t indexCount;
     Matrix4 transform;
     std::shared_ptr<MaterialInstance> material;

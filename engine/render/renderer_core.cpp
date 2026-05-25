@@ -23,6 +23,8 @@ constexpr int kMaxDescriptorSets = 64;
 struct GlobalUBO {
     Matrix4 view;
     Matrix4 proj;
+    float camRight[4];
+    float camUp[4];
 };
 
 struct TextureResources {
@@ -379,6 +381,12 @@ private:
                            static_cast<float>(swapchain_->extent().height);
             ubo.proj = perspective(radians(camera->fieldOfViewDegrees), aspect,
                                    camera->nearPlane, camera->farPlane);
+
+            Vec3 forward = normalize(subtract(camera->target, camera->position));
+            Vec3 cr = normalize(cross(forward, camera->up));
+            Vec3 cu = normalize(cross(cr, forward));
+            ubo.camRight[0] = cr.x; ubo.camRight[1] = cr.y; ubo.camRight[2] = cr.z; ubo.camRight[3] = 0.0f;
+            ubo.camUp[0] = cu.x; ubo.camUp[1] = cu.y; ubo.camUp[2] = cu.z; ubo.camUp[3] = 0.0f;
         }
         std::memcpy(uniformBuffersMapped_[currentFrame_], &ubo, sizeof(ubo));
     }

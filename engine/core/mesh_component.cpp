@@ -36,6 +36,8 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     packet.materialColor = materialInstance->getColor();
     packet.skinVertexBuffer = skinVertexBuffer;
     packet.boneDescriptorSet = boneDescriptorSet;
+    packet.instanceBuffer = gpuMesh->instanceBuffer ? gpuMesh->instanceBuffer->handle() : VK_NULL_HANDLE;
+    packet.instanceCount = gpuMesh->instanceCount;
     
     packets.push_back(packet);
 }

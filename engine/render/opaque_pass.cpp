@@ -33,7 +33,11 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-        if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
+        if (packet.instanceBuffer != VK_NULL_HANDLE) {
+            VkBuffer instVBs[] = {packet.instanceBuffer};
+            VkDeviceSize instOffs[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 1, 1, instVBs, instOffs);
+        } else if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
             VkBuffer skinVBs[] = {packet.skinVertexBuffer};
             VkDeviceSize skinOffs[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 1, 1, skinVBs, skinOffs);
@@ -59,7 +63,8 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
                            0, sizeof(PushConstants), &push);
 
         if (packet.indexBuffer != VK_NULL_HANDLE) {
-            vkCmdDrawIndexed(commandBuffer, packet.indexCount, 1, 0, 0, 0);
+            uint32_t instCount = packet.instanceCount > 0 ? packet.instanceCount : 1;
+            vkCmdDrawIndexed(commandBuffer, packet.indexCount, instCount, 0, 0, 0);
         }
     }
 }

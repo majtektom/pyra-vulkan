@@ -52,4 +52,26 @@ std::shared_ptr<GpuMesh> MeshManager::getMesh(const std::string& name) {
     return it != meshes_.end() ? it->second : nullptr;
 }
 
+void MeshManager::loadInstanceBuffer(const std::string& name, VkDeviceSize size) {
+    auto it = meshes_.find(name);
+    if (it == meshes_.end()) return;
+
+    auto& gpuMesh = it->second;
+    gpuMesh->instanceBuffer = std::make_unique<VulkanBuffer>(
+        context_, size,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+}
+
+void MeshManager::updateInstanceBuffer(const std::string& name, const void* data, VkDeviceSize size, uint32_t instanceCount) {
+    auto it = meshes_.find(name);
+    if (it == meshes_.end()) return;
+
+    auto& gpuMesh = it->second;
+    if (!gpuMesh->instanceBuffer) return;
+
+    gpuMesh->instanceBuffer->upload(data, size);
+    gpuMesh->instanceCount = instanceCount;
+}
+
 } // namespace engine3d

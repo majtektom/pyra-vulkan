@@ -6,7 +6,7 @@
 Przenieś fizykę cząstek na GPU. Zamiast aktualizować 75k cząstek na CPU,
 użyj compute shadera z SSBO. Eliminuje to upload wierzchołków co klatkę.
 
-### 2. Instanced rendering
+### 2. Instanced rendering -zrobione
 Zamiast generować 4 wierzchołki na każdą cząstkę, użyj jednego quada +
 per-instance data (pozycja, skala, kolor). `vkCmdDrawIndexed(4, particleCount, ...)`.
 Redukuje zużycie pamięci i transfer CPU→GPU.

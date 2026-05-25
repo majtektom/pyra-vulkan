@@ -8,6 +8,11 @@
 #include <iostream>
 #include <random>
 #include <sstream>
+#include <thread>
+
+#include "../core/engine.h"
+#include "../core/mesh_component.h"
+#include "../render/renderer.h"
 
 namespace engine3d {
 
@@ -477,170 +482,71 @@ void CParticleSystem::CListParticles::updateParallel(float time, int totalThread
     }
 }
 
-/// Buduje siatke z aktywnych czastek (billboard quady)
-void CParticleSystem::CListParticles::buildMeshData(MeshData& meshData, int& particleCount,
-                                                      const Vec3& camRight, const Vec3& camUp) {
-    if (!particles) { particleCount = 0; return; }
-    int aliveCount = particles->GetNumUsedElements();
-    particleCount = aliveCount;
-    if (aliveCount == 0) return;
+/// Wypelnia dane instancji (pozycja, rozmiar, kolor) dla aktywnych czastek
+void CParticleSystem::CListParticles::fillInstanceData(std::vector<ParticleInstanceData>& out) {
+    out.clear();
+    if (!particles) return;
 
-    int totalVerts = aliveCount * 4;
-    int totalIndices = aliveCount * 6;
-    meshData.vertices.resize(static_cast<std::size_t>(totalVerts));
-
-    bool indicesChanged = (aliveCount != lastActiveCount);
-    if (indicesChanged) {
-        meshData.indices.resize(static_cast<std::size_t>(totalIndices));
-        lastActiveCount = aliveCount;
-    }
-
-    float rx = camRight.x, ry = camRight.y, rz = camRight.z;
-    float ux = camUp.x, uy = camUp.y, uz = camUp.z;
-    int vi = 0, ii = 0;
+    int alive = particles->GetNumUsedElements();
+    if (alive == 0) return;
+    out.reserve(alive);
 
     for (int i = 0; i < particles->GetTotalElements(); ++i) {
         if (!particles->IsAlive(i)) continue;
         CParticle* par = &particles->GetAt(i);
-        float s = par->m_size;
-        float px = par->m_pos.x, py = par->m_pos.y, pz = par->m_pos.z;
-        float cr = par->m_color[0], cg = par->m_color[1], cb = par->m_color[2];
-
-        // billboard quad: 4 wierzcholki bezposrednio
-        float rsx = rx * s, rsy = ry * s, rsz = rz * s;
-        float usx = ux * s, usy = uy * s, usz = uz * s;
-
-        Vertex& v0 = meshData.vertices[vi + 0];
-        v0.position[0] = px - rsx - usx; v0.position[1] = py - rsy - usy; v0.position[2] = pz - rsz - usz;
-        v0.normal[0] = 0; v0.normal[1] = 0; v0.normal[2] = 1;
-        v0.color[0] = cr; v0.color[1] = cg; v0.color[2] = cb;
-        v0.texCoord[0] = 0; v0.texCoord[1] = 0;
-
-        Vertex& v1 = meshData.vertices[vi + 1];
-        v1.position[0] = px + rsx - usx; v1.position[1] = py + rsy - usy; v1.position[2] = pz + rsz - usz;
-        v1.normal[0] = 0; v1.normal[1] = 0; v1.normal[2] = 1;
-        v1.color[0] = cr; v1.color[1] = cg; v1.color[2] = cb;
-        v1.texCoord[0] = 1; v1.texCoord[1] = 0;
-
-        Vertex& v2 = meshData.vertices[vi + 2];
-        v2.position[0] = px + rsx + usx; v2.position[1] = py + rsy + usy; v2.position[2] = pz + rsz + usz;
-        v2.normal[0] = 0; v2.normal[1] = 0; v2.normal[2] = 1;
-        v2.color[0] = cr; v2.color[1] = cg; v2.color[2] = cb;
-        v2.texCoord[0] = 1; v2.texCoord[1] = 1;
-
-        Vertex& v3 = meshData.vertices[vi + 3];
-        v3.position[0] = px - rsx + usx; v3.position[1] = py - rsy + usy; v3.position[2] = pz - rsz + usz;
-        v3.normal[0] = 0; v3.normal[1] = 0; v3.normal[2] = 1;
-        v3.color[0] = cr; v3.color[1] = cg; v3.color[2] = cb;
-        v3.texCoord[0] = 0; v3.texCoord[1] = 1;
-
-        if (indicesChanged) {
-            meshData.indices[ii + 0] = static_cast<uint32_t>(vi + 0);
-            meshData.indices[ii + 1] = static_cast<uint32_t>(vi + 1);
-            meshData.indices[ii + 2] = static_cast<uint32_t>(vi + 2);
-            meshData.indices[ii + 3] = static_cast<uint32_t>(vi + 2);
-            meshData.indices[ii + 4] = static_cast<uint32_t>(vi + 3);
-            meshData.indices[ii + 5] = static_cast<uint32_t>(vi + 0);
-        }
-
-        vi += 4; ii += 6;
+        ParticleInstanceData inst;
+        inst.posX = par->m_pos.x;
+        inst.posY = par->m_pos.y;
+        inst.posZ = par->m_pos.z;
+        inst.size = par->m_size;
+        inst.r = par->m_color[0];
+        inst.g = par->m_color[1];
+        inst.b = par->m_color[2];
+        inst.a = par->m_color[3];
+        out.push_back(inst);
     }
 }
 
-/// Rownolegla wersja buildMeshData - dzieli tablice na kawalki
-void CParticleSystem::CListParticles::buildMeshDataParallel(MeshData& meshData, int& particleCount,
-                                                              const Vec3& camRight, const Vec3& camUp,
-                                                              int threadCount) {
-    if (!particles) { particleCount = 0; return; }
-    int aliveCount = particles->GetNumUsedElements();
-    particleCount = aliveCount;
-    if (aliveCount == 0) return;
+/// Rownolegla wersja fillInstanceData
+void CParticleSystem::CListParticles::fillInstanceDataParallel(std::vector<ParticleInstanceData>& out, int threadCount) {
+    out.clear();
+    if (!particles) return;
 
-    int totalVerts = aliveCount * 4;
-    int totalIndices = aliveCount * 6;
-    if (meshData.vertices.capacity() < static_cast<size_t>(totalVerts))
-        meshData.vertices.reserve(totalVerts);
-    if (meshData.indices.capacity() < static_cast<size_t>(totalIndices))
-        meshData.indices.reserve(totalIndices);
-    meshData.vertices.resize(totalVerts);
-    bool indicesChanged = (aliveCount != lastActiveCount);
-    if (indicesChanged) {
-        meshData.indices.resize(totalIndices);
-        lastActiveCount = aliveCount;
-    }
+    int alive = particles->GetNumUsedElements();
+    if (alive == 0) return;
 
-    float rx = camRight.x, ry = camRight.y, rz = camRight.z;
-    float ux = camUp.x, uy = camUp.y, uz = camUp.z;
-
-    if (threadCount < 2 || aliveCount < 1000) {
-        buildMeshData(meshData, particleCount, camRight, camUp);
+    if (threadCount < 2 || alive < 1000) {
+        fillInstanceData(out);
         return;
     }
 
-    // najpierw zlicz aktywne indeksy
     std::vector<int> activeIdx;
-    activeIdx.reserve(aliveCount);
+    activeIdx.reserve(alive);
     for (int i = 0; i < particles->GetTotalElements(); ++i) {
         if (particles->IsAlive(i)) activeIdx.push_back(i);
     }
 
-    int chunkSize = (aliveCount + threadCount - 1) / threadCount;
+    out.resize(alive);
+    int chunkSize = (alive + threadCount - 1) / threadCount;
     std::vector<std::future<void>> futs;
 
     for (int t = 0; t < threadCount; t++) {
         int cstart = t * chunkSize;
-        int cend = std::min(cstart + chunkSize, aliveCount);
+        int cend = std::min(cstart + chunkSize, alive);
         if (cstart >= cend) break;
 
-        futs.push_back(std::async(std::launch::async, [&, t, cstart, cend, rx, ry, rz, ux, uy, uz]() {
-            int baseParticle = t * chunkSize;
-            int vi = baseParticle * 4;
-            int ii = baseParticle * 6;
-
+        futs.push_back(std::async(std::launch::async, [&, cstart, cend]() {
             for (int j = cstart; j < cend; j++) {
-                int pi = activeIdx[j];
-                CParticle* par = &particles->GetAt(pi);
-                float s = par->m_size;
-                float px = par->m_pos.x, py = par->m_pos.y, pz = par->m_pos.z;
-                float cr = par->m_color[0], cg = par->m_color[1], cb = par->m_color[2];
-
-                float rsx = rx * s, rsy = ry * s, rsz = rz * s;
-                float usx = ux * s, usy = uy * s, usz = uz * s;
-
-                Vertex& v0 = meshData.vertices[vi + 0];
-                v0.position[0] = px - rsx - usx; v0.position[1] = py - rsy - usy; v0.position[2] = pz - rsz - usz;
-                v0.normal[0] = 0; v0.normal[1] = 0; v0.normal[2] = 1;
-                v0.color[0] = cr; v0.color[1] = cg; v0.color[2] = cb;
-                v0.texCoord[0] = 0; v0.texCoord[1] = 0;
-
-                Vertex& v1 = meshData.vertices[vi + 1];
-                v1.position[0] = px + rsx - usx; v1.position[1] = py + rsy - usy; v1.position[2] = pz + rsz - usz;
-                v1.normal[0] = 0; v1.normal[1] = 0; v1.normal[2] = 1;
-                v1.color[0] = cr; v1.color[1] = cg; v1.color[2] = cb;
-                v1.texCoord[0] = 1; v1.texCoord[1] = 0;
-
-                Vertex& v2 = meshData.vertices[vi + 2];
-                v2.position[0] = px + rsx + usx; v2.position[1] = py + rsy + usy; v2.position[2] = pz + rsz + usz;
-                v2.normal[0] = 0; v2.normal[1] = 0; v2.normal[2] = 1;
-                v2.color[0] = cr; v2.color[1] = cg; v2.color[2] = cb;
-                v2.texCoord[0] = 1; v2.texCoord[1] = 1;
-
-                Vertex& v3 = meshData.vertices[vi + 3];
-                v3.position[0] = px - rsx + usx; v3.position[1] = py - rsy + usy; v3.position[2] = pz - rsz + usz;
-                v3.normal[0] = 0; v3.normal[1] = 0; v3.normal[2] = 1;
-                v3.color[0] = cr; v3.color[1] = cg; v3.color[2] = cb;
-                v3.texCoord[0] = 0; v3.texCoord[1] = 1;
-
-                if (indicesChanged) {
-                    meshData.indices[ii + 0] = static_cast<uint32_t>(vi + 0);
-                    meshData.indices[ii + 1] = static_cast<uint32_t>(vi + 1);
-                    meshData.indices[ii + 2] = static_cast<uint32_t>(vi + 2);
-                    meshData.indices[ii + 3] = static_cast<uint32_t>(vi + 2);
-                    meshData.indices[ii + 4] = static_cast<uint32_t>(vi + 3);
-                    meshData.indices[ii + 5] = static_cast<uint32_t>(vi + 0);
-                }
-
-                vi += 4; ii += 6;
+                CParticle* par = &particles->GetAt(activeIdx[j]);
+                ParticleInstanceData& inst = out[j];
+                inst.posX = par->m_pos.x;
+                inst.posY = par->m_pos.y;
+                inst.posZ = par->m_pos.z;
+                inst.size = par->m_size;
+                inst.r = par->m_color[0];
+                inst.g = par->m_color[1];
+                inst.b = par->m_color[2];
+                inst.a = par->m_color[3];
             }
         }));
     }
@@ -753,18 +659,6 @@ void CParticleSystem::update(float time, const Vec3&, const Vec3&) {
 void CParticleSystem::updateParallel(float time, int threadCount) {
     int perEmitterThreads = std::max(1, threadCount / std::max(1, static_cast<int>(m_listParticles.size())));
     for (auto* e : m_listParticles) e->updateParallel(time, perEmitterThreads);
-}
-
-void CParticleSystem::buildMeshData(MeshData& meshData, int index) {
-    if (index < 0 || index >= static_cast<int>(m_listParticles.size())) return;
-    int count = 0;
-    m_listParticles[index]->buildMeshData(meshData, count, m_camRight, m_camUp);
-}
-
-void CParticleSystem::buildMeshDataParallel(MeshData& meshData, int index, int threadCount) {
-    if (index < 0 || index >= static_cast<int>(m_listParticles.size())) return;
-    int count = 0;
-    m_listParticles[index]->buildMeshDataParallel(meshData, count, m_camRight, m_camUp, threadCount);
 }
 
 CParticleSystem::CListParticles* CParticleSystem::addEmitter(const std::string& name) {
@@ -966,6 +860,78 @@ bool CParticleSystem::load(const std::string& file) {
     m_listBegin = m_listParticles.begin();
     m_listEnd = m_listParticles.end();
     return true;
+}
+
+void CParticleSystem::initialize(Engine& engine) {
+    if (m_initialized) return;
+
+    m_meshNames.clear();
+    m_numThreads = std::max(1u, std::thread::hardware_concurrency());
+
+    auto* renderer = engine.getRenderer();
+    for (int ei = 0; ei < static_cast<int>(m_listParticles.size()); ei++) {
+        auto* e = m_listParticles[ei];
+        if (!e) continue;
+
+        int numP = e->numParticles();
+        if (numP <= 0) continue;
+
+        std::string meshName = "particles_" + std::to_string(ei);
+        m_meshNames.push_back(meshName);
+
+        std::string texPath = e->textureName();
+        if (texPath.empty()) texPath = "assets/textures/particles/particle.dds";
+        std::string texName = "particle_tex_" + std::to_string(ei);
+        renderer->loadTexture(texName, texPath);
+
+        Material mat;
+        mat.name = "particleMat_" + std::to_string(ei);
+        mat.textureName = texName;
+        mat.shaderProgram = "particle";
+        mat.blendMode = BlendMode::Alpha;
+        mat.cullMode = CullMode::Disabled;
+        engine.getMaterialManager()->add(mat);
+        auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
+
+        MeshData quadMesh;
+        quadMesh.vertices = {
+            {{{-0.5f, -0.5f, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,0}}},
+            {{{ 0.5f, -0.5f, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{1,0}}},
+            {{{ 0.5f,  0.5f, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{1,1}}},
+            {{{-0.5f,  0.5f, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,1}}},
+        };
+        quadMesh.indices = {0, 1, 2, 2, 3, 0};
+        engine.getMeshManager()->loadMesh(meshName, quadMesh);
+
+        VkDeviceSize instBufSize = static_cast<VkDeviceSize>(numP) * sizeof(ParticleInstanceData);
+        engine.getMeshManager()->loadInstanceBuffer(meshName, instBufSize);
+
+        auto* entity = engine.createEntity("emitter_" + std::to_string(ei));
+        auto* mc = entity->addComponent<MeshComponent>(meshName);
+        mc->materialInstance = matInst;
+    }
+
+    m_initialized = true;
+}
+
+void CParticleSystem::update(float dt, Engine& engine) {
+    if (!m_initialized) return;
+
+    updateParallel(dt, m_numThreads);
+
+    int emitterCount = static_cast<int>(m_meshNames.size());
+    for (int ei = 0; ei < emitterCount; ei++) {
+        std::vector<ParticleInstanceData> instData;
+        m_listParticles[ei]->fillInstanceDataParallel(instData, m_numThreads);
+
+        uint32_t count = static_cast<uint32_t>(instData.size());
+        if (count > 0) {
+            engine.getMeshManager()->updateInstanceBuffer(m_meshNames[ei],
+                instData.data(), instData.size() * sizeof(ParticleInstanceData), count);
+        } else {
+            engine.getMeshManager()->updateInstanceBuffer(m_meshNames[ei], nullptr, 0, 0);
+        }
+    }
 }
 
 } // namespace engine3d

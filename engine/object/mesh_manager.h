@@ -12,7 +12,9 @@ namespace engine3d {
 struct GpuMesh {
     std::unique_ptr<VulkanBuffer> vertexBuffer;
     std::unique_ptr<VulkanBuffer> indexBuffer;
+    std::unique_ptr<VulkanBuffer> instanceBuffer;
     uint32_t indexCount;
+    uint32_t instanceCount = 0;
 };
 
 class MeshManager {
@@ -21,6 +23,8 @@ public:
     
     void loadMesh(const std::string& name, const MeshData& meshData);
     void updateMesh(const std::string& name, const MeshData& meshData);
+    void loadInstanceBuffer(const std::string& name, VkDeviceSize size);
+    void updateInstanceBuffer(const std::string& name, const void* data, VkDeviceSize size, uint32_t instanceCount);
     std::shared_ptr<GpuMesh> getMesh(const std::string& name);
 
 private:

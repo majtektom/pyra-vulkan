@@ -3,7 +3,6 @@
 #include "types.h"
 #include "math.h"
 #include "mesh_component.h"
-#include "transform_component.h"
 #include "camera_component.h"
 #include "particle_system.h"
 
@@ -15,8 +14,6 @@
 #include <memory>
 #include <sstream>
 #include <string>
-#include <thread>
-#include <vector>
 
 using namespace engine3d;
 
@@ -32,6 +29,20 @@ int main() {
     renderer->setClearColor(0.05f, 0.05f, 0.1f, 1.0f);
     engine.setGridEnabled(true);
     engine.loadFont("times", "assets/fonts/times.ttf", 48);
+
+    MeshData floor;
+    floor.vertices = {
+        {{{-10,-10,-10}}, {{0,1,0}}, {{0.3f,0.3f,0.3f}}, {{0,0}}},
+        {{{ 10,-10,-10}}, {{0,1,0}}, {{0.3f,0.3f,0.3f}}, {{10,0}}},
+        {{{ 10,-10, 10}}, {{0,1,0}}, {{0.3f,0.3f,0.3f}}, {{10,10}}},
+        {{{-10,-10, 10}}, {{0,1,0}}, {{0.3f,0.3f,0.3f}}, {{0,10}}},
+    };
+    floor.indices = {0,2,1,0,3,2};
+    engine.getMeshManager()->loadMesh("floor", floor);
+    Material mat; mat.name = "floor"; engine.getMaterialManager()->add(mat);
+    auto* entity = engine.createEntity("floor");
+    entity->addComponent<MeshComponent>("floor")->materialInstance =
+        engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
 
     CParticleSystem particleSys;
     if (!particleSys.load("assets/textures/particles/przyklad.particle")) {
@@ -54,55 +65,7 @@ int main() {
         }
     }
 
-    std::vector<std::string> meshNames;
-    int numThreads = std::max(1u, std::thread::hardware_concurrency());
-
-    for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
-        auto* e = particleSys.getEmitter(ei);
-        if (!e) continue;
-
-        int numP = e->numParticles();
-        if (numP <= 0) continue;
-
-        std::string meshName = "particles_" + std::to_string(ei);
-        meshNames.push_back(meshName);
-
-        std::string texPath = e->textureName();
-        if (texPath.empty()) texPath = "assets/textures/particles/particle.dds";
-        std::string texName = "particle_tex_" + std::to_string(ei);
-        renderer->loadTexture(texName, texPath);
-
-        Material mat;
-        mat.name = "particleMat_" + std::to_string(ei);
-        mat.textureName = texName;
-        mat.blendMode = BlendMode::Alpha;
-        engine.getMaterialManager()->add(mat);
-        auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
-
-        MeshData particleMesh;
-        particleMesh.vertices.resize(static_cast<std::size_t>(numP) * 4);
-        particleMesh.indices.resize(static_cast<std::size_t>(numP) * 6);
-        for (int j = 0; j < numP; j++) {
-            auto vi = static_cast<std::size_t>(j) * 4;
-            auto ii = static_cast<std::size_t>(j) * 6;
-            float s = 0.5f;
-            particleMesh.vertices[vi]   = {{{-s, -s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,0}}};
-            particleMesh.vertices[vi+1] = {{{ s, -s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{1,0}}};
-            particleMesh.vertices[vi+2] = {{{ s,  s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{1,1}}};
-            particleMesh.vertices[vi+3] = {{{-s,  s, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,1}}};
-            particleMesh.indices[ii]   = static_cast<uint32_t>(vi);
-            particleMesh.indices[ii+1] = static_cast<uint32_t>(vi+1);
-            particleMesh.indices[ii+2] = static_cast<uint32_t>(vi+2);
-            particleMesh.indices[ii+3] = static_cast<uint32_t>(vi+2);
-            particleMesh.indices[ii+4] = static_cast<uint32_t>(vi+3);
-            particleMesh.indices[ii+5] = static_cast<uint32_t>(vi);
-        }
-        engine.getMeshManager()->loadMesh(meshName, particleMesh);
-
-        auto* entity = engine.createEntity("emitter_" + std::to_string(ei));
-        auto* mc = entity->addComponent<MeshComponent>(meshName);
-        mc->materialInstance = matInst;
-    }
+    particleSys.initialize(engine);
 
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
     camera->position = {0.0f, 5.0f, -15.0f};
@@ -114,7 +77,7 @@ int main() {
 
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
 
-    engine.onUpdate = [&particleSys, &meshNames, numThreads](float dt, Engine& e) {
+    engine.onUpdate = [&particleSys](float dt, Engine& e) {
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {
@@ -131,24 +94,21 @@ int main() {
             cc->update(dt, *cam);
         }
 
-        Vec3 forward = normalize(subtract(cam->target, cam->position));
-        Vec3 camRight = normalize(cross(forward, cam->up));
-        Vec3 camUp = normalize(cross(camRight, forward));
-
-        particleSys.setCameraVectors(camRight, camUp);
-        particleSys.updateParallel(dt, numThreads);
-
-        for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
-            MeshData meshData;
-            particleSys.buildMeshDataParallel(meshData, ei, numThreads);
-            e.getMeshManager()->updateMesh(meshNames[ei], meshData);
-        }
+        particleSys.update(dt, e);
 
         std::ostringstream oss;
         oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
         e.setTextLabel(oss.str(), "times",
                                        e.getRenderer()->width() - 200.0f, 30.0f, 1.0f,
                                        {1.0f, 1.0f, 0.2f, 1.0f});
+
+        for (int ei = 0; ei < particleSys.emitterCount(); ei++) {
+            std::string info = particleSys.infoParticles(ei);
+            if (!info.empty()) {
+                e.setTextLabel(info, "times", 10.0f, 95.0f + ei * 25.0f, 0.7f,
+                               {0.2f, 1.0f, 0.2f, 1.0f});
+            }
+        }
 
         if (cam) {
             std::ostringstream pos;
