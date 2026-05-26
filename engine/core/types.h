@@ -224,4 +224,17 @@ struct SkyboxConfig {
     float verticalOffset = 100.0f;
 };
 
+struct SkydomeConfig {
+    bool enabled = false;
+    float domeScale = 1.0f;
+    float timeOfDay = 12.0f;
+    float cloudCoverage = 0.3f;
+    float sunAzimuth = 0.0f;
+    float sunElevation = 45.0f;
+    float cloudSpeed0 = 1.0f;
+    float cloudSpeed1 = 0.5f;
+    float cloudScale0 = 800.0f;
+    float cloudScale1 = 400.0f;
+};
+
 }  // namespace engine3d

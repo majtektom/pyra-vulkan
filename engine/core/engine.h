@@ -24,6 +24,7 @@
 #include "../object/mesh_manager.h"
 #include "../object/skybox_renderer.h"
 #include "../object/grid_renderer.h"
+#include "../object/skydome_renderer.h"
 #include "../font/text_overlay_renderer.h"
 
 namespace engine3d {
@@ -74,6 +75,8 @@ public:
 
     void setSkyboxEnabled(bool enabled, const std::string& directory = "");
     void setSkyboxExposure(float exposure);
+    void setSkydomeEnabled(bool enabled, const std::string& cloudTexName = "");
+    void setSkydomeConfig(const SkydomeConfig& config);
     void setGridEnabled(bool enabled);
     void loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight = 48);
     void setTextLabel(const std::string& text, const std::string& fontName,
@@ -126,12 +129,16 @@ private:
     CameraController cameraController;
 
     SkyboxRenderer skyboxRenderer_;
+    SkydomeRenderer skydomeRenderer_;
     GridRenderer gridRenderer_;
     TextOverlayRenderer textOverlayRenderer_;
     GuiMgr* guiMgr_ = nullptr;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
-    bool skyboxEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
+    bool skyboxEnabled_ = false, skydomeEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
     std::string skyboxDirectory_;
+    std::string skydomeCloudTexName_;
+    SkydomeConfig skydomeConfig_;
+    float skydomeTime_ = 0.0f;
 };
 
 } // namespace engine3d

@@ -31,6 +31,7 @@ add_library(engine3d SHARED
     font/font_atlas_loader.cpp
     object/grid_renderer.cpp
     object/skybox_renderer.cpp
+    object/skydome_renderer.cpp
     particle/particle_system.cpp
     sprite/sprite.cpp
     font/text_overlay_renderer.cpp
@@ -92,6 +93,12 @@ add_shader_bundle(
     sprite.frag.hlsl=sprite.hlsl@fragmentMain
 )
 
+add_shader_bundle(
+    skydome
+    skydome.vert.hlsl=skydome.hlsl@vertexMain
+    skydome.frag.hlsl=skydome.hlsl@fragmentMain
+)
+
 target_compile_definitions(engine3d
     PUBLIC
         ENGINE3D_HAS_TTF=${ENGINE3D_HAS_TTF}
@@ -141,4 +148,4 @@ target_link_libraries(engine3d
 )
 
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders terrain_shaders particle_shaders sprite_shaders)
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders)

@@ -215,6 +215,10 @@ void Engine::addShader(const std::string& name, const ShaderProgram& program) {
 // @param deltaTime — czas od poprzedniej klatki w milisekundach
 void Engine::update(TimeDelta deltaTime) {
 
+    if (skydomeEnabled_) {
+        skydomeTime_ += std::chrono::duration<float>(deltaTime).count();
+    }
+
     if (onUpdate) {
         onUpdate(std::chrono::duration<float>(deltaTime).count(), *this);
     }
@@ -290,6 +294,17 @@ void Engine::renderFrame() {
                 gridRenderer_.recordDrawCommands(cmd, gridRenderer_.getPipelineLayout(),
                                                   renderer->getTextureDescriptorSet("", frame), frame);
             }
+            if (skydomeEnabled_ && skydomeRenderer_.isReady()) {
+                VkDescriptorSet cloudSet = renderer->getTextureDescriptorSet(skydomeCloudTexName_, frame);
+                if (cloudSet == VK_NULL_HANDLE) {
+                    cloudSet = renderer->getTextureDescriptorSet("sprite_firen", frame);
+                }
+                if (cloudSet != VK_NULL_HANDLE) {
+                    skydomeRenderer_.recordDrawCommands(cmd,
+                        activeCamera ? activeCamera->position : Vec3{},
+                        skydomeTime_, cloudSet, skydomeConfig_);
+                }
+            }
         },
         [this](VkCommandBuffer cmd, uint32_t fi) {
         if (guiMgr_ && guiMgr_->isReady()) {
@@ -345,6 +360,21 @@ void Engine::setSkyboxEnabled(bool enabled, const std::string& directory) {
 }
 
 void Engine::setSkyboxExposure(float e) { skyboxRenderer_.setExposure(e); }
+
+void Engine::setSkydomeEnabled(bool enabled, const std::string& cloudTexName) {
+    skydomeEnabled_ = enabled;
+    skydomeCloudTexName_ = cloudTexName;
+    skydomeRenderer_.setEnabled(enabled);
+    if (enabled && renderer) {
+        skydomeRenderer_.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
+                              renderer->descriptorSetLayout(), renderer->commandPool(), renderer->graphicsQueue(),
+                              renderer->extent(), "bin/assets/shaders/skydome");
+    }
+}
+
+void Engine::setSkydomeConfig(const SkydomeConfig& config) {
+    skydomeConfig_ = config;
+}
 
 void Engine::setGridEnabled(bool enabled) {
     gridEnabled_ = enabled;

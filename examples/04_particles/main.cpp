@@ -70,8 +70,27 @@ int main() {
 
     renderer->loadTexture("sprite_firen", "assets/sprite/firen.tga");
 
-    SpriteSystem spriteSys;
+    engine.setSkydomeEnabled(true, "");
 
+    SkydomeConfig cfg;
+    cfg.domeScale = 1.5f;
+    cfg.timeOfDay = 10.0f;
+    cfg.cloudCoverage = 0.4f;
+    cfg.cloudSpeed0 = 0.3f;
+    cfg.cloudSpeed1 = 0.15f;
+    cfg.cloudScale0 = 1200.0f;
+    cfg.cloudScale1 = 800.0f;
+    cfg.sunElevation = 50.0f;
+    engine.setSkydomeConfig(cfg);
+
+    float timeOfDay = 10.0f;
+    float cloudCov = 0.4f;
+    int cloudDir = 1;
+
+    const float dayNightSpeed = 0.21f;
+    const float weatherSpeed  = 0.02f;
+
+    SpriteSystem spriteSys;
     SpriteSystem::Sprite firenSprite;
     firenSprite.position = {-23.0f, 7.0f, 9.0f};
     firenSprite.size = 2.0f;
@@ -107,7 +126,7 @@ int main() {
 
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
 
-    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId](float dt, Engine& e) {
+    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId, &timeOfDay, &cloudCov, &cloudDir, &cfg, &engine, dayNightSpeed, weatherSpeed](float dt, Engine& e) {
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {
@@ -127,14 +146,32 @@ int main() {
         particleSys.update(dt, e);
 
         {
-            // static float timeAcc = 0.0f;
-            // timeAcc += dt;
+            static float timeAcc = 0.0f;
+            timeAcc += dt;
 
-            // float sinVal = std::sin(timeAcc * 0.6f);
-            // float cosVal = std::cos(timeAcc * 0.6f);
+            timeOfDay += dt * dayNightSpeed;
+            if (timeOfDay > 24.0f) timeOfDay -= 24.0f;
 
-            // spriteSys.setPosition(firenId, {-2.5f + cosVal * 1.5f, 2.5f + sinVal * 0.8f, 0.0f});
-            // spriteSys.setPosition(wybuchId, {3.0f + cosVal * 1.5f, 2.5f + sinVal * 0.8f, 0.0f});
+            cloudCov += dt * weatherSpeed * cloudDir;
+            if (cloudCov >= 1.0f) { cloudCov = 1.0f; cloudDir = -1; }
+            else if (cloudCov <= 0.0f) { cloudCov = 0.0f; cloudDir = 1; }
+
+            float dayProgress = (timeOfDay - 6.0f) / 12.0f;
+            dayProgress = std::max(0.0f, std::min(1.0f, dayProgress));
+            float sunEl = std::sin(dayProgress * 3.1415926535f) * 65.0f;
+            float sunAz = 90.0f + dayProgress * 180.0f;
+
+            cfg.timeOfDay = timeOfDay;
+            cfg.cloudCoverage = cloudCov;
+            cfg.sunElevation = sunEl;
+            cfg.sunAzimuth = sunAz;
+            engine.setSkydomeConfig(cfg);
+
+            float sinVal = std::sin(timeAcc * 0.6f);
+            float cosVal = std::cos(timeAcc * 0.6f);
+
+            spriteSys.setPosition(firenId, {-2.5f + cosVal * 1.5f, 2.5f + sinVal * 0.8f, 0.0f});
+            spriteSys.setPosition(wybuchId, {3.0f + cosVal * 1.5f, 2.5f + sinVal * 0.8f, 0.0f});
 
             spriteSys.update(dt, e);
         }
