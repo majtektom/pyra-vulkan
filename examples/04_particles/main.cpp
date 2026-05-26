@@ -5,6 +5,7 @@
 #include "mesh_component.h"
 #include "camera_component.h"
 #include "particle_system.h"
+#include "sprite.h"
 
 #include <SDL3/SDL.h>
 
@@ -67,6 +68,35 @@ int main() {
 
     particleSys.initialize(engine);
 
+    renderer->loadTexture("sprite_firen", "assets/sprite/firen.tga");
+
+    SpriteSystem spriteSys;
+
+    SpriteSystem::Sprite firenSprite;
+    firenSprite.position = {-23.0f, 7.0f, 9.0f};
+    firenSprite.size = 2.0f;
+    firenSprite.color = {1.0f, 1.0f, 1.0f, 1.0f};
+    firenSprite.textureName = "sprite_firen";
+    int firenId = spriteSys.addSprite(firenSprite);
+    spriteSys.setAnim(firenId, 10, 7, 0.3f, 0, -1, true);
+
+    SpriteSystem::Sprite wybuchSprite;
+    wybuchSprite.position = {-16.0f, 7.0f, 13.0f};
+    wybuchSprite.size = 3.0f;
+    wybuchSprite.color = {1.0f, 1.0f, 1.0f, 1.0f};
+    wybuchSprite.isSequence = true;
+    wybuchSprite.textureName = "sprite_wybuch1";
+    for (int f = 1; f <= 8; f++) {
+        std::string texName = "sprite_wybuch" + std::to_string(f);
+        std::string path = "assets/sprite/wybuch/wybuch" + std::to_string(f) + ".tga";
+        renderer->loadTexture(texName, path);
+        wybuchSprite.frameTextures.push_back(texName);
+    }
+    int wybuchId = spriteSys.addSprite(wybuchSprite);
+    spriteSys.setAnim(wybuchId, 0, 0, 0.10f, 0, 7, true);
+
+    spriteSys.initialize(engine);
+
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
     camera->position = {0.0f, 5.0f, -15.0f};
     camera->target = {0.0f, 0.5f, 0.0f};
@@ -77,7 +107,7 @@ int main() {
 
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
 
-    engine.onUpdate = [&particleSys](float dt, Engine& e) {
+    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId](float dt, Engine& e) {
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {
@@ -95,6 +125,19 @@ int main() {
         }
 
         particleSys.update(dt, e);
+
+        {
+            // static float timeAcc = 0.0f;
+            // timeAcc += dt;
+
+            // float sinVal = std::sin(timeAcc * 0.6f);
+            // float cosVal = std::cos(timeAcc * 0.6f);
+
+            // spriteSys.setPosition(firenId, {-2.5f + cosVal * 1.5f, 2.5f + sinVal * 0.8f, 0.0f});
+            // spriteSys.setPosition(wybuchId, {3.0f + cosVal * 1.5f, 2.5f + sinVal * 0.8f, 0.0f});
+
+            spriteSys.update(dt, e);
+        }
 
         std::ostringstream oss;
         oss << "FPS: " << static_cast<int>(e.getCurrentFPS());

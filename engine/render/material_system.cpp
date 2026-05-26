@@ -106,12 +106,37 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
     auto attrDescs = Vertex::attributeDescriptions();
 
     bool isParticle = (materialData.shaderProgram == "particle");
+    bool isSprite = (materialData.shaderProgram == "sprite");
 
     VkVertexInputBindingDescription binding2{};
     std::vector<VkVertexInputAttributeDescription> binding2Attrs;
-    uint32_t binding2locationStart = 4;
 
-    if (isParticle) { //TODO: better way to handle this? maybe separate pipeline for particles?
+    if (isSprite) {
+        binding2.binding = 1;
+        binding2.stride = sizeof(SpriteInstanceData);
+        binding2.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        VkVertexInputAttributeDescription attrPosSize{};
+        attrPosSize.binding = 1;
+        attrPosSize.location = 4;
+        attrPosSize.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attrPosSize.offset = offsetof(SpriteInstanceData, posX);
+        binding2Attrs.push_back(attrPosSize);
+
+        VkVertexInputAttributeDescription attrColor{};
+        attrColor.binding = 1;
+        attrColor.location = 5;
+        attrColor.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attrColor.offset = offsetof(SpriteInstanceData, r);
+        binding2Attrs.push_back(attrColor);
+
+        VkVertexInputAttributeDescription attrUV{};
+        attrUV.binding = 1;
+        attrUV.location = 6;
+        attrUV.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attrUV.offset = offsetof(SpriteInstanceData, uvOffsetU);
+        binding2Attrs.push_back(attrUV);
+    } else if (isParticle) {
         binding2.binding = 1;
         binding2.stride = sizeof(ParticleInstanceData);
         binding2.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;

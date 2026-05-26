@@ -65,6 +65,12 @@ struct ParticleInstanceData {
     float r, g, b, a;
 };
 
+struct SpriteInstanceData {
+    float posX, posY, posZ, size;
+    float r, g, b, a;
+    float uvOffsetU, uvOffsetV, uvScaleU, uvScaleV;
+};
+
 struct ShaderProgram {
     std::string vertexPath;
     std::string fragmentPath;
