@@ -25,6 +25,7 @@
 #include "../object/skybox_renderer.h"
 #include "../object/grid_renderer.h"
 #include "../object/skydome_renderer.h"
+#include "../object/ocean_renderer.h"
 #include "../font/text_overlay_renderer.h"
 
 namespace engine3d {
@@ -77,6 +78,8 @@ public:
     void setSkyboxExposure(float exposure);
     void setSkydomeEnabled(bool enabled, const std::string& cloudTexName = "");
     void setSkydomeConfig(const SkydomeConfig& config);
+    void setOceanEnabled(bool enabled);
+    void setOceanConfig(const OceanConfig& config);
     void setGridEnabled(bool enabled);
     void loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight = 48);
     void setTextLabel(const std::string& text, const std::string& fontName,
@@ -130,14 +133,17 @@ private:
 
     SkyboxRenderer skyboxRenderer_;
     SkydomeRenderer skydomeRenderer_;
+    OceanRenderer oceanRenderer_;
     GridRenderer gridRenderer_;
     TextOverlayRenderer textOverlayRenderer_;
     GuiMgr* guiMgr_ = nullptr;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
-    bool skyboxEnabled_ = false, skydomeEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
+    bool skyboxEnabled_ = false, skydomeEnabled_ = false, oceanEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
     std::string skyboxDirectory_;
-    std::string skydomeCloudTexName_;
+    std::string skydomeDescName_;
+    std::string oceanDescName_;
     SkydomeConfig skydomeConfig_;
+    OceanConfig oceanConfig_;
     float skydomeTime_ = 0.0f;
 };
 

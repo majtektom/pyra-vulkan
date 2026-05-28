@@ -8,6 +8,7 @@
 
 textury z modelu gltf w postaci binrnej są wyciągane do tmp i wczytywane, popraw na wczytywanie odrau do pamięci
 
+teren3d
   Główne braki w porównaniu ze starym (2400 linii):
 Feature
 LOD stitching — 16 wzorców łączenia poziomów

@@ -17,9 +17,37 @@ int main() {
     if (!engine.initialize("engine3d: terrain LOD", 1280, 800)) return 1;
 
     auto* renderer = engine.getRenderer();
-    renderer->setClearColor(0.4f, 0.6f, 0.9f, 1.0f);
+    renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     engine.loadFont("times", "assets/fonts/times.ttf", 28);
     auto* mats = engine.getMaterialManager();
+
+    engine.setOceanEnabled(true);
+    OceanConfig oceanCfg;
+    oceanCfg.waterLevel = 60.0f;
+    oceanCfg.waveAmplitude = 1.4f;
+    oceanCfg.waveSpeed = 1.0f;
+    oceanCfg.waveFrequency = 10.0f;
+    oceanCfg.foamThreshold = 2.95f;
+    engine.setOceanConfig(oceanCfg);
+
+    engine.setSkydomeEnabled(true, "");
+     SkydomeConfig cfg;
+    cfg.domeScale = 1.5f;
+    cfg.timeOfDay = 10.0f;
+    cfg.cloudCoverage = 0.4f;
+    cfg.cloudSpeed0 = 0.3f;
+    cfg.cloudSpeed1 = 0.15f;
+    cfg.cloudScale0 = 1200.0f;
+    cfg.cloudScale1 = 800.0f;
+    cfg.sunElevation = 50.0f;
+    engine.setSkydomeConfig(cfg);
+
+    float timeOfDay = 10.0f;
+    float cloudCov = 0.4f;
+    int cloudDir = 1;
+
+    const float dayNightSpeed = 0.21f;
+    const float weatherSpeed  = 0.02f;
 
     Terrain terrain;
     bool useJson = terrain.loadFromJson("assets/teren/demo/terrain.json");

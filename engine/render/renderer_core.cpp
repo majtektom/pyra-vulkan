@@ -309,6 +309,52 @@ public:
         }
     }
 
+    void allocateDescriptorSet(const std::string& name) {
+        VkDevice device = vulkanContext_->device();
+        std::array<VkDescriptorSet, kMaxFrames> sets;
+        std::vector<VkDescriptorSetLayout> layouts(kMaxFrames, descriptorSetLayout_);
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool_;
+        allocInfo.descriptorSetCount = kMaxFrames;
+        allocInfo.pSetLayouts = layouts.data();
+        if (vkAllocateDescriptorSets(device, &allocInfo, sets.data()) != VK_SUCCESS) {
+            std::cerr << "[Renderer] Failed to allocate descriptor set: " << name << std::endl;
+            return;
+        }
+        VkDescriptorImageInfo defImg{};
+        defImg.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        defImg.imageView = defaultImageView_;
+        defImg.sampler = defaultSampler_;
+        VkDescriptorImageInfo defNorm{};
+        defNorm.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        defNorm.imageView = defaultNormalImageView_;
+        defNorm.sampler = defaultNormalSampler_;
+        for (int i = 0; i < kMaxFrames; i++) {
+            VkDescriptorBufferInfo bufInfo{};
+            bufInfo.buffer = uniformBuffers_[i];
+            bufInfo.offset = 0;
+            bufInfo.range = sizeof(GlobalUBO);
+            VkWriteDescriptorSet w[3] = {};
+            w[0].sType = w[1].sType = w[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w[0].dstSet = w[1].dstSet = w[2].dstSet = sets[i];
+            w[0].dstBinding = 0;
+            w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            w[0].descriptorCount = 1;
+            w[0].pBufferInfo = &bufInfo;
+            w[1].dstBinding = 1;
+            w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w[1].descriptorCount = 1;
+            w[1].pImageInfo = &defImg;
+            w[2].dstBinding = 2;
+            w[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w[2].descriptorCount = 1;
+            w[2].pImageInfo = &defNorm;
+            vkUpdateDescriptorSets(device, 3, w, 0, nullptr);
+        }
+        textureDescriptorSets_[name] = sets;
+    }
+
     // Getters for sub-renderers
     VkDevice device() const { return vulkanContext_->device(); }
     VkPhysicalDevice physicalDevice() const { return vulkanContext_->physicalDevice(); }
@@ -319,7 +365,7 @@ public:
     VkExtent2D extent() const { return swapchain_ ? swapchain_->extent() : VkExtent2D{0,0}; }
     VkDescriptorSet getTexDescSet(const std::string& n, uint32_t f) const {
         auto it = textureDescriptorSets_.find(n);
-        return it != textureDescriptorSets_.end() ? it->second[f] : VK_NULL_HANDLE;
+        return it != textureDescriptorSets_.end() ? it->second[f] : descriptorSets_[f];
     }
 
     void cleanup() {
@@ -728,6 +774,7 @@ uint32_t Renderer::width() const { return impl_->width(); }
 uint32_t Renderer::height() const { return impl_->height(); }
 void Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { impl_->loadTexture(n, p, m); }
 void Renderer::linkNormalMap(const std::string& d, const std::string& n) { impl_->linkNormalMap(d, n); }
+void Renderer::allocateDescriptorSet(const std::string& n) { impl_->allocateDescriptorSet(n); }
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
 
 VkDevice Renderer::device() const { return impl_->device(); }

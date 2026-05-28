@@ -70,7 +70,8 @@ int main() {
 
     renderer->loadTexture("sprite_firen", "assets/sprite/firen.tga");
 
-    engine.setSkydomeEnabled(true, "");
+    engine.setSkydomeEnabled(true);
+    engine.setOceanEnabled(true);
 
     SkydomeConfig cfg;
     cfg.domeScale = 1.5f;
@@ -82,6 +83,14 @@ int main() {
     cfg.cloudScale1 = 800.0f;
     cfg.sunElevation = 50.0f;
     engine.setSkydomeConfig(cfg);
+
+    OceanConfig oceanCfg;
+    oceanCfg.waterLevel = -8.0f;
+    oceanCfg.waveAmplitude = 1.0f;
+    oceanCfg.waveSpeed = 1.0f;
+    oceanCfg.waveFrequency = 1.0f;
+    oceanCfg.foamThreshold = 0.5f;
+    engine.setOceanConfig(oceanCfg);
 
     float timeOfDay = 10.0f;
     float cloudCov = 0.4f;
@@ -126,7 +135,7 @@ int main() {
 
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
 
-    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId, &timeOfDay, &cloudCov, &cloudDir, &cfg, &engine, dayNightSpeed, weatherSpeed](float dt, Engine& e) {
+    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId, &timeOfDay, &cloudCov, &cloudDir, &cfg, &oceanCfg, &engine, dayNightSpeed, weatherSpeed](float dt, Engine& e) {
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {

@@ -237,4 +237,13 @@ struct SkydomeConfig {
     float cloudScale1 = 400.0f;
 };
 
+struct OceanConfig {
+    bool enabled = false;
+    float waterLevel = -8.0f;
+    float waveAmplitude = 1.0f;
+    float waveSpeed = 1.0f;
+    float waveFrequency = 1.0f;
+    float foamThreshold = 0.5f;
+};
+
 }  // namespace engine3d

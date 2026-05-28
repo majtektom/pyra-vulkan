@@ -295,15 +295,18 @@ void Engine::renderFrame() {
                                                   renderer->getTextureDescriptorSet("", frame), frame);
             }
             if (skydomeEnabled_ && skydomeRenderer_.isReady()) {
-                VkDescriptorSet cloudSet = renderer->getTextureDescriptorSet(skydomeCloudTexName_, frame);
-                if (cloudSet == VK_NULL_HANDLE) {
-                    cloudSet = renderer->getTextureDescriptorSet("sprite_firen", frame);
-                }
-                if (cloudSet != VK_NULL_HANDLE) {
-                    skydomeRenderer_.recordDrawCommands(cmd,
-                        activeCamera ? activeCamera->position : Vec3{},
-                        skydomeTime_, cloudSet, skydomeConfig_);
-                }
+                skydomeRenderer_.recordDrawCommands(cmd,
+                    activeCamera ? activeCamera->position : Vec3{},
+                    skydomeTime_,
+                    renderer->getTextureDescriptorSet(skydomeDescName_, frame),
+                    skydomeConfig_);
+            }
+            if (oceanEnabled_ && oceanRenderer_.isReady()) {
+                oceanRenderer_.recordDrawCommands(cmd,
+                    activeCamera ? activeCamera->position : Vec3{},
+                    skydomeTime_,
+                    renderer->getTextureDescriptorSet(oceanDescName_, frame),
+                    oceanConfig_);
             }
         },
         [this](VkCommandBuffer cmd, uint32_t fi) {
@@ -361,11 +364,12 @@ void Engine::setSkyboxEnabled(bool enabled, const std::string& directory) {
 
 void Engine::setSkyboxExposure(float e) { skyboxRenderer_.setExposure(e); }
 
-void Engine::setSkydomeEnabled(bool enabled, const std::string& cloudTexName) {
+void Engine::setSkydomeEnabled(bool enabled, const std::string&) {
     skydomeEnabled_ = enabled;
-    skydomeCloudTexName_ = cloudTexName;
     skydomeRenderer_.setEnabled(enabled);
     if (enabled && renderer) {
+        skydomeDescName_ = "skydome";
+        renderer->allocateDescriptorSet(skydomeDescName_);
         skydomeRenderer_.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
                               renderer->descriptorSetLayout(), renderer->commandPool(), renderer->graphicsQueue(),
                               renderer->extent(), "bin/assets/shaders/skydome");
@@ -374,6 +378,22 @@ void Engine::setSkydomeEnabled(bool enabled, const std::string& cloudTexName) {
 
 void Engine::setSkydomeConfig(const SkydomeConfig& config) {
     skydomeConfig_ = config;
+}
+
+void Engine::setOceanEnabled(bool enabled) {
+    oceanEnabled_ = enabled;
+    oceanRenderer_.setEnabled(enabled);
+    if (enabled && renderer) {
+        oceanDescName_ = "ocean";
+        renderer->allocateDescriptorSet(oceanDescName_);
+        oceanRenderer_.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
+                            renderer->descriptorSetLayout(), renderer->commandPool(), renderer->graphicsQueue(),
+                            renderer->extent(), "bin/assets/shaders/ocean");
+    }
+}
+
+void Engine::setOceanConfig(const OceanConfig& config) {
+    oceanConfig_ = config;
 }
 
 void Engine::setGridEnabled(bool enabled) {
