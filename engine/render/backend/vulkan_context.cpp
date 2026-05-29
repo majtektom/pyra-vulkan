@@ -23,6 +23,7 @@ namespace {
     struct QueueFamilyIndices {
         std::optional<uint32_t> graphicsFamily;
         std::optional<uint32_t> presentFamily;
+        std::optional<uint32_t> computeFamily;
         bool isComplete() { return graphicsFamily.has_value() && presentFamily.has_value(); }
     };
 
@@ -38,13 +39,19 @@ namespace {
             if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 indices.graphicsFamily = i;
             }
+            if ((queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                indices.computeFamily = i;
+            }
             VkBool32 presentSupport = false;
             vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
             if (presentSupport) {
                 indices.presentFamily = i;
             }
-            if (indices.isComplete()) break;
+            if (indices.isComplete() && indices.computeFamily.has_value()) break;
             i++;
+        }
+        if (!indices.computeFamily.has_value()) {
+            indices.computeFamily = indices.graphicsFamily;
         }
         return indices;
     }
@@ -93,6 +100,7 @@ VulkanContext::~VulkanContext() {
     if (allocator_) { vmaDestroyAllocator(allocator_); allocator_ = VK_NULL_HANDLE; }
     if (device_) {
         vkDeviceWaitIdle(device_);
+        if (computeCommandPool_) vkDestroyCommandPool(device_, computeCommandPool_, nullptr);
         if (commandPool_) vkDestroyCommandPool(device_, commandPool_, nullptr);
         vkDestroyDevice(device_, nullptr);
     }
@@ -119,6 +127,7 @@ void VulkanContext::createSurface(SDL_Window* window) {
     pickPhysicalDevice();
     createLogicalDevice();
     createCommandPool();
+    createComputeCommandPool();
 
     VmaAllocatorCreateInfo allocInfo{};
     allocInfo.physicalDevice = physicalDevice_;
@@ -201,8 +210,14 @@ void VulkanContext::pickPhysicalDevice() {
 
 void VulkanContext::createLogicalDevice() {
     auto indices = findQueueFamilies(physicalDevice_, surface_);
+    graphicsQueueFamily_ = indices.graphicsFamily.value();
+    computeQueueFamily_ = indices.computeFamily.value();
+
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
     std::set<uint32_t> uniqueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+    if (indices.computeFamily.value() != indices.graphicsFamily.value()) {
+        uniqueFamilies.insert(indices.computeFamily.value());
+    }
     float priority = 1.0f;
     for (uint32_t family : uniqueFamilies) {
         VkDeviceQueueCreateInfo q{};
@@ -223,6 +238,7 @@ void VulkanContext::createLogicalDevice() {
     features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
+    features12.timelineSemaphore = VK_TRUE;
 
     VkPhysicalDeviceVulkan13Features features13{};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -243,6 +259,7 @@ void VulkanContext::createLogicalDevice() {
     }
     vkGetDeviceQueue(device_, indices.graphicsFamily.value(), 0, &graphicsQueue_);
     vkGetDeviceQueue(device_, indices.presentFamily.value(), 0, &presentQueue_);
+    vkGetDeviceQueue(device_, indices.computeFamily.value(), 0, &computeQueue_);
 }
 
 void VulkanContext::createCommandPool() {
@@ -253,6 +270,17 @@ void VulkanContext::createCommandPool() {
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     if (vkCreateCommandPool(device_, &poolInfo, nullptr, &commandPool_) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool");
+    }
+}
+
+void VulkanContext::createComputeCommandPool() {
+    auto indices = findQueueFamilies(physicalDevice_, surface_);
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.queueFamilyIndex = indices.computeFamily.value();
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    if (vkCreateCommandPool(device_, &poolInfo, nullptr, &computeCommandPool_) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute command pool");
     }
 }
 

@@ -274,4 +274,24 @@ void Engine::enableShaderHotReload(bool enable) {
     }
 }
 
+void Engine::setSynchronizationMode(SynchronizationMode mode) {
+    if (renderer) renderer->setSynchronizationMode(mode);
+}
+SynchronizationMode Engine::synchronizationMode() const {
+    return renderer ? renderer->synchronizationMode() : SynchronizationMode::Standard;
+}
+void Engine::setPresentMode(PresentMode mode) {
+    if (renderer) renderer->setPresentMode(mode);
+}
+PresentMode Engine::presentMode() const {
+    return renderer ? renderer->presentMode() : PresentMode::Fifo;
+}
+
+void Engine::setFullscreen(bool fullscreen) {
+    if (platform) platform->setFullscreen(fullscreen);
+}
+bool Engine::isFullscreen() const {
+    return platform ? platform->isFullscreen() : false;
+}
+
 } // namespace engine3d

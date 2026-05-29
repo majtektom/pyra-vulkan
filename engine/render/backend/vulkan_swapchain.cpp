@@ -20,8 +20,8 @@ static VkFormat findDepthFormat(VkPhysicalDevice d) {
                                VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 }
 
-VulkanSwapchain::VulkanSwapchain(std::shared_ptr<VulkanContext> ctx, uint32_t w, uint32_t h)
-    : context_(std::move(ctx)) { recreate(w, h); }
+VulkanSwapchain::VulkanSwapchain(std::shared_ptr<VulkanContext> ctx, uint32_t w, uint32_t h, VkPresentModeKHR mode)
+    : context_(std::move(ctx)), presentMode_(mode) { recreate(w, h); }
 
 VulkanSwapchain::~VulkanSwapchain() { cleanup(); }
 
@@ -77,7 +77,7 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ci.preTransform = caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    ci.presentMode = presentMode_;
     ci.clipped = VK_TRUE;
 
     if (vkCreateSwapchainKHR(dev, &ci, nullptr, &swapchain_) != VK_SUCCESS)

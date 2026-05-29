@@ -9,7 +9,8 @@ namespace engine3d {
 
 class VulkanSwapchain {
 public:
-    VulkanSwapchain(std::shared_ptr<VulkanContext> context, uint32_t width, uint32_t height);
+    VulkanSwapchain(std::shared_ptr<VulkanContext> context, uint32_t width, uint32_t height,
+                    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR);
     ~VulkanSwapchain();
 
     VkSwapchainKHR handle() const { return swapchain_; }
@@ -25,6 +26,8 @@ public:
     bool present(uint32_t imageIndex, VkSemaphore waitSemaphore);
  
     void recreate(uint32_t width, uint32_t height);
+    void setPresentMode(VkPresentModeKHR mode) { presentMode_ = mode; }
+    VkPresentModeKHR presentMode() const { return presentMode_; }
  
 private:
     void createSwapchain(uint32_t width, uint32_t height);
@@ -37,6 +40,7 @@ private:
     VkFormat imageFormat_;
     VkFormat depthFormat_;
     VkExtent2D extent_;
+    VkPresentModeKHR presentMode_ = VK_PRESENT_MODE_FIFO_KHR;
     std::vector<VkImage> images_;
     std::vector<VkImageView> imageViews_;
  

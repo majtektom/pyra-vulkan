@@ -149,6 +149,18 @@ enum class AddressMode {
     ClampToEdge,
 };
 
+enum class SynchronizationMode {
+    Standard,
+    Timeline,
+    Off,
+};
+
+enum class PresentMode {
+    Fifo,
+    Immediate,
+    Mailbox,
+};
+
 enum class BlendMode {
     Disabled,
     Alpha,

@@ -123,9 +123,48 @@ int main() {
     comboBox->setOnSelect([](const std::string& s) {
         (void)s;
     });
+    
+    // ── Okno 3: Synchronizacja ──
+    auto* winSync = guiMgr->addWindow("Synchronizacja", 880, 560, 430, 55);
 
-    // ── Okno 3: ScrollBar ──
-    auto* winScroll = guiMgr->addWindow("ScrollBar", 30, 30, 240, 120);
+    auto* syncLabel = new GuiStaticText(winSync, "", 5, 5);
+    syncLabel->setText("GPU-CPU:");
+
+    auto* syncCombo = new GuiComboBox(winSync, "SyncMode", 5, 28, 140);
+    syncCombo->addItem("Standard (binarne)");
+    syncCombo->addItem("Timeline (1.3)");
+    syncCombo->addItem("Off");
+    syncCombo->setOnSelect([&engine](const std::string& s) {
+        if (s == "Standard (binarne)")
+            engine.setSynchronizationMode(SynchronizationMode::Standard);
+        else if (s == "Timeline (1.3)")
+            engine.setSynchronizationMode(SynchronizationMode::Timeline);
+        else if (s == "Off")
+            engine.setSynchronizationMode(SynchronizationMode::Off);
+    });
+
+    auto* presentLabel = new GuiStaticText(winSync, "", 155, 5);
+    presentLabel->setText("V-Sync:");
+
+    auto* presentCombo = new GuiComboBox(winSync, "PresentMode", 155, 28, 140);
+    presentCombo->addItem("FIFO (ON)");
+    presentCombo->addItem("Immediate (OFF)");
+    presentCombo->addItem("Mailbox (OFF)");
+    presentCombo->setOnSelect([&engine](const std::string& s) {
+        if (s == "FIFO (ON)")
+            engine.setPresentMode(PresentMode::Fifo);
+        else if (s == "Immediate (OFF)")
+            engine.setPresentMode(PresentMode::Immediate);
+        else if (s == "Mailbox (OFF)")
+            engine.setPresentMode(PresentMode::Mailbox);
+    });
+
+    auto* chkFullscreen = new GuiCheckBox(winSync, "Fullscreen", 305, 28);
+    chkFullscreen->setText("Pełny ekran");
+    chkFullscreen->setOnToggle([&engine](bool on) { engine.setFullscreen(on); });
+
+    // ── Okno 4: ScrollBar ──
+    auto* winScroll = guiMgr->addWindow("ScrollBar", 90, 90, 240, 120);
     auto* scrollLabel = new GuiStaticText(winScroll, "", 10, 5);
     scrollLabel->setText("ScrollBar (0–100):");
     auto* labelScroll = new GuiStaticText(winScroll, "", 10, 25);
@@ -135,12 +174,12 @@ int main() {
         labelScroll->setText(std::to_string(v));
     });
 
-    // ── Okno 4: Memo (log) ──
+    // ── Okno 5: Memo (log) ──
     auto* winMemo = guiMgr->addWindow("Log zdarzeń", 30, 580, 420, 180);
     auto* memo = new GuiMemo(winMemo, "log", 10, 10, 400, 150);
     memo->addLine("=== GUI Demo uruchomione ===");
 
-    // ── Okno 5: Info (bez chrome) ──
+    // ── Okno 6: Info (bez chrome) ──
     auto* winInfo = guiMgr->addWindow("Info", 500, 550, 250, 110);
     winInfo->setChromeVisible(false);
     auto* infoLabel2 = new GuiStaticText(winInfo, "", 10, 10);

@@ -44,6 +44,11 @@ public:
     void linkNormalMap(const std::string& diffuseName, const std::string& normalName);
     void setClearColor(float r, float g, float b, float a);
 
+    void setSynchronizationMode(SynchronizationMode mode);
+    SynchronizationMode synchronizationMode() const;
+    void setPresentMode(PresentMode mode);
+    PresentMode presentMode() const;
+
     uint32_t getTextureIndex(const std::string& name) const;
     void prepareRenderPacket(RenderPacket& packet) const;
 

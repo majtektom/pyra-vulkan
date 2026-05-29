@@ -36,6 +36,9 @@ public:
     bool pointerGrabbed() const;
     InputSnapshot pollInput();
 
+    void setFullscreen(bool fullscreen);
+    bool isFullscreen() const;
+
 private:
     SDL_Window* window_ = nullptr;
     SDL_Cursor* invisibleCursor_ = nullptr;
@@ -52,6 +55,7 @@ private:
     int mouseY_ = 0;
     int mouseWheel_ = 0;
     bool pointerGrabbed_ = false;
+    bool fullscreen_ = false;
 };
 
 } // namespace engine3d

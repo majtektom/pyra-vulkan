@@ -49,7 +49,10 @@ public:
     bool initialize(const std::string& appName, bool enableValidationLayers) {
         if (!vulkanContext_) return false;
         try {
-            swapchain_ = std::make_unique<VulkanSwapchain>(vulkanContext_, platform_->width(), platform_->height());
+            swapchain_ = std::make_unique<VulkanSwapchain>(vulkanContext_, platform_->width(), platform_->height(),
+                                                           presentMode_ == PresentMode::Immediate ? VK_PRESENT_MODE_IMMEDIATE_KHR :
+                                                           presentMode_ == PresentMode::Mailbox ? VK_PRESENT_MODE_MAILBOX_KHR :
+                                                           VK_PRESENT_MODE_FIFO_KHR);
 
             createUniformBuffers();
             createDefaultTexture();
@@ -84,7 +87,17 @@ public:
         if (!swapchain_) return;
 
         VkDevice device = vulkanContext_->device();
-        vkWaitForFences(device, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX);
+
+        if (synchronizationMode_ == SynchronizationMode::Timeline) {
+            VkSemaphoreWaitInfo waitInfo{};
+            waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+            waitInfo.semaphoreCount = 1;
+            waitInfo.pSemaphores = &renderTimelineSemaphores_[currentFrame_];
+            waitInfo.pValues = &timelineCounters_[currentFrame_];
+            vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
+        } else {
+            vkWaitForFences(device, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX);
+        }
 
         uint32_t imageIndex = 0;
         try {
@@ -94,7 +107,9 @@ public:
             currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
             return;
         }
-        vkResetFences(device, 1, &inFlightFences_[currentFrame_]);
+        if (synchronizationMode_ != SynchronizationMode::Timeline) {
+            vkResetFences(device, 1, &inFlightFences_[currentFrame_]);
+        }
 
         updateUniformBuffer(view);
 
@@ -218,12 +233,35 @@ public:
         submitInfo.pWaitDstStageMask = waitStages;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &cmd;
-        VkSemaphore signalSemaphores[] = {renderFinishedSemaphores_[currentFrame_]};
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
-        vkQueueSubmit(vulkanContext_->graphicsQueue(), 1, &submitInfo, inFlightFences_[currentFrame_]);
 
-        if (!swapchain_->present(imageIndex, renderFinishedSemaphores_[currentFrame_]))
+        if (synchronizationMode_ == SynchronizationMode::Timeline) {
+            uint64_t timelineValue = ++globalTimelineCounter_;
+            timelineCounters_[currentFrame_] = timelineValue;
+
+            VkSemaphore signalSemaphores[] = {presentReadySemaphores_[currentFrame_], renderTimelineSemaphores_[currentFrame_]};
+            submitInfo.signalSemaphoreCount = 2;
+            submitInfo.pSignalSemaphores = signalSemaphores;
+
+            VkTimelineSemaphoreSubmitInfo timelineInfo{};
+            timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+            uint64_t waitValues[] = {0};
+            uint64_t signalValues[] = {0, timelineValue};
+            timelineInfo.waitSemaphoreValueCount = 1;
+            timelineInfo.pWaitSemaphoreValues = waitValues;
+            timelineInfo.signalSemaphoreValueCount = 2;
+            timelineInfo.pSignalSemaphoreValues = signalValues;
+            submitInfo.pNext = &timelineInfo;
+
+            vkQueueSubmit(vulkanContext_->graphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+        } else {
+            VkSemaphore signalSemaphores[] = {renderFinishedSemaphores_[currentFrame_]};
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = signalSemaphores;
+            vkQueueSubmit(vulkanContext_->graphicsQueue(), 1, &submitInfo, inFlightFences_[currentFrame_]);
+        }
+        VkSemaphore presentWaitSemaphore = (synchronizationMode_ == SynchronizationMode::Timeline)
+            ? presentReadySemaphores_[currentFrame_] : renderFinishedSemaphores_[currentFrame_];
+        if (!swapchain_->present(imageIndex, presentWaitSemaphore))
             recreateSwapChain();
         currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
     }
@@ -448,8 +486,10 @@ public:
         }
         textures_.clear();
         for (int i = 0; i < kMaxFrames; i++) {
-            vkDestroySemaphore(device, renderFinishedSemaphores_[i], nullptr);
             vkDestroySemaphore(device, imageAvailableSemaphores_[i], nullptr);
+            vkDestroySemaphore(device, renderFinishedSemaphores_[i], nullptr);
+            vkDestroySemaphore(device, presentReadySemaphores_[i], nullptr);
+            vkDestroySemaphore(device, renderTimelineSemaphores_[i], nullptr);
             vkDestroyFence(device, inFlightFences_[i], nullptr);
             if (uniformBuffersMapped_[i]) vkUnmapMemory(device, uniformBuffersMemory_[i]);
             if (uniformBuffers_[i]) { vkDestroyBuffer(device, uniformBuffers_[i], nullptr);
@@ -476,6 +516,27 @@ public:
         feature->init(renderer);
         features_.push_back(feature);
     }
+
+    void setSynchronizationMode(SynchronizationMode mode) {
+        synchronizationMode_ = mode;
+    }
+
+    SynchronizationMode synchronizationMode() const { return synchronizationMode_; }
+
+    void setPresentMode(PresentMode mode) {
+        if (presentMode_ == mode) return;
+        presentMode_ = mode;
+        if (swapchain_ && vulkanContext_) {
+            VkDevice device = vulkanContext_->device();
+            vkDeviceWaitIdle(device);
+            swapchain_->setPresentMode(mode == PresentMode::Immediate ? VK_PRESENT_MODE_IMMEDIATE_KHR :
+                                       mode == PresentMode::Mailbox ? VK_PRESENT_MODE_MAILBOX_KHR :
+                                       VK_PRESENT_MODE_FIFO_KHR);
+            swapchain_->recreate(platform_->width(), platform_->height());
+        }
+    }
+
+    PresentMode presentMode() const { return presentMode_; }
 
     IRenderFeature* getFeature(const std::string& name) {
         for (auto& f : features_) {
@@ -726,16 +787,32 @@ private:
 
     void createSyncObjects() {
         VkDevice device = vulkanContext_->device();
+
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkSemaphoreTypeCreateInfo timelineTypeInfo{};
+        timelineTypeInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+        timelineTypeInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        timelineTypeInfo.initialValue = 0;
+
+        VkSemaphoreCreateInfo timelineInfo{};
+        timelineInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        timelineInfo.pNext = &timelineTypeInfo;
+
         VkFenceCreateInfo fenceInfo{};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
         for (int i = 0; i < kMaxFrames; i++) {
             vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores_[i]);
             vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores_[i]);
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &presentReadySemaphores_[i]);
+            vkCreateSemaphore(device, &timelineInfo, nullptr, &renderTimelineSemaphores_[i]);
             vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences_[i]);
+            timelineCounters_[i] = 0;
         }
+        globalTimelineCounter_ = 0;
     }
 
     void createCommandBuffers() {
@@ -803,9 +880,15 @@ private:
 
     std::array<VkSemaphore, 2> imageAvailableSemaphores_;
     std::array<VkSemaphore, 2> renderFinishedSemaphores_;
+    std::array<VkSemaphore, 2> presentReadySemaphores_;
+    std::array<VkSemaphore, 2> renderTimelineSemaphores_;
+    std::array<uint64_t, 2> timelineCounters_{};
+    uint64_t globalTimelineCounter_ = 0;
     std::array<VkFence, 2> inFlightFences_;
     std::vector<VkCommandBuffer> commandBuffers_;
     uint32_t currentFrame_ = 0;
+    SynchronizationMode synchronizationMode_ = SynchronizationMode::Standard;
+    PresentMode presentMode_ = PresentMode::Fifo;
 };
 
 // Facade
@@ -835,6 +918,10 @@ VkFormat Renderer::depthFormat() const { return impl_->depthFormat(); }
 void Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { impl_->loadTexture(n, p, m); }
 void Renderer::linkNormalMap(const std::string& d, const std::string& n) { impl_->linkNormalMap(d, n); }
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
+void Renderer::setSynchronizationMode(SynchronizationMode mode) { impl_->setSynchronizationMode(mode); }
+SynchronizationMode Renderer::synchronizationMode() const { return impl_->synchronizationMode(); }
+void Renderer::setPresentMode(PresentMode mode) { impl_->setPresentMode(mode); }
+PresentMode Renderer::presentMode() const { return impl_->presentMode(); }
 
 uint32_t Renderer::getTextureIndex(const std::string& name) const { return impl_->getTextureIndex(name); }
 void Renderer::prepareRenderPacket(RenderPacket& packet) const {

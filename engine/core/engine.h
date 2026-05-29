@@ -79,6 +79,14 @@ public:
     void setShaderManifest(const ShaderManifest& manifest);
     void addShader(const std::string& name, const ShaderProgram& program);
 
+    void setSynchronizationMode(SynchronizationMode mode);
+    SynchronizationMode synchronizationMode() const;
+    void setPresentMode(PresentMode mode);
+    PresentMode presentMode() const;
+
+    void setFullscreen(bool fullscreen);
+    bool isFullscreen() const;
+
     std::function<void(float, Engine&)> onUpdate;
 
 private:

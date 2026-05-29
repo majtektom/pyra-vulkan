@@ -68,6 +68,12 @@ void Platform::processEvents() {
             height_ = static_cast<uint32_t>(event.window.data2);
             resized_ = true;
             break;
+        case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+            fullscreen_ = true;
+            break;
+        case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+            fullscreen_ = false;
+            break;
         case SDL_EVENT_KEY_DOWN: {
             SDL_Scancode sc = event.key.scancode;
             if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
@@ -144,6 +150,14 @@ uint32_t Platform::height() const { return height_; }
 SDL_Window* Platform::nativeWindow() const { return window_; }
 
 bool Platform::pointerGrabbed() const { return pointerGrabbed_; }
+
+void Platform::setFullscreen(bool fullscreen) {
+    if (fullscreen_ == fullscreen) return;
+    fullscreen_ = fullscreen;
+    SDL_SetWindowFullscreen(window_, fullscreen);
+}
+
+bool Platform::isFullscreen() const { return fullscreen_; }
 
 InputSnapshot Platform::pollInput() {
     InputSnapshot snap{};
