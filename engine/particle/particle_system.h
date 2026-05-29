@@ -185,6 +185,7 @@ class CParticleSystem {
     Vec3 m_position{0, 0, 0};
     Vec3 m_camRight{1, 0, 0};
     Vec3 m_camUp{0, 1, 0};
+    Vec3 m_camPos{0, 0, 0};
 
     std::vector<std::string> m_meshNames;
     int m_numThreads = 1;
@@ -224,6 +225,7 @@ public:
 
     /// ustawia wektory kamery do billboardingu
     void setCameraVectors(const Vec3& right, const Vec3& up) { m_camRight = right; m_camUp = up; }
+    void setCameraPosition(const Vec3& pos) { m_camPos = pos; }
     CListParticles* addEmitter(const std::string& name);
     CListParticles* getEmitter(int index);
     int emitterCount() const { return static_cast<int>(m_listParticles.size()); }

@@ -185,6 +185,7 @@ struct Material {
     std::array<float, 4> emissionColor = {0.0f, 0.0f, 0.0f, 1.0f};
     float shininess = 32.0f;
     float bumpIntensity = 1.0f;
+    int renderPriority = 0;
 };
 
 struct CameraConfig {

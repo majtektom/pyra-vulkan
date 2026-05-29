@@ -13,32 +13,33 @@ public:
     ~VulkanSwapchain();
 
     VkSwapchainKHR handle() const { return swapchain_; }
-    VkRenderPass renderPass() const { return renderPass_; }
     VkExtent2D extent() const { return extent_; }
-    VkFramebuffer framebuffer(uint32_t index) const { return framebuffers_[index]; }
+    
+    VkImageView imageView(uint32_t index) const { return imageViews_[index]; }
+    VkImageView depthImageView(uint32_t index) const { return depthImageViews_[index]; }
+    VkFormat imageFormat() const { return imageFormat_; }
+    VkFormat depthFormat() const { return depthFormat_; }
+    const std::vector<VkImage>& images() const { return images_; }
     
     uint32_t acquireNextImage(VkSemaphore signalSemaphore);
     bool present(uint32_t imageIndex, VkSemaphore waitSemaphore);
-
+ 
     void recreate(uint32_t width, uint32_t height);
-
+ 
 private:
     void createSwapchain(uint32_t width, uint32_t height);
     void createImageViews();
     void createDepthResources();
-    void createRenderPass();
-    void createFramebuffers();
     void cleanup();
-
+ 
     std::shared_ptr<VulkanContext> context_;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkFormat imageFormat_;
+    VkFormat depthFormat_;
     VkExtent2D extent_;
     std::vector<VkImage> images_;
     std::vector<VkImageView> imageViews_;
-    VkRenderPass renderPass_ = VK_NULL_HANDLE;
-    std::vector<VkFramebuffer> framebuffers_;
-
+ 
     std::vector<VkImage> depthImages_;
     std::vector<VkDeviceMemory> depthMemories_;
     std::vector<VkImageView> depthImageViews_;

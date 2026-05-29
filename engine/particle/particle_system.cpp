@@ -888,7 +888,9 @@ void CParticleSystem::initialize(Engine& engine) {
         mat.name = "particleMat_" + std::to_string(ei);
         mat.textureName = texName;
         mat.shaderProgram = "particle";
-        mat.blendMode = BlendMode::Alpha;
+        mat.blendMode = BlendMode::Additive;
+        mat.renderPriority = 1;
+        mat.depthWrite = false;
         mat.cullMode = CullMode::Disabled;
         engine.getMaterialManager()->add(mat);
         auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);

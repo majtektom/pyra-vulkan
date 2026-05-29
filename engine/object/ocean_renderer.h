@@ -5,29 +5,32 @@
 #include <vulkan/vulkan.h>
 
 #include "math.h"
-
 #include "types.h"
+#include "../render/render_feature.h"
 
 namespace engine3d {
 
-class OceanRenderer {
+class Renderer;
+
+class OceanRenderer : public IRenderFeature {
 public:
     OceanRenderer();
-    ~OceanRenderer();
+    ~OceanRenderer() override;
 
-    void init(
-        VkDevice device,
-        VkPhysicalDevice physicalDevice,
-        VkRenderPass renderPass,
-        VkDescriptorSetLayout descriptorSetLayout,
-        VkCommandPool commandPool,
-        VkQueue graphicsQueue,
-        VkExtent2D extent,
-        const std::string& shaderDir
-    );
+    void init(Renderer* renderer) override;
+    void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
+    bool isActive() const override { return enabled_ && ready_; }
+    const std::string& getName() const override { static std::string name = "OceanRenderer"; return name; }
+    Stage getStage() const override { return Stage::AfterTransparent; }
 
+    void configure(const OceanConfig& config, const std::string& shaderDir, const std::string& descName);
     void cleanup(VkDevice device);
 
+    void setEnabled(bool e) { enabled_ = e; }
+    void setTime(float t) { time_ = t; }
+    bool isReady() const { return ready_; }
+
+private:
     void recordDrawCommands(
         VkCommandBuffer commandBuffer,
         const Vec3& cameraPosition,
@@ -36,13 +39,13 @@ public:
         const OceanConfig& config
     ) const;
 
-    bool isReady() const { return ready_; }
-    bool isEnabled() const { return enabled_; }
-    void setEnabled(bool e) { enabled_ = e; }
-
-private:
     bool enabled_ = false;
     bool ready_ = false;
+    Renderer* renderer_ = nullptr;
+    OceanConfig config_;
+    std::string shaderDir_;
+    std::string descName_;
+    float time_ = 0.0f;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;

@@ -34,6 +34,7 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     packet.textureName = materialInstance->getTextureName();
     packet.bumpIntensity = materialInstance->getBumpIntensity();
     packet.materialColor = materialInstance->getColor();
+    packet.renderPriority = materialInstance->getRenderPriority();
     packet.skinVertexBuffer = skinVertexBuffer;
     packet.boneDescriptorSet = boneDescriptorSet;
     packet.instanceBuffer = gpuMesh->instanceBuffer ? gpuMesh->instanceBuffer->handle() : VK_NULL_HANDLE;

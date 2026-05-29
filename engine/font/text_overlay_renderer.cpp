@@ -1,4 +1,5 @@
 #include "text_overlay_renderer.h"
+#include "../render/renderer.h"
 #include "vulkan_util.h"
 #include "utf8.h"
 #include <array>
@@ -10,14 +11,15 @@ namespace engine3d {
 TextOverlayRenderer::TextOverlayRenderer() = default;
 TextOverlayRenderer::~TextOverlayRenderer() = default;
 
-void TextOverlayRenderer::init(
-    VkDevice device,
-    VkPhysicalDevice physicalDevice,
-    VkRenderPass renderPass,
-    VkCommandPool commandPool,
-    VkQueue graphicsQueue,
-    VkExtent2D /*extent*/
-) {
+void TextOverlayRenderer::init(Renderer* renderer) {
+    renderer_ = renderer;
+    VkDevice device = renderer_->device();
+    VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
+    VkCommandPool commandPool = renderer_->commandPool();
+    VkQueue graphicsQueue = renderer_->graphicsQueue();
+    VkFormat colorFormat = renderer_->colorFormat();
+    VkFormat depthFormat = renderer_->depthFormat();
+
     device_ = device;
     physicalDevice_ = physicalDevice;
     commandPool_ = commandPool;
@@ -128,8 +130,15 @@ void TextOverlayRenderer::init(
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
     pipelineInfo.subpass = 0;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = depthFormat;
+    pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
@@ -143,6 +152,13 @@ void TextOverlayRenderer::init(
     vkDestroyShaderModule(device, vertModule, nullptr);
 
     ready_ = true;
+}
+
+void TextOverlayRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) {
+    if (!ready_ || !fontLoaded_) return;
+    buildTexts(frameIndex);
+    recordDrawCommands(cmd, frameIndex);
+    clearTexts();
 }
 
 void TextOverlayRenderer::loadFont(const FontAsset& fontAsset) {
@@ -270,7 +286,6 @@ void TextOverlayRenderer::clearTexts() {
 void TextOverlayRenderer::buildTexts(uint32_t fi) {
     if (!fontLoaded_ || labels_.empty()) { vertexCount_ = 0; return; }
 
-    // Collect all wanted codepoints from texts
     wantedCodepoints_.clear();
     for (const auto& label : labels_) {
         for (auto cp : utf8::decode(label.text)) wantedCodepoints_.insert(cp);

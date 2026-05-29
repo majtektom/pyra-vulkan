@@ -50,12 +50,21 @@ namespace {
     }
 
     VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT,
-        VkDebugUtilsMessageTypeFlagsEXT,
+        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        VkDebugUtilsMessageTypeFlagsEXT messageType,
         const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
         void*
     ) {
-        std::cerr << "validation: " << callbackData->pMessage << '\n';
+        std::string severity = "INFO";
+        if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) severity = "VERBOSE";
+        else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) severity = "WARNING";
+        else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) severity = "ERROR";
+
+        std::string type = "GENERAL";
+        if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) type = "VALIDATION";
+        else if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) type = "PERFORMANCE";
+
+        std::cerr << "[" << severity << "][" << type << "] validation: " << callbackData->pMessage << std::endl;
         return VK_FALSE;
     }
 
@@ -95,9 +104,12 @@ VulkanContext::~VulkanContext() {
     if (instance_) vkDestroyInstance(instance_, nullptr);
 }
 
-void VulkanContext::initialize(const std::string& appName) {
+void VulkanContext::initialize(const std::string& appName, bool enableValidationLayers) {
+    validationLayersEnabled_ = enableValidationLayers;
     createInstance(appName);
-    setupDebugMessenger();
+    if (validationLayersEnabled_) {
+        setupDebugMessenger();
+    }
 }
 
 void VulkanContext::createSurface(SDL_Window* window) {
@@ -112,7 +124,7 @@ void VulkanContext::createSurface(SDL_Window* window) {
     allocInfo.physicalDevice = physicalDevice_;
     allocInfo.device = device_;
     allocInfo.instance = instance_;
-    allocInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+    allocInfo.vulkanApiVersion = VK_API_VERSION_1_4;
     vmaCreateAllocator(&allocInfo, &allocator_);
 }
 
@@ -122,12 +134,14 @@ void VulkanContext::createInstance(const std::string& appName) {
     appInfo.pApplicationName = appName.c_str();
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "engine3d";
-    appInfo.apiVersion = VK_API_VERSION_1_1;
+    appInfo.apiVersion = VK_API_VERSION_1_4;
 
     unsigned int sdlExtCount = 0;
     const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
     std::vector<const char*> extensions(sdlExts, sdlExts + sdlExtCount);
-    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (validationLayersEnabled_) {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -135,7 +149,7 @@ void VulkanContext::createInstance(const std::string& appName) {
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
 
-    if (checkValidationLayerSupport()) {
+    if (validationLayersEnabled_ && checkValidationLayerSupport()) {
         createInfo.enabledLayerCount = static_cast<uint32_t>(kValidationLayers.size());
         createInfo.ppEnabledLayerNames = kValidationLayers.data();
     } else {
@@ -200,8 +214,15 @@ void VulkanContext::createLogicalDevice() {
     }
 
     VkPhysicalDeviceFeatures features{};
+    features.samplerAnisotropy = VK_TRUE;
+
+    VkPhysicalDeviceVulkan13Features features13{};
+    features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    features13.dynamicRendering = VK_TRUE;
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.pNext = &features13;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &features;

@@ -8,8 +8,11 @@
 
 #include "types.h"
 #include "font_atlas_loader.h"
+#include "../render/render_feature.h"
 
 namespace engine3d {
+
+class Renderer;
 
 struct TextVertex {
     float pos[2];
@@ -41,7 +44,7 @@ struct TextVertex {
 
 static constexpr uint32_t kTxtMaxFrames = 2;
 
-class TextOverlayRenderer {
+class TextOverlayRenderer : public IRenderFeature {
 public:
     struct Label {
         std::string text;
@@ -51,9 +54,14 @@ public:
     };
 
     TextOverlayRenderer();
-    ~TextOverlayRenderer();
+    ~TextOverlayRenderer() override;
 
-    void init(VkDevice, VkPhysicalDevice, VkRenderPass, VkCommandPool, VkQueue, VkExtent2D);
+    void init(Renderer* renderer) override;
+    void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
+    bool isActive() const override { return ready_ && fontLoaded_; }
+    const std::string& getName() const override { static std::string name = "TextOverlayRenderer"; return name; }
+    Stage getStage() const override { return Stage::Overlay; }
+
     void cleanup();
     void loadFont(const FontAsset& fontAsset);
 
@@ -75,6 +83,7 @@ private:
     bool ready_ = false;
     bool fontLoaded_ = false;
     std::vector<Label> labels_;
+    Renderer* renderer_ = nullptr;
 
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;

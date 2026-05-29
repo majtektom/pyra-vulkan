@@ -1,5 +1,5 @@
 #include "ocean_renderer.h"
-
+#include "../render/renderer.h"
 #include "../../render/vulkan_util.h"
 #include "math.h"
 #include "types.h"
@@ -60,22 +60,37 @@ void generateOceanMesh(std::vector<Vertex>& vertices, std::vector<uint32_t>& ind
 }  // namespace
 
 OceanRenderer::OceanRenderer() = default;
-OceanRenderer::~OceanRenderer() = default;
+OceanRenderer::~OceanRenderer() {
+    if (renderer_) {
+        cleanup(renderer_->device());
+    }
+}
 
-void OceanRenderer::init(
-    VkDevice device,
-    VkPhysicalDevice physicalDevice,
-    VkRenderPass renderPass,
-    VkDescriptorSetLayout descriptorSetLayout,
-    VkCommandPool commandPool,
-    VkQueue graphicsQueue,
-    VkExtent2D extent,
-    const std::string& shaderDir
-) {
-    enabled_ = true;
+void OceanRenderer::configure(const OceanConfig& config, const std::string& shaderDir, const std::string& descName) {
+    config_ = config;
+    config_.enabled = true;
+    shaderDir_ = shaderDir;
+    descName_ = descName;
+}
 
-    const auto vertCode = vk::readFile(shaderDir + "/ocean.vert.spv");
-    const auto fragCode = vk::readFile(shaderDir + "/ocean.frag.spv");
+void OceanRenderer::init(Renderer* renderer) {
+    renderer_ = renderer;
+    if (!enabled_) {
+        ready_ = false;
+        return;
+    }
+
+    VkDevice device = renderer_->device();
+    VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
+    VkCommandPool commandPool = renderer_->commandPool();
+    VkQueue graphicsQueue = renderer_->graphicsQueue();
+    VkExtent2D extent = renderer_->extent();
+    VkDescriptorSetLayout descriptorSetLayout = renderer_->descriptorSetLayout();
+    VkFormat colorFormat = renderer_->colorFormat();
+    VkFormat depthFormat = renderer_->depthFormat();
+
+    const auto vertCode = vk::readFile(shaderDir_ + "/ocean.vert.spv");
+    const auto fragCode = vk::readFile(shaderDir_ + "/ocean.frag.spv");
 
     const VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
     const VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
@@ -138,7 +153,7 @@ void OceanRenderer::init(
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkPipelineColorBlendAttachmentState blendAttach{};
@@ -194,8 +209,15 @@ void OceanRenderer::init(
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
     pipelineInfo.subpass = 0;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = depthFormat;
+    pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
@@ -228,6 +250,12 @@ void OceanRenderer::init(
         indexBuffer_, indexBufferMemory_);
 
     ready_ = true;
+}
+
+void OceanRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
+    if (!ready_ || !enabled_ || !renderer_) return;
+    VkDescriptorSet descSet = renderer_->getTextureDescriptorSet(descName_, frameIndex);
+    recordDrawCommands(cmd, view.cameraPosition, time_, descSet, config_);
 }
 
 void OceanRenderer::cleanup(VkDevice device) {

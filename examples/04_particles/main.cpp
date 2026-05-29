@@ -6,6 +6,9 @@
 #include "camera_component.h"
 #include "particle_system.h"
 #include "sprite.h"
+#include "grid_renderer.h"
+#include "ocean_renderer.h"
+#include "skydome_renderer.h"
 
 #include <SDL3/SDL.h>
 
@@ -28,7 +31,6 @@ int main() {
 
     auto* renderer = engine.getRenderer();
     renderer->setClearColor(0.05f, 0.05f, 0.1f, 1.0f);
-    engine.setGridEnabled(true);
     engine.loadFont("times", "assets/fonts/times.ttf", 48);
 
     MeshData floor;
@@ -44,6 +46,45 @@ int main() {
     auto* entity = engine.createEntity("floor");
     entity->addComponent<MeshComponent>("floor")->materialInstance =
         engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
+
+    
+    auto grid = std::make_shared<GridRenderer>();
+    GridConfig gridCfg;
+    gridCfg.enabled = true;
+    gridCfg.size = 200;
+    gridCfg.spacing = 5;
+    grid->configure(gridCfg, "bin/assets/shaders/grid");
+    grid->setEnabled(true);
+    renderer->addFeature(grid);
+
+    auto ocean = std::make_shared<OceanRenderer>();
+    renderer->allocateDescriptorSet("ocean");
+    OceanConfig oceanCfg;
+    oceanCfg.enabled = true;
+    oceanCfg.waterLevel = -8.0f;
+    oceanCfg.waveAmplitude = 1.0f;
+    oceanCfg.waveSpeed = 1.0f;
+    oceanCfg.waveFrequency = 1.0f;
+    oceanCfg.foamThreshold = 0.5f;
+    ocean->configure(oceanCfg, "bin/assets/shaders/ocean", "ocean");
+    ocean->setEnabled(true);
+    renderer->addFeature(ocean);
+
+    auto skydome = std::make_shared<SkydomeRenderer>();
+    renderer->allocateDescriptorSet("skydome");
+    SkydomeConfig skydomeCfg;
+    skydomeCfg.enabled = true;
+    skydomeCfg.domeScale = 1.5f;
+    skydomeCfg.timeOfDay = 10.0f;
+    skydomeCfg.cloudCoverage = 0.4f;
+    skydomeCfg.cloudSpeed0 = 0.3f;
+    skydomeCfg.cloudSpeed1 = 0.15f;
+    skydomeCfg.cloudScale0 = 1200.0f;
+    skydomeCfg.cloudScale1 = 800.0f;
+    skydomeCfg.sunElevation = 50.0f;
+    skydome->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
+    skydome->setEnabled(true);
+    renderer->addFeature(skydome);
 
     CParticleSystem particleSys;
     if (!particleSys.load("assets/textures/particles/przyklad.particle")) {
@@ -69,28 +110,6 @@ int main() {
     particleSys.initialize(engine);
 
     renderer->loadTexture("sprite_firen", "assets/sprite/firen.tga");
-
-    engine.setSkydomeEnabled(true);
-    engine.setOceanEnabled(true);
-
-    SkydomeConfig cfg;
-    cfg.domeScale = 1.5f;
-    cfg.timeOfDay = 10.0f;
-    cfg.cloudCoverage = 0.4f;
-    cfg.cloudSpeed0 = 0.3f;
-    cfg.cloudSpeed1 = 0.15f;
-    cfg.cloudScale0 = 1200.0f;
-    cfg.cloudScale1 = 800.0f;
-    cfg.sunElevation = 50.0f;
-    engine.setSkydomeConfig(cfg);
-
-    OceanConfig oceanCfg;
-    oceanCfg.waterLevel = -8.0f;
-    oceanCfg.waveAmplitude = 1.0f;
-    oceanCfg.waveSpeed = 1.0f;
-    oceanCfg.waveFrequency = 1.0f;
-    oceanCfg.foamThreshold = 0.5f;
-    engine.setOceanConfig(oceanCfg);
 
     float timeOfDay = 10.0f;
     float cloudCov = 0.4f;
@@ -135,7 +154,11 @@ int main() {
 
     engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
 
-    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId, &timeOfDay, &cloudCov, &cloudDir, &cfg, &oceanCfg, &engine, dayNightSpeed, weatherSpeed](float dt, Engine& e) {
+    engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId, &timeOfDay, &cloudCov, &cloudDir, &skydomeCfg, &oceanCfg, &engine, &skydome, &ocean, dayNightSpeed, weatherSpeed](float dt, Engine& e) {
+        static float animTime = 0.0f;
+        animTime += dt;
+        skydome->setTime(animTime);
+        ocean->setTime(animTime);
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {
@@ -154,6 +177,10 @@ int main() {
 
         particleSys.update(dt, e);
 
+        if (cam) {
+            particleSys.setCameraPosition(cam->position);
+        }
+
         {
             static float timeAcc = 0.0f;
             timeAcc += dt;
@@ -170,11 +197,11 @@ int main() {
             float sunEl = std::sin(dayProgress * 3.1415926535f) * 65.0f;
             float sunAz = 90.0f + dayProgress * 180.0f;
 
-            cfg.timeOfDay = timeOfDay;
-            cfg.cloudCoverage = cloudCov;
-            cfg.sunElevation = sunEl;
-            cfg.sunAzimuth = sunAz;
-            engine.setSkydomeConfig(cfg);
+            skydomeCfg.timeOfDay = timeOfDay;
+            skydomeCfg.cloudCoverage = cloudCov;
+            skydomeCfg.sunElevation = sunEl;
+            skydomeCfg.sunAzimuth = sunAz;
+            skydome->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
 
             float sinVal = std::sin(timeAcc * 0.6f);
             float cosVal = std::cos(timeAcc * 0.6f);

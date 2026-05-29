@@ -1,5 +1,6 @@
 #include "gui.h"
 #include "platform.h"
+#include "../render/renderer.h"
 #include <algorithm>
 
 namespace engine3d {
@@ -18,10 +19,17 @@ void GuiWidget::update(int, int, bool, bool, int) {}
 // --- GuiMgr ---
 GuiMgr::~GuiMgr() { windows_.clear(); }
 
-void GuiMgr::init(VkDevice device, VkPhysicalDevice pd, VkRenderPass rp, VkCommandPool cp, VkQueue q, VkExtent2D ext,
-                  TextDrawFn textFn) {
-    guiRenderer_.init(device, pd, rp, cp, q, ext);
-    textFn_ = std::move(textFn);
+void GuiMgr::init(Renderer* renderer) {
+    renderer_ = renderer;
+    guiRenderer_.init(renderer_->device(), renderer_->physicalDevice(),
+                      renderer_->colorFormat(), renderer_->depthFormat(),
+                      renderer_->commandPool(), renderer_->graphicsQueue(), renderer_->extent());
+}
+
+void GuiMgr::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) {
+    if (!isGuiReady()) return;
+    guiRenderer_.build(frameIndex);
+    guiRenderer_.recordDrawCommands(cmd, frameIndex);
 }
 
 GuiWindow* GuiMgr::addWindow(const std::string& name, int x, int y, int w, int h) {
@@ -93,7 +101,7 @@ void GuiMgr::update(Platform& platform, float screenW, float screenH) {
     }
 }
 
-void GuiMgr::render() {
+void GuiMgr::renderGui() {
     for (auto& [name, w] : windows_) {
         if (!w->isVisible()) continue;
         w->render(guiRenderer_, textFn_, screenW_, screenH_);
@@ -111,10 +119,6 @@ void GuiMgr::drawCursor() {
 
 void GuiMgr::build(uint32_t frameIndex) {
     guiRenderer_.build(frameIndex);
-}
-
-void GuiMgr::recordDrawCommands(VkCommandBuffer cmd, uint32_t frameIndex) {
-    guiRenderer_.recordDrawCommands(cmd, frameIndex);
 }
 
 // --- GuiWindow ---

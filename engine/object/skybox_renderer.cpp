@@ -1,7 +1,6 @@
 #include "skybox_renderer.h"
-
+#include "../render/renderer.h"
 #include "vulkan_util.h"
-
 #include <array>
 #include <stdexcept>
 #include <vector>
@@ -9,36 +8,39 @@
 namespace engine3d {
 
 SkyboxRenderer::SkyboxRenderer() = default;
-SkyboxRenderer::~SkyboxRenderer() = default;
+SkyboxRenderer::~SkyboxRenderer() {
+    if (renderer_) {
+        cleanup(renderer_->device());
+    }
+}
 
-// Inicjalizacja skyboxa: tworzy pipeline (depth test LEQUAL, bez zapisu depth),
-// bufory geometrii (20 wierzcholkow, 5 scian po 4 indeksy TRIANGLE_STRIP).
-// Wzorowane na Plazer::CSkyBox::Init(), ktore generuje 20 wierzcholkow i 5 zestawow indeksow.
-// Uwaga: deskryptory tekstur sa przekazywane w recordDrawCommands(), a nie tu,
-// poniewaz kazda klatka moze miec inny UBO (nalezy uzywac deskryptora biezacej klatki).
-void SkyboxRenderer::init(
-    VkDevice device,
-    VkPhysicalDevice physicalDevice,
-    VkRenderPass renderPass,
-    VkDescriptorSetLayout descriptorSetLayout,
-    VkCommandPool commandPool,
-    VkQueue graphicsQueue,
-    VkExtent2D extent,
-    const SkyboxConfig& config,
-    const std::string& shaderDir
-) {
-    if (!config.enabled) {
-        enabled_ = false;
+void SkyboxRenderer::configure(const SkyboxConfig& config, const std::string& shaderDir) {
+    config_ = config;
+    config_.enabled = true;
+    shaderDir_ = shaderDir;
+}
+
+void SkyboxRenderer::init(Renderer* renderer) {
+    renderer_ = renderer;
+    if (!enabled_) {
         ready_ = false;
         return;
     }
-    enabled_ = true;
+
+    VkDevice device = renderer_->device();
+    VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
+    VkCommandPool commandPool = renderer_->commandPool();
+    VkQueue graphicsQueue = renderer_->graphicsQueue();
+    VkExtent2D extent = renderer_->extent();
+    VkDescriptorSetLayout descriptorSetLayout = renderer_->descriptorSetLayout();
+    VkFormat colorFormat = renderer_->colorFormat();
+    VkFormat depthFormat = renderer_->depthFormat();
 
     // ---------------------------------------------------------------
     // 1. LADOWANIE SHADEROW
     // ---------------------------------------------------------------
-    const auto vertCode = vk::readFile(shaderDir + "/skybox.vert.spv");
-    const auto fragCode = vk::readFile(shaderDir + "/skybox.frag.spv");
+    const auto vertCode = vk::readFile(shaderDir_ + "/skybox.vert.spv");
+    const auto fragCode = vk::readFile(shaderDir_ + "/skybox.frag.spv");
 
     const VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
     const VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
@@ -147,7 +149,6 @@ void SkyboxRenderer::init(
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(PushConstants);
-
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushConstantRange;
 
@@ -158,7 +159,7 @@ void SkyboxRenderer::init(
     }
 
     // ---------------------------------------------------------------
-    // 9. TWORZENIE PIPELINE'U
+    // 9. TWORZENIE PIPELINE'U Z DYNAMIC RENDERING
     // ---------------------------------------------------------------
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -179,8 +180,15 @@ void SkyboxRenderer::init(
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
     pipelineInfo.subpass = 0;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = depthFormat;
+    pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
@@ -194,15 +202,15 @@ void SkyboxRenderer::init(
     vkDestroyShaderModule(device, vertModule, nullptr);
 
     // ---------------------------------------------------------------
-    // 10. TWORZENIE GEOMETRII SKYBOXA
+    // 10. TWORZENIE GEOMETRII SKYBOXA (Plazer-style)
     // ---------------------------------------------------------------
-    const float odl = config.size;
-    const float przes = config.verticalOffset;
+    const float odl = static_cast<float>(config_.size);
+    const float przes = static_cast<float>(config_.verticalOffset);
     const float ep = 0.002f;
 
     std::vector<Vertex> vertices(20);
     auto setV = [&](std::size_t i, float x, float y, float z, float u, float v) {
-        vertices[i] = {{x, y, z}, {1.0f, 1.0f, 1.0f}, {u, v}};
+        vertices[i] = {{{x, y, z}}, {{0.0f, 0.0f, 0.0f}}, {{1.0f, 1.0f, 1.0f}}, {{u, v}}};
     };
 
     setV(0,  -odl, 0 - przes, -odl, 0.0f + ep, 0.5f + ep);
@@ -237,7 +245,6 @@ void SkyboxRenderer::init(
         13, 12, 14, 15,
         17, 16, 18, 19,
     };
-    indexCount_ = static_cast<uint32_t>(indices.size());
 
     VkDeviceSize vbSize = sizeof(Vertex) * vertices.size();
     vk::createDeviceLocalBufferWithStaging(
@@ -286,9 +293,17 @@ void SkyboxRenderer::cleanup(VkDevice device) {
     ready_ = false;
 }
 
-// recordDrawCommands rysuje 5 scian skyboxa, kazda z odpowiednia tekstura.
-// faceSets[0] = deskryptor dla front+back (box_12), [1] = left+right (box_34), [2] = top (box_5).
-// Kazdy deskryptor musi zawierac UBO biezacej klatki (binding 0) i teksture (binding 1).
+void SkyboxRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
+    if (!ready_ || !enabled_ || !renderer_) return;
+
+    std::array<VkDescriptorSet, 3> faceSets = {};
+    faceSets[0] = renderer_->getTextureDescriptorSet("skybox_fb", frameIndex);
+    faceSets[1] = renderer_->getTextureDescriptorSet("skybox_lr", frameIndex);
+    faceSets[2] = renderer_->getTextureDescriptorSet("skybox_top", frameIndex);
+
+    recordDrawCommands(cmd, pipelineLayout_, view.cameraPosition, faceSets);
+}
+
 void SkyboxRenderer::recordDrawCommands(
     VkCommandBuffer commandBuffer,
     VkPipelineLayout skyboxPipelineLayout,
@@ -332,4 +347,4 @@ void SkyboxRenderer::recordDrawCommands(
     }
 }
 
-}  // namespace engine3d
+} // namespace engine3d

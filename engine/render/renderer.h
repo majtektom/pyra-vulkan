@@ -19,9 +19,9 @@ class Platform;
 class MeshComponent;
 class TransformComponent;
 class VulkanContext;
+class IRenderFeature;
 
 // Renderer — rdzeń Vulkan: swapchain, descriptor sety, UBO, tekstury, rysowanie sceny.
-// Nie zawiera skyboxa, grida, tekstu ani fontów — tym zarządza Engine.
 class Renderer {
 public:
     Renderer(Platform* platform, MaterialManager* materialManager, std::shared_ptr<VulkanContext> context);
@@ -34,10 +34,11 @@ public:
 
     bool initialize(const std::string& appName, bool enableValidationLayers = true);
     void cleanup();
-    void render(const RenderScene& scene, CameraComponent* camera,
-                std::function<void(VkCommandBuffer, uint32_t)> onAfterOpaque = nullptr,
-                std::function<void(VkCommandBuffer, uint32_t)> onAfterTransparent = nullptr);
+    void render(const RenderScene& scene, const RenderView& view);
     void waitIdle();
+
+    void addFeature(std::shared_ptr<IRenderFeature> feature);
+    IRenderFeature* getFeature(const std::string& name);
 
     void loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
     void linkNormalMap(const std::string& diffuseName, const std::string& normalName);
@@ -47,15 +48,19 @@ public:
     uint32_t width() const;
     uint32_t height() const;
 
+    VkFormat colorFormat() const;
+    VkFormat depthFormat() const;
+
     // Vulkan — potrzebne do inicjalizacji sub-rendererów (skybox, grid, text)
     VkDevice device() const;
     VkPhysicalDevice physicalDevice() const;
-    VkRenderPass renderPass() const;
     VkDescriptorSetLayout descriptorSetLayout() const;
     VkCommandPool commandPool() const;
     VkQueue graphicsQueue() const;
     VkExtent2D extent() const;
     VkDescriptorSet getTextureDescriptorSet(const std::string& texName, uint32_t frame) const;
+    VkBuffer getUniformBuffer(uint32_t frame) const;
+    bool getTextureInfo(const std::string& name, VkImageView& outView, VkSampler& outSampler) const;
 
 private:
     class RendererImpl;

@@ -186,6 +186,8 @@ void SpriteSystem::createSheetGroup(Engine& engine, const std::string& texName,
     mat.textureName = texName;
     mat.shaderProgram = "sprite";
     mat.blendMode = BlendMode::Alpha;
+    mat.renderPriority = 1;
+    mat.depthWrite = true;
     mat.cullMode = CullMode::Disabled;
     group.materialName = mat.name;
     engine.getMaterialManager()->add(mat);
@@ -217,7 +219,10 @@ void SpriteSystem::createSequenceEntity(Engine& engine, int spriteId) {
         mat.name = "spriteSeqMat_" + texName;
         mat.textureName = texName;
         mat.shaderProgram = "sprite";
-        mat.blendMode = BlendMode::Alpha;
+        mat.blendMode = BlendMode::Additive;
+        // mat.blendMode = BlendMode::Alpha;
+        mat.renderPriority = 1;
+        mat.depthWrite = false;
         mat.cullMode = CullMode::Disabled;
         engine.getMaterialManager()->add(mat);
         s.frameMaterials.push_back(

@@ -22,18 +22,12 @@
 #include "../render/material_system.h"
 #include "../render/render_pass.h"
 #include "../object/mesh_manager.h"
-#include "../object/skybox_renderer.h"
-#include "../object/grid_renderer.h"
-#include "../object/skydome_renderer.h"
-#include "../object/ocean_renderer.h"
 #include "../font/text_overlay_renderer.h"
 
 namespace engine3d {
 
 class Renderer;
 class FontManager;
-class TextOverlayRenderer;
-class GuiMgr;
 class ShaderHotReload;
 
 class Engine {
@@ -74,18 +68,10 @@ public:
 
     float getCurrentFPS() const { return currentFPS; }
 
-    void setSkyboxEnabled(bool enabled, const std::string& directory = "");
-    void setSkyboxExposure(float exposure);
-    void setSkydomeEnabled(bool enabled, const std::string& cloudTexName = "");
-    void setSkydomeConfig(const SkydomeConfig& config);
-    void setOceanEnabled(bool enabled);
-    void setOceanConfig(const OceanConfig& config);
-    void setGridEnabled(bool enabled);
     void loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight = 48);
     void setTextLabel(const std::string& text, const std::string& fontName,
                       float x, float y, float scale = 1.0f,
                       const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f});
-    void setGuiMgr(GuiMgr* m) { guiMgr_ = m; }
 
     void enableShaderHotReload(bool enable);
     void reloadShader(const std::string& shaderName);
@@ -131,20 +117,8 @@ private:
 
     CameraController cameraController;
 
-    SkyboxRenderer skyboxRenderer_;
-    SkydomeRenderer skydomeRenderer_;
-    OceanRenderer oceanRenderer_;
-    GridRenderer gridRenderer_;
-    TextOverlayRenderer textOverlayRenderer_;
-    GuiMgr* guiMgr_ = nullptr;
+    std::shared_ptr<TextOverlayRenderer> textOverlayRenderer_;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
-    bool skyboxEnabled_ = false, skydomeEnabled_ = false, oceanEnabled_ = false, gridEnabled_ = false, textOverlayReady_ = false;
-    std::string skyboxDirectory_;
-    std::string skydomeDescName_;
-    std::string oceanDescName_;
-    SkydomeConfig skydomeConfig_;
-    OceanConfig oceanConfig_;
-    float skydomeTime_ = 0.0f;
 };
 
 } // namespace engine3d

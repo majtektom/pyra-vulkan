@@ -1,7 +1,6 @@
 #include "grid_renderer.h"
-
+#include "../render/renderer.h"
 #include "vulkan_util.h"
-
 #include <array>
 #include <stdexcept>
 #include <vector>
@@ -9,34 +8,39 @@
 namespace engine3d {
 
 GridRenderer::GridRenderer() = default;
-GridRenderer::~GridRenderer() = default;
+GridRenderer::~GridRenderer() {
+    if (renderer_) {
+        cleanup(renderer_->device());
+    }
+}
 
-// Inicjalizacja tworzy pipeline Vulkan (VK_PRIMITIVE_TOPOLOGY_LINE_LIST) wraz z separatnym
-// pipeline layoutem (tylko descriptor set, bez push constants) oraz bufor wierzcholkow.
-// Wzorowane na Plazer::Grid3d::Init(), ktore tworzylo vertex buffer z liniami i osiami.
-void GridRenderer::init(
-    VkDevice device,
-    VkPhysicalDevice physicalDevice,
-    VkRenderPass renderPass,
-    VkDescriptorSetLayout descriptorSetLayout,
-    VkCommandPool commandPool,
-    VkQueue graphicsQueue,
-    VkExtent2D extent,
-    const GridConfig& config,
-    const std::string& shaderDir
-) {
-    if (!config.enabled) {
-        enabled_ = false;
+void GridRenderer::configure(const GridConfig& config, const std::string& shaderDir) {
+    config_ = config;
+    config_.enabled = true;
+    shaderDir_ = shaderDir;
+}
+
+void GridRenderer::init(Renderer* renderer) {
+    renderer_ = renderer;
+    if (!enabled_) {
         ready_ = false;
         return;
     }
-    enabled_ = true;
+
+    VkDevice device = renderer_->device();
+    VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
+    VkCommandPool commandPool = renderer_->commandPool();
+    VkQueue graphicsQueue = renderer_->graphicsQueue();
+    VkExtent2D extent = renderer_->extent();
+    VkDescriptorSetLayout descriptorSetLayout = renderer_->descriptorSetLayout();
+    VkFormat colorFormat = renderer_->colorFormat();
+    VkFormat depthFormat = renderer_->depthFormat();
 
     // ---------------------------------------------------------------
     // 1. LADOWANIE SHADEROW
     // ---------------------------------------------------------------
-    const auto vertCode = vk::readFile(shaderDir + "/grid.vert.spv");
-    const auto fragCode = vk::readFile(shaderDir + "/grid.frag.spv");
+    const auto vertCode = vk::readFile(shaderDir_ + "/grid.vert.spv");
+    const auto fragCode = vk::readFile(shaderDir_ + "/grid.frag.spv");
 
     const VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
     const VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
@@ -171,8 +175,15 @@ void GridRenderer::init(
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
     pipelineInfo.subpass = 0;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = depthFormat;
+    pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
@@ -188,32 +199,28 @@ void GridRenderer::init(
     // ---------------------------------------------------------------
     // 10. TWORZENIE BUFORA WIERZCHOLKOW
     // ---------------------------------------------------------------
-    // Wzorem starego Grid::Init(): generujemy linie w poziomie i pionie na XZ
-    // oraz kolorowe osie X (zielona), Y (czerwona), Z (niebieska).
-    const float halfSize = config.size * 0.5f;
-    const float spacing = config.spacing;
-    const auto& color = config.color;
+    const float halfSize = config_.size * 0.5f;
+    const float spacing = config_.spacing;
+    const auto& color = config_.color;
 
-    const int linesPerAxis = static_cast<int>(config.size / spacing);
+    const int linesPerAxis = static_cast<int>(config_.size / spacing);
     std::vector<Vertex> vertices;
     vertices.reserve(static_cast<std::size_t>(linesPerAxis) * 4 + 6);
 
-    // Poziome i pionowe linie siatki (kolor szary z configu).
     for (int line = 0; line < linesPerAxis; ++line) {
         const float pos = -halfSize + static_cast<float>(line) * spacing;
-        vertices.push_back({{-halfSize, 0.0f, pos}, {color[0], color[1], color[2]}, {0.0f, 0.0f}});
-        vertices.push_back({{ halfSize, 0.0f, pos}, {color[0], color[1], color[2]}, {0.0f, 0.0f}});
-        vertices.push_back({{pos, 0.0f, -halfSize}, {color[0], color[1], color[2]}, {0.0f, 0.0f}});
-        vertices.push_back({{pos, 0.0f,  halfSize}, {color[0], color[1], color[2]}, {0.0f, 0.0f}});
+        vertices.push_back({{{-halfSize, 0.0f, pos}}, {{0.0f, 1.0f, 0.0f}}, {{color[0], color[1], color[2]}}, {{0.0f, 0.0f}}});
+        vertices.push_back({{{ halfSize, 0.0f, pos}}, {{0.0f, 1.0f, 0.0f}}, {{color[0], color[1], color[2]}}, {{0.0f, 0.0f}}});
+        vertices.push_back({{{pos, 0.0f, -halfSize}}, {{0.0f, 1.0f, 0.0f}}, {{color[0], color[1], color[2]}}, {{0.0f, 0.0f}}});
+        vertices.push_back({{{pos, 0.0f,  halfSize}}, {{0.0f, 1.0f, 0.0f}}, {{color[0], color[1], color[2]}}, {{0.0f, 0.0f}}});
     }
 
-    // Osie: Y-czerwona, X-zielona, Z-niebieska.
-    vertices.push_back({{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{0.0f, halfSize, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{halfSize, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{0.0f, 0.0f, halfSize}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}});
+    vertices.push_back({{{0.0f, 0.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{1.0f, 0.0f, 0.0f}}, {{0.0f, 0.0f}}});
+    vertices.push_back({{{0.0f, halfSize, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{1.0f, 0.0f, 0.0f}}, {{0.0f, 0.0f}}});
+    vertices.push_back({{{0.0f, 0.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{0.0f, 0.0f}}});
+    vertices.push_back({{{halfSize, 0.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{0.0f, 0.0f}}});
+    vertices.push_back({{{0.0f, 0.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 0.0f}}});
+    vertices.push_back({{{0.0f, 0.0f, halfSize}}, {{0.0f, 1.0f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 0.0f}}});
 
     vertexCount_ = static_cast<uint32_t>(vertices.size());
 
@@ -250,11 +257,14 @@ void GridRenderer::cleanup(VkDevice device) {
     ready_ = false;
 }
 
-// recordDrawCommands nagrywa polecenia rysowania linii siatki.
-// Nalezy wywolac miedzy vkCmdBeginRenderPass a vkCmdEndRenderPass.
+void GridRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
+    if (!ready_ || !enabled_ || !renderer_) return;
+    VkDescriptorSet descriptorSet = renderer_->getTextureDescriptorSet("", frameIndex);
+    recordDrawCommands(cmd, descriptorSet, frameIndex);
+}
+
 void GridRenderer::recordDrawCommands(
     VkCommandBuffer commandBuffer,
-    VkPipelineLayout pipelineLayout,
     VkDescriptorSet descriptorSet,
     uint32_t frameIndex
 ) const {

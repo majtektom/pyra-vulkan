@@ -31,22 +31,17 @@ void VulkanSwapchain::recreate(uint32_t w, uint32_t h) {
     createSwapchain(w, h);
     createImageViews();
     createDepthResources();
-    createRenderPass();
-    createFramebuffers();
 }
 
 void VulkanSwapchain::cleanup() {
     VkDevice d = context_->device();
-    for (auto fb : framebuffers_) vkDestroyFramebuffer(d, fb, nullptr);
     for (auto v : depthImageViews_) vkDestroyImageView(d, v, nullptr);
     for (size_t i = 0; i < depthImages_.size(); ++i) {
         if (depthImages_[i]) vkDestroyImage(d, depthImages_[i], nullptr);
         if (depthMemories_[i]) vkFreeMemory(d, depthMemories_[i], nullptr);
     }
-    if (renderPass_) vkDestroyRenderPass(d, renderPass_, nullptr);
     for (auto v : imageViews_) vkDestroyImageView(d, v, nullptr);
     if (swapchain_) vkDestroySwapchainKHR(d, swapchain_, nullptr);
-    framebuffers_.clear();
     imageViews_.clear();
     depthImages_.clear();
     depthMemories_.clear();
@@ -113,7 +108,7 @@ void VulkanSwapchain::createImageViews() {
 void VulkanSwapchain::createDepthResources() {
     VkDevice dev = context_->device();
     VkPhysicalDevice pd = context_->physicalDevice();
-    VkFormat fmt = findDepthFormat(pd);
+    depthFormat_ = findDepthFormat(pd);
     size_t n = images_.size();
     depthImages_.resize(n);
     depthMemories_.resize(n);
@@ -124,7 +119,7 @@ void VulkanSwapchain::createDepthResources() {
         ci.imageType = VK_IMAGE_TYPE_2D;
         ci.extent = {extent_.width, extent_.height, 1};
         ci.mipLevels = 1; ci.arrayLayers = 1;
-        ci.format = fmt;
+        ci.format = depthFormat_;
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         ci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         ci.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -153,7 +148,7 @@ void VulkanSwapchain::createDepthResources() {
         vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         vi.image = depthImages_[i];
         vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vi.format = fmt;
+        vi.format = depthFormat_;
         vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         vi.subresourceRange.levelCount = 1;
         vi.subresourceRange.layerCount = 1;
@@ -162,62 +157,6 @@ void VulkanSwapchain::createDepthResources() {
     }
 }
 
-void VulkanSwapchain::createRenderPass() {
-    VkDevice dev = context_->device();
-    VkAttachmentDescription ca{};
-    ca.format = imageFormat_;
-    ca.samples = VK_SAMPLE_COUNT_1_BIT;
-    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ca.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    ca.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentDescription da{};
-    da.format = findDepthFormat(context_->physicalDevice());
-    da.samples = VK_SAMPLE_COUNT_1_BIT;
-    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    da.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    da.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    da.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference cr{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference dr{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-
-    VkSubpassDescription sp{};
-    sp.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    sp.colorAttachmentCount = 1;
-    sp.pColorAttachments = &cr;
-    sp.pDepthStencilAttachment = &dr;
-
-    std::array<VkAttachmentDescription, 2> at = {ca, da};
-    VkRenderPassCreateInfo ci{};
-    ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    ci.attachmentCount = 2;
-    ci.pAttachments = at.data();
-    ci.subpassCount = 1;
-    ci.pSubpasses = &sp;
-
-    if (vkCreateRenderPass(dev, &ci, nullptr, &renderPass_) != VK_SUCCESS)
-        throw std::runtime_error("render pass create failed");
-}
-
-void VulkanSwapchain::createFramebuffers() {
-    VkDevice dev = context_->device();
-    framebuffers_.resize(imageViews_.size());
-    for (size_t i = 0; i < imageViews_.size(); ++i) {
-        std::array<VkImageView, 2> att = {imageViews_[i], depthImageViews_[i]};
-        VkFramebufferCreateInfo ci{};
-        ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        ci.renderPass = renderPass_;
-        ci.attachmentCount = 2;
-        ci.pAttachments = att.data();
-        ci.width = extent_.width;
-        ci.height = extent_.height;
-        ci.layers = 1;
-        if (vkCreateFramebuffer(dev, &ci, nullptr, &framebuffers_[i]) != VK_SUCCESS)
-            throw std::runtime_error("framebuffer create failed");
-    }
-}
 
 uint32_t VulkanSwapchain::acquireNextImage(VkSemaphore s) {
     uint32_t idx = 0;

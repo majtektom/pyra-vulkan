@@ -19,7 +19,7 @@ static constexpr uint32_t kGuiMaxFrames = 2;
 // Prosty renderer 2D dla GUI — rysuje kolorowe prostokąty i tekst w NDC.
 class GuiRenderer {
 public:
-    void init(VkDevice device, VkPhysicalDevice pd, VkRenderPass rp, VkCommandPool cp, VkQueue q, VkExtent2D ext);
+    void init(VkDevice device, VkPhysicalDevice pd, VkFormat colorFormat, VkFormat depthFormat, VkCommandPool cp, VkQueue q, VkExtent2D ext);
     void cleanup();
 
     void addRect(float x, float y, float w, float h, std::array<float,4> color);

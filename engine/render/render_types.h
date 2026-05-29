@@ -23,6 +23,7 @@ public:
     virtual const std::string& getTextureName() const = 0;
     virtual float getBumpIntensity() const = 0;
     virtual std::array<float,4> getColor() const = 0;
+    virtual int getRenderPriority() const = 0;
 };
 
 struct RenderPacket {
@@ -39,6 +40,15 @@ struct RenderPacket {
     std::array<float,4> materialColor{1,1,1,1};
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
+    int renderPriority = 0;
+};
+
+struct RenderView {
+    Matrix4 view;
+    Matrix4 projection;
+    Vec3 cameraPosition;
+    Vec3 cameraRight;
+    Vec3 cameraUp;
 };
 
 class MeshManager;

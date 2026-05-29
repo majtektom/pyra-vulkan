@@ -15,6 +15,9 @@
 #include <array>
 #include <unordered_map>
 
+#include "render_feature.h"
+#include <vector>
+
 namespace engine3d {
 
 constexpr int kMaxFrames = 2;
@@ -64,9 +67,7 @@ public:
         }
     }
 
-    void render(const RenderScene& scene, CameraComponent* camera,
-                std::function<void(VkCommandBuffer, uint32_t)> onAfterOpaque,
-                std::function<void(VkCommandBuffer, uint32_t)> onAfterTransparent) {
+    void render(const RenderScene& scene, const RenderView& view) {
         if (!vulkanContext_ || !vulkanContext_->device()) return;
 
         if (platform_->wasResized()) {
@@ -74,7 +75,7 @@ public:
             recreateSwapChain();
         }
 
-        if (!swapchain_ || !swapchain_->renderPass()) return;
+        if (!swapchain_) return;
 
         VkDevice device = vulkanContext_->device();
         vkWaitForFences(device, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX);
@@ -89,7 +90,7 @@ public:
         }
         vkResetFences(device, 1, &inFlightFences_[currentFrame_]);
 
-        updateUniformBuffer(camera);
+        updateUniformBuffer(view);
 
         VkCommandBuffer cmd = commandBuffers_[currentFrame_];
         vkResetCommandBuffer(cmd, 0);
@@ -98,20 +99,50 @@ public:
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         vkBeginCommandBuffer(cmd, &beginInfo);
 
-        VkRenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = swapchain_->renderPass();
-        renderPassInfo.framebuffer = swapchain_->framebuffer(imageIndex);
-        renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = swapchain_->extent();
+        VkImage colorImage = swapchain_->handle() ? swapchain_->images()[imageIndex] : VK_NULL_HANDLE; // Need to expose images
+        
+        // Manual transition for color image: UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL
+        VkImageMemoryBarrier colorBarrier{};
+        colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        colorBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorBarrier.srcAccessMask = 0;
+        colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        colorBarrier.image = swapchain_->handle() ? swapchain_->images()[imageIndex] : VK_NULL_HANDLE;
+        colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        colorBarrier.subresourceRange.baseMipLevel = 0;
+        colorBarrier.subresourceRange.levelCount = 1;
+        colorBarrier.subresourceRange.baseArrayLayer = 0;
+        colorBarrier.subresourceRange.layerCount = 1;
 
-        std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{clearColor_[0], clearColor_[1], clearColor_[2], clearColor_[3]}};
-        clearValues[1].depthStencil = {1.0f, 0};
-        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-        renderPassInfo.pClearValues = clearValues.data();
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
 
-        vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        VkRenderingAttachmentInfo colorAttachment{};
+        colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        colorAttachment.imageView = swapchain_->imageView(imageIndex);
+        colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAttachment.clearValue.color = {{clearColor_[0], clearColor_[1], clearColor_[2], clearColor_[3]}};
+
+        VkRenderingAttachmentInfo depthAttachment{};
+        depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        depthAttachment.imageView = swapchain_->depthImageView(imageIndex);
+        depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depthAttachment.clearValue.depthStencil = {1.0f, 0};
+
+        VkRenderingInfo renderingInfo{};
+        renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        renderingInfo.renderArea = {{0, 0}, swapchain_->extent()};
+        renderingInfo.layerCount = 1;
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachments = &colorAttachment;
+        renderingInfo.pDepthAttachment = &depthAttachment;
+
+        vkCmdBeginRendering(cmd, &renderingInfo);
 
         VkViewport viewport{0.0f, 0.0f,
             static_cast<float>(swapchain_->extent().width),
@@ -126,13 +157,20 @@ public:
             return it != textureDescriptorSets_.end() ? it->second[frameIndex] : descriptorSets_[frameIndex];
         };
 
+        // Before Opaque Features
+        executeFeatures(cmd, view, IRenderFeature::Stage::BeforeOpaque);
+
         for (auto& pass : passes_) {
             if (pass->getName() == "OpaquePass") {
                 pass->execute(cmd, currentFrame_, scene, pipelineLayout_, getTextureDescSet);
             }
         }
 
-        if (onAfterOpaque) onAfterOpaque(cmd, currentFrame_);
+        // After Opaque Features
+        executeFeatures(cmd, view, IRenderFeature::Stage::AfterOpaque);
+
+        // After Transparent Features (ocean first, before sprites/particles)
+        executeFeatures(cmd, view, IRenderFeature::Stage::AfterTransparent);
 
         for (auto& pass : passes_) {
             if (pass->getName() == "TransparentPass") {
@@ -140,9 +178,28 @@ public:
             }
         }
 
-        if (onAfterTransparent) onAfterTransparent(cmd, currentFrame_);
+        // Overlay Features
+        executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
 
-        vkCmdEndRenderPass(cmd);
+        vkCmdEndRendering(cmd);
+
+        // Transition back to PRESENT_SRC_KHR
+        VkImageMemoryBarrier presentBarrier{};
+        presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        presentBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        presentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        presentBarrier.dstAccessMask = 0;
+        presentBarrier.image = swapchain_->images()[imageIndex];
+        presentBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        presentBarrier.subresourceRange.baseMipLevel = 0;
+        presentBarrier.subresourceRange.levelCount = 1;
+        presentBarrier.subresourceRange.baseArrayLayer = 0;
+        presentBarrier.subresourceRange.layerCount = 1;
+
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &presentBarrier);
+
         vkEndCommandBuffer(cmd);
 
         VkSubmitInfo submitInfo{};
@@ -358,7 +415,9 @@ public:
     // Getters for sub-renderers
     VkDevice device() const { return vulkanContext_->device(); }
     VkPhysicalDevice physicalDevice() const { return vulkanContext_->physicalDevice(); }
-    VkRenderPass renderPass() const { return swapchain_ ? swapchain_->renderPass() : VK_NULL_HANDLE; }
+    VkFormat colorFormat() const { return swapchain_ ? swapchain_->imageFormat() : VK_FORMAT_UNDEFINED; }
+    VkFormat depthFormat() const { return swapchain_ ? swapchain_->depthFormat() : VK_FORMAT_UNDEFINED; }
+
     VkDescriptorSetLayout descriptorSetLayout() const { return descriptorSetLayout_; }
     VkCommandPool commandPool() const { return vulkanContext_->commandPool(); }
     VkQueue graphicsQueue() const { return vulkanContext_->graphicsQueue(); }
@@ -366,6 +425,22 @@ public:
     VkDescriptorSet getTexDescSet(const std::string& n, uint32_t f) const {
         auto it = textureDescriptorSets_.find(n);
         return it != textureDescriptorSets_.end() ? it->second[f] : descriptorSets_[f];
+    }
+    VkBuffer getUniformBuffer(uint32_t frame) const {
+        return frame < uniformBuffers_.size() ? uniformBuffers_[frame] : VK_NULL_HANDLE;
+    }
+    bool getTextureInfo(const std::string& name, VkImageView& v, VkSampler& s) const {
+        auto it = textures_.find(name);
+        if (it == textures_.end()) return false;
+        v = it->second.imageView;
+        s = it->second.sampler;
+        return v != VK_NULL_HANDLE && s != VK_NULL_HANDLE;
+    }
+
+    void waitIdle() {
+        if (vulkanContext_ && vulkanContext_->device()) {
+            vkDeviceWaitIdle(vulkanContext_->device());
+        }
     }
 
     void cleanup() {
@@ -402,6 +477,18 @@ public:
     uint32_t height() const { return platform_->height(); }
     std::array<float, 4> clearColor_ = {{0.1f, 0.1f, 0.1f, 1.0f}};
 
+    void addFeature(std::shared_ptr<IRenderFeature> feature, Renderer* renderer) {
+        feature->init(renderer);
+        features_.push_back(feature);
+    }
+
+    IRenderFeature* getFeature(const std::string& name) {
+        for (auto& f : features_) {
+            if (f->getName() == name) return f.get();
+        }
+        return nullptr;
+    }
+
 private:
     void createUniformBuffers() {
         VkDevice device = vulkanContext_->device();
@@ -419,21 +506,13 @@ private:
         }
     }
 
-    void updateUniformBuffer(CameraComponent* camera) {
+    void updateUniformBuffer(const RenderView& view) {
         GlobalUBO ubo{};
-        if (camera) {
-            ubo.view = camera->getViewMatrix();
-            float aspect = static_cast<float>(swapchain_->extent().width) /
-                           static_cast<float>(swapchain_->extent().height);
-            ubo.proj = perspective(radians(camera->fieldOfViewDegrees), aspect,
-                                   camera->nearPlane, camera->farPlane);
-
-            Vec3 forward = normalize(subtract(camera->target, camera->position));
-            Vec3 cr = normalize(cross(forward, camera->up));
-            Vec3 cu = normalize(cross(cr, forward));
-            ubo.camRight[0] = cr.x; ubo.camRight[1] = cr.y; ubo.camRight[2] = cr.z; ubo.camRight[3] = 0.0f;
-            ubo.camUp[0] = cu.x; ubo.camUp[1] = cu.y; ubo.camUp[2] = cu.z; ubo.camUp[3] = 0.0f;
-        }
+        ubo.view = view.view;
+        ubo.proj = view.projection;
+        ubo.camRight[0] = view.cameraRight.x; ubo.camRight[1] = view.cameraRight.y; ubo.camRight[2] = view.cameraRight.z; ubo.camRight[3] = 0.0f;
+        ubo.camUp[0] = view.cameraUp.x; ubo.camUp[1] = view.cameraUp.y; ubo.camUp[2] = view.cameraUp.z; ubo.camUp[3] = 0.0f;
+        
         std::memcpy(uniformBuffersMapped_[currentFrame_], &ubo, sizeof(ubo));
     }
 
@@ -722,11 +801,33 @@ private:
         vkAllocateCommandBuffers(vulkanContext_->device(), &allocInfo, commandBuffers_.data());
     }
 
+private:
+    void executeFeatures(VkCommandBuffer cmd, const RenderView& view, IRenderFeature::Stage stage) {
+        if (stage == IRenderFeature::Stage::Overlay) {
+            auto rit = features_.rbegin();
+            auto rend = features_.rend();
+            for (; rit != rend; ++rit) {
+                if ((*rit)->isActive() && (*rit)->getStage() == stage) {
+                    (*rit)->render(cmd, currentFrame_, view);
+                }
+            }
+        } else {
+            for (auto& feature : features_) {
+                if (feature->isActive() && feature->getStage() == stage) {
+                    feature->render(cmd, currentFrame_, view);
+                }
+            }
+        }
+    }
+
     Platform* platform_;
     MaterialManager* materialManager_;
     std::shared_ptr<VulkanContext> vulkanContext_;
     std::unique_ptr<VulkanSwapchain> swapchain_;
+
+    std::vector<std::shared_ptr<IRenderFeature>> features_;
     std::vector<std::unique_ptr<IRenderPass>> passes_;
+
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
@@ -766,12 +867,22 @@ bool Renderer::initialize(const std::string& appName, bool enableValidationLayer
     return impl_->initialize(appName, enableValidationLayers);
 }
 void Renderer::cleanup() { impl_->cleanup(); }
-void Renderer::render(const RenderScene& s, CameraComponent* c, std::function<void(VkCommandBuffer,uint32_t)> o1, std::function<void(VkCommandBuffer,uint32_t)> o2) {
-    impl_->render(s, c, o1, o2);
+void Renderer::render(const RenderScene& s, const RenderView& v) {
+    impl_->render(s, v);
 }
-void Renderer::waitIdle() { if (impl_) impl_->cleanup(); }
-uint32_t Renderer::width() const { return impl_->width(); }
-uint32_t Renderer::height() const { return impl_->height(); }
+void Renderer::addFeature(std::shared_ptr<IRenderFeature> feature) {
+    impl_->addFeature(feature, this);
+}
+IRenderFeature* Renderer::getFeature(const std::string& name) {
+    return impl_->getFeature(name);
+}
+void Renderer::waitIdle() {
+    if (impl_) impl_->waitIdle();
+}
+uint32_t Renderer::width() const { return impl_->extent().width; }
+uint32_t Renderer::height() const { return impl_->extent().height; }
+VkFormat Renderer::colorFormat() const { return impl_->colorFormat(); }
+VkFormat Renderer::depthFormat() const { return impl_->depthFormat(); }
 void Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { impl_->loadTexture(n, p, m); }
 void Renderer::linkNormalMap(const std::string& d, const std::string& n) { impl_->linkNormalMap(d, n); }
 void Renderer::allocateDescriptorSet(const std::string& n) { impl_->allocateDescriptorSet(n); }
@@ -779,13 +890,19 @@ void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearC
 
 VkDevice Renderer::device() const { return impl_->device(); }
 VkPhysicalDevice Renderer::physicalDevice() const { return impl_->physicalDevice(); }
-VkRenderPass Renderer::renderPass() const { return impl_->renderPass(); }
+
 VkDescriptorSetLayout Renderer::descriptorSetLayout() const { return impl_->descriptorSetLayout(); }
 VkCommandPool Renderer::commandPool() const { return impl_->commandPool(); }
 VkQueue Renderer::graphicsQueue() const { return impl_->graphicsQueue(); }
 VkExtent2D Renderer::extent() const { return impl_->extent(); }
 VkDescriptorSet Renderer::getTextureDescriptorSet(const std::string& n, uint32_t f) const {
     return impl_->getTexDescSet(n, f);
+}
+VkBuffer Renderer::getUniformBuffer(uint32_t f) const {
+    return impl_->getUniformBuffer(f);
+}
+bool Renderer::getTextureInfo(const std::string& n, VkImageView& v, VkSampler& s) const {
+    return impl_->getTextureInfo(n, v, s);
 }
 
 } // namespace engine3d

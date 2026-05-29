@@ -2,9 +2,11 @@
 
 #include "types.h"
 #include "math.h"
+#include "../render/render_feature.h"
 #include <string>
 #include <vector>
 #include <array>
+#include <vulkan/vulkan.h>
 
 namespace engine3d {
 
@@ -12,7 +14,6 @@ class MeshManager;
 class CameraComponent;
 class Renderer;
 class Engine;
-class MaterialManager;
 
 struct TerrainLayer {
     std::string maskPath;
@@ -21,10 +22,16 @@ struct TerrainLayer {
     std::string maskName;
 };
 
-class Terrain {
+class Terrain : public IRenderFeature {
 public:
     Terrain() = default;
-    ~Terrain();
+    ~Terrain() override;
+
+    void init(Renderer* renderer) override;
+    void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
+    bool isActive() const override { return ready_; }
+    const std::string& getName() const override { static std::string n = "Terrain"; return n; }
+    Stage getStage() const override { return Stage::AfterOpaque; }
 
     bool loadFromImage(const std::string& path, float scaleXZ = 10.0f, float scaleY = 2.0f,
                        float texScale = 20.0f, int maxLodLevels = 5);
@@ -37,7 +44,7 @@ public:
     void smoothEdges();
 
     void uploadTo(MeshManager& mgr);
-    void setupLayers(Renderer& renderer, Engine& engine, MaterialManager& mats);
+    void setupMultiTexture(Engine& engine);
     const std::string& meshName() const { return meshName_; }
 
     void update(const CameraComponent* cam, MeshManager& meshManager, const std::string& meshPrefix);
@@ -57,14 +64,13 @@ private:
         float cx, cz;
         float sizeXZ;
         float minY, maxY;
-        int lodLevel = 0;       // 0 = root, max = leaf
+        int lodLevel = 0;
         Node* children[4]{};
         Node* parent = nullptr;
-        Node* neighbor[4]{};    // 0=left, 1=right, 2=bottom, 3=top
+        Node* neighbor[4]{};
         bool visible = false;
         int meshId = -1;
-        int neighborLodDiff[4]{};  // LOD difference with each neighbor
-        // Now global mesh, only offsets:
+        int neighborLodDiff[4]{};
         int vertexOffset = 0;
         int indexOffset = 0;
         int indexCount = 0;
@@ -79,14 +85,24 @@ private:
     void collectAndUpload(Node* node, MeshManager& mgr, const std::string& prefix, int& slot);
     void releaseTree(Node* node);
     void deleteTree(Node* node);
+    void cleanupPipeline();
 
     std::vector<float> heightmap_;
     float scaleXZ_ = 1.0f, scaleY_ = 1.0f, texScale_ = 1.0f;
     int maxLodLevels_ = 5;
     int hmSize_ = 0;
-    int gridRes_ = 0;  // resolution of leaf nodes
+    int gridRes_ = 0;
     Node* root_ = nullptr;
     std::vector<Node*> visibleNodes_;
+    Renderer* renderer_ = nullptr;
+    Engine* engine_ = nullptr;
+    bool ready_ = false;
+    int numLayers_ = 0;
+    VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_ = VK_NULL_HANDLE;
 };
 
 } // namespace engine3d

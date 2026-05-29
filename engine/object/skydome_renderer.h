@@ -7,6 +7,7 @@
 
 #include "math.h"
 #include "types.h"
+#include "../render/render_feature.h"
 
 namespace engine3d {
 
@@ -34,41 +35,34 @@ void computeSkyColors(float timeOfDay,
                       std::array<float, 4>& horizonColor,
                       std::array<float, 4>& sunColorOut);
 
-class SkydomeRenderer {
+class SkydomeRenderer : public IRenderFeature {
 public:
     SkydomeRenderer();
-    ~SkydomeRenderer();
+    ~SkydomeRenderer() override;
 
-    void init(
-        VkDevice device,
-        VkPhysicalDevice physicalDevice,
-        VkRenderPass renderPass,
-        VkDescriptorSetLayout descriptorSetLayout,
-        VkCommandPool commandPool,
-        VkQueue graphicsQueue,
-        VkExtent2D extent,
-        const std::string& shaderDir
-    );
+    // IRenderFeature implementation
+    void init(Renderer* renderer) override;
+    void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
+    bool isActive() const override { return enabled_ && ready_; }
+    const std::string& getName() const override { static std::string name = "SkydomeRenderer"; return name; }
+    Stage getStage() const override { return Stage::BeforeOpaque; }
 
+    // Manual config
+    void configure(const SkydomeConfig& config, const std::string& shaderDir, const std::string& descName);
     void cleanup(VkDevice device);
-
-    void recordDrawCommands(
-        VkCommandBuffer commandBuffer,
-        const Vec3& cameraPosition,
-        float time,
-        VkDescriptorSet cloudDescriptorSet,
-        const SkydomeConfig& config
-    ) const;
-
-    bool isReady() const { return ready_; }
-    bool isEnabled() const { return enabled_; }
     void setEnabled(bool e) { enabled_ = e; }
+    void setTime(float t) { time_ = t; }
 
     VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
 
 private:
     bool enabled_ = false;
     bool ready_ = false;
+    SkydomeConfig config_;
+    std::string shaderDir_;
+    std::string descName_;
+    float time_ = 0.0f;
+    Renderer* renderer_ = nullptr;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
@@ -77,6 +71,14 @@ private:
     VkBuffer indexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory indexBufferMemory_ = VK_NULL_HANDLE;
     uint32_t indexCount_ = 0;
+
+    void recordDrawCommands(
+        VkCommandBuffer commandBuffer,
+        const Vec3& cameraPosition,
+        float time,
+        VkDescriptorSet cloudDescriptorSet,
+        const SkydomeConfig& config
+    ) const;
 
     static constexpr int kSegments = 30;
 };

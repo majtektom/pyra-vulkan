@@ -9,17 +9,21 @@ namespace engine3d {
 
 class MaterialSystem {
 public:
-    MaterialSystem(std::shared_ptr<VulkanContext> context, VkRenderPass renderPass);
+    MaterialSystem(std::shared_ptr<VulkanContext> context, VkFormat colorFormat, VkFormat depthFormat);
     ~MaterialSystem();
 
     std::shared_ptr<MaterialInstance> getOrCreateMaterialInstance(const Material& materialData);
 
-    void setRenderPass(VkRenderPass renderPass) { renderPass_ = renderPass; }
+    void setFormats(VkFormat colorFormat, VkFormat depthFormat) { 
+        colorFormat_ = colorFormat; 
+        depthFormat_ = depthFormat; 
+    }
     void invalidatePipelinesForShader(const std::string& shaderName);
 
 private:
     std::shared_ptr<VulkanContext> context_;
-    VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkFormat colorFormat_;
+    VkFormat depthFormat_;
     ResourceManager<MaterialInstance> materialCache_;
     
     // Cache for pipelines to reuse them across different material instances

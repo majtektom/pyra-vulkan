@@ -17,7 +17,7 @@ std::array<VkVertexInputAttributeDescription, 3> GuiVertex::attributeDescription
     return a;
 }
 
-void GuiRenderer::init(VkDevice d, VkPhysicalDevice p, VkRenderPass rp, VkCommandPool cp, VkQueue q, VkExtent2D) {
+void GuiRenderer::init(VkDevice d, VkPhysicalDevice p, VkFormat colorFormat, VkFormat depthFormat, VkCommandPool cp, VkQueue q, VkExtent2D) {
     device_ = d; pd_ = p; cp_ = cp; q_ = q;
 
     std::string dir = "bin/assets/shaders/text_overlay/";
@@ -77,7 +77,15 @@ void GuiRenderer::init(VkDevice d, VkPhysicalDevice p, VkRenderPass rp, VkComman
     pi.stageCount = 2; pi.pStages = ss; pi.pVertexInputState = &vi; pi.pInputAssemblyState = &ia;
     pi.pViewportState = &vp; pi.pRasterizationState = &rs; pi.pMultisampleState = &ms;
     pi.pDepthStencilState = &ds; pi.pColorBlendState = &cb; pi.pDynamicState = &dy;
-    pi.layout = pipelineLayout_; pi.renderPass = rp; pi.subpass = 0;
+    pi.layout = pipelineLayout_; pi.renderPass = VK_NULL_HANDLE; pi.subpass = 0;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = depthFormat;
+    pi.pNext = &renderingInfo;
+
     vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &pi, nullptr, &pipeline_);
 
     vkDestroyShaderModule(d, fm, nullptr); vkDestroyShaderModule(d, vm, nullptr);

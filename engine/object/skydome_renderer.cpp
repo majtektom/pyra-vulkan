@@ -1,5 +1,5 @@
 #include "skydome_renderer.h"
-
+#include "../render/renderer.h"
 #include "../../render/vulkan_util.h"
 #include "math.h"
 #include "types.h"
@@ -133,22 +133,37 @@ void computeSkyColors(float timeOfDay,
 }
 
 SkydomeRenderer::SkydomeRenderer() = default;
-SkydomeRenderer::~SkydomeRenderer() = default;
+SkydomeRenderer::~SkydomeRenderer() {
+    if (renderer_) {
+        cleanup(renderer_->device());
+    }
+}
 
-void SkydomeRenderer::init(
-    VkDevice device,
-    VkPhysicalDevice physicalDevice,
-    VkRenderPass renderPass,
-    VkDescriptorSetLayout descriptorSetLayout,
-    VkCommandPool commandPool,
-    VkQueue graphicsQueue,
-    VkExtent2D extent,
-    const std::string& shaderDir
-) {
-    enabled_ = true;
+void SkydomeRenderer::configure(const SkydomeConfig& config, const std::string& shaderDir, const std::string& descName) {
+    config_ = config;
+    config_.enabled = true;
+    shaderDir_ = shaderDir;
+    descName_ = descName;
+}
 
-    const auto vertCode = vk::readFile(shaderDir + "/skydome.vert.spv");
-    const auto fragCode = vk::readFile(shaderDir + "/skydome.frag.spv");
+void SkydomeRenderer::init(Renderer* renderer) {
+    renderer_ = renderer;
+    if (!enabled_) {
+        ready_ = false;
+        return;
+    }
+
+    VkDevice device = renderer_->device();
+    VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
+    VkCommandPool commandPool = renderer_->commandPool();
+    VkQueue graphicsQueue = renderer_->graphicsQueue();
+    VkExtent2D extent = renderer_->extent();
+    VkDescriptorSetLayout descriptorSetLayout = renderer_->descriptorSetLayout();
+    VkFormat colorFormat = renderer_->colorFormat();
+    VkFormat depthFormat = renderer_->depthFormat();
+
+    const auto vertCode = vk::readFile(shaderDir_ + "/skydome.vert.spv");
+    const auto fragCode = vk::readFile(shaderDir_ + "/skydome.frag.spv");
 
     const VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
     const VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
@@ -260,8 +275,15 @@ void SkydomeRenderer::init(
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
     pipelineInfo.subpass = 0;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = depthFormat;
+    pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
@@ -294,6 +316,12 @@ void SkydomeRenderer::init(
         indexBuffer_, indexBufferMemory_);
 
     ready_ = true;
+}
+
+void SkydomeRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
+    if (!ready_ || !enabled_ || !renderer_) return;
+    VkDescriptorSet cloudDescSet = renderer_->getTextureDescriptorSet(descName_, frameIndex);
+    recordDrawCommands(cmd, view.cameraPosition, time_, cloudDescSet, config_);
 }
 
 void SkydomeRenderer::cleanup(VkDevice device) {

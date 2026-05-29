@@ -18,7 +18,7 @@ public:
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 
-    void initialize(const std::string& appName);
+    void initialize(const std::string& appName, bool enableValidationLayers = true);
     void createSurface(SDL_Window* window);
 
     VkInstance instance() const { return instance_; }
@@ -46,6 +46,7 @@ private:
     VkQueue presentQueue_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = VK_NULL_HANDLE;
+    bool validationLayersEnabled_ = true;
 };
 
 } // namespace engine3d

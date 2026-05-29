@@ -5,6 +5,8 @@
 #include "transform_component.h"
 #include "camera_component.h"
 #include "terrain.h"
+#include "ocean_renderer.h"
+#include "skydome_renderer.h"
 #include <SDL3/SDL.h>
 #include <iostream>
 #include <sstream>
@@ -21,26 +23,34 @@ int main() {
     engine.loadFont("times", "assets/fonts/times.ttf", 28);
     auto* mats = engine.getMaterialManager();
 
-    engine.setOceanEnabled(true);
+    auto ocean = std::make_shared<OceanRenderer>();
+    renderer->allocateDescriptorSet("ocean");
     OceanConfig oceanCfg;
+    oceanCfg.enabled = true;
     oceanCfg.waterLevel = 60.0f;
     oceanCfg.waveAmplitude = 1.4f;
     oceanCfg.waveSpeed = 1.0f;
     oceanCfg.waveFrequency = 10.0f;
     oceanCfg.foamThreshold = 2.95f;
-    engine.setOceanConfig(oceanCfg);
+    ocean->configure(oceanCfg, "bin/assets/shaders/ocean", "ocean");
+    ocean->setEnabled(true);
+    renderer->addFeature(ocean);
 
-    engine.setSkydomeEnabled(true, "");
-     SkydomeConfig cfg;
-    cfg.domeScale = 1.5f;
-    cfg.timeOfDay = 10.0f;
-    cfg.cloudCoverage = 0.4f;
-    cfg.cloudSpeed0 = 0.3f;
-    cfg.cloudSpeed1 = 0.15f;
-    cfg.cloudScale0 = 1200.0f;
-    cfg.cloudScale1 = 800.0f;
-    cfg.sunElevation = 50.0f;
-    engine.setSkydomeConfig(cfg);
+    auto skydome = std::make_shared<SkydomeRenderer>();
+    renderer->allocateDescriptorSet("skydome");
+    SkydomeConfig skydomeCfg;
+    skydomeCfg.enabled = true;
+    skydomeCfg.domeScale = 1.5f;
+    skydomeCfg.timeOfDay = 10.0f;
+    skydomeCfg.cloudCoverage = 0.4f;
+    skydomeCfg.cloudSpeed0 = 0.3f;
+    skydomeCfg.cloudSpeed1 = 0.15f;
+    skydomeCfg.cloudScale0 = 1200.0f;
+    skydomeCfg.cloudScale1 = 800.0f;
+    skydomeCfg.sunElevation = 50.0f;
+    skydome->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
+    skydome->setEnabled(true);
+    renderer->addFeature(skydome);
 
     float timeOfDay = 10.0f;
     float cloudCov = 0.4f;
@@ -65,18 +75,8 @@ int main() {
                   << " layers=" << terrain.layers.size() << " mesh=" << terrain.meshName() << "\n";
     }
 
-    if (terrain.layers.empty()) {
-        renderer->loadTexture("terrain_tex", "assets/textures/trawa.dds");
-        Material mat;
-        mat.name = "terrain_mat";
-        mat.textureName = "terrain_tex";
-        mats->add(mat);
-        auto* ent = engine.createEntity("terrain");
-        auto* mc = ent->addComponent<MeshComponent>(terrain.meshName());
-        mc->materialName = "terrain_mat";
-    }
-
-    terrain.setupLayers(*renderer, engine, *mats);
+    renderer->addFeature(std::shared_ptr<Terrain>(&terrain, [](Terrain*){}));
+    terrain.setupMultiTexture(engine);
 
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
     camera->position = {0.0f, 120.0f, 0.0f};
@@ -93,6 +93,10 @@ int main() {
     static const char* modeNames[] = {"Plasma", "Fault", "Deposition"};
 
     engine.onUpdate = [&](float dt, Engine& e) {
+        static float animTime = 0.0f;
+        animTime += dt;
+        skydome->setTime(animTime);
+        ocean->setTime(animTime);
         auto* cc = e.getCameraController();
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cc && cam) {

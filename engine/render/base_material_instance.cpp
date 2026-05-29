@@ -33,6 +33,10 @@ public:
         return data_.color;
     }
 
+    int getRenderPriority() const override {
+        return data_.renderPriority;
+    }
+
 private:
     Material data_;
     VulkanPipeline pipeline_;

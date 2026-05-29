@@ -9,8 +9,9 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
                               VkPipelineLayout pipelineLayout, const TextureDescriptorLookup& getTextureDescSet) {
     auto packets = scene.getTransparentPackets();
     
-    // Sort back-to-front for transparency
-    std::sort(packets.begin(), packets.end(), [](const RenderPacket& a, const RenderPacket& b) {
+    // Sort: lower priority first, then back-to-front within same priority
+    std::stable_sort(packets.begin(), packets.end(), [](const RenderPacket& a, const RenderPacket& b) {
+        if (a.renderPriority != b.renderPriority) return a.renderPriority < b.renderPriority;
         return a.distanceToCamera > b.distanceToCamera;
     });
 

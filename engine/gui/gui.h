@@ -3,6 +3,7 @@
 #include "gui_renderer.h"
 #include "math.h"
 #include "types.h"
+#include "../render/render_feature.h"
 #include <functional>
 #include <map>
 #include <string>
@@ -13,6 +14,7 @@ namespace engine3d {
 
 class Platform;
 class Engine;
+class Renderer;
 
 using TextDrawFn = std::function<void(const std::string& text, float x, float y, float scale, std::array<float,4> color)>;
 
@@ -39,15 +41,20 @@ protected:
     GuiWindow* parent_;
 };
 
-class GuiMgr {
+class GuiMgr : public IRenderFeature {
 public:
     enum class CursorMode { System, Custom };
 
     GuiMgr() = default;
     ~GuiMgr();
 
-    void init(VkDevice device, VkPhysicalDevice pd, VkRenderPass rp, VkCommandPool cp, VkQueue q, VkExtent2D ext,
-              TextDrawFn textFn);
+    void init(Renderer* renderer) override;
+    void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
+    bool isActive() const override { return guiRenderer_.isReady() && textFn_ != nullptr; }
+    const std::string& getName() const override { static std::string name = "GuiMgr"; return name; }
+    Stage getStage() const override { return Stage::Overlay; }
+
+    void setTextDrawFn(TextDrawFn textFn) { textFn_ = std::move(textFn); }
 
     GuiWindow* addWindow(const std::string& name, int x, int y, int w, int h);
     bool removeWindow(const std::string& name);
@@ -65,11 +72,9 @@ public:
     void setCursorMode(CursorMode mode) { cursorMode_ = mode; }
     [[nodiscard]] CursorMode cursorMode() const { return cursorMode_; }
 
-    void render();
-
+    void renderGui();
     void build(uint32_t frameIndex);
-    void recordDrawCommands(VkCommandBuffer cmd, uint32_t frameIndex);
-    [[nodiscard]] bool isReady() const { return guiRenderer_.isReady() && textFn_ != nullptr; }
+    [[nodiscard]] bool isGuiReady() const { return guiRenderer_.isReady() && textFn_ != nullptr; }
 
 private:
     void drawCursor();
@@ -83,6 +88,7 @@ private:
     GuiRenderer guiRenderer_;
     TextDrawFn textFn_;
     float screenW_ = 1024.0f, screenH_ = 768.0f;
+    Renderer* renderer_ = nullptr;
 };
 
 class GuiWindow {

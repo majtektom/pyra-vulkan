@@ -7,8 +7,8 @@
 
 namespace engine3d {
 
-MaterialSystem::MaterialSystem(std::shared_ptr<VulkanContext> context, VkRenderPass renderPass) 
-    : context_(context), renderPass_(renderPass) {
+MaterialSystem::MaterialSystem(std::shared_ptr<VulkanContext> context, VkFormat colorFormat, VkFormat depthFormat) 
+    : context_(context), colorFormat_(colorFormat), depthFormat_(depthFormat) {
     createDescriptorSetLayout();
     createBoneDescriptorSetLayout();
 }
@@ -227,7 +227,15 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
 
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    if (materialData.blendMode != BlendMode::Disabled) {
+    if (materialData.blendMode == BlendMode::Additive) {
+        colorBlendAttachment.blendEnable = VK_TRUE;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    } else if (materialData.blendMode == BlendMode::Alpha) {
         colorBlendAttachment.blendEnable = VK_TRUE;
         colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
         colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -273,7 +281,13 @@ VulkanPipeline MaterialSystem::getOrCreatePipeline(const Material& materialData)
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipeline.layout;
-    pipelineInfo.renderPass = renderPass_;
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &colorFormat_;
+    renderingInfo.depthAttachmentFormat = depthFormat_;
+    pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.pipeline) != VK_SUCCESS) {
         throw std::runtime_error("failed to create graphics pipeline");

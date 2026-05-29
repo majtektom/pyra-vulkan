@@ -50,17 +50,16 @@ int main() {
     engine.setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(camera->position, {0, 0, 0});
 
-    GuiMgr guiMgr;
+    auto guiMgr = std::make_shared<GuiMgr>();
     auto drawText = [&engine](const std::string& text, float x, float y, float scale, std::array<float, 4> color) {
         engine.setTextLabel(text, "times", x, y, scale, color);
     };
-    guiMgr.init(renderer->device(), renderer->physicalDevice(), renderer->renderPass(),
-                renderer->commandPool(), renderer->graphicsQueue(), renderer->extent(), drawText);
-    engine.setGuiMgr(&guiMgr);
+    guiMgr->setTextDrawFn(drawText);
+    engine.getRenderer()->addFeature(guiMgr);
 
     // ── Okno 1: Sterowanie (Button, CheckBox, ListBox, TrackBar, StaticText) ──
-    auto* winCtrl = guiMgr.addWindow("Sterowanie", 880, 30, 350, 400);
-    guiMgr.setActive("Sterowanie");
+    auto* winCtrl = guiMgr->addWindow("Sterowanie", 880, 30, 350, 400);
+    guiMgr->setActive("Sterowanie");
 
     auto* btnReset = new GuiButton(winCtrl, "Resetuj", 10, 10, 150, 28);
     btnReset->setText("Resetuj kamerę");
@@ -78,13 +77,13 @@ int main() {
     auto* chkCursor = new GuiCheckBox(winCtrl, "Kursor", 10, 85);
     chkCursor->setChecked(true);
     chkCursor->setText("Kursor myszy (F1)");
-    chkCursor->setOnToggle([&](bool on) { guiMgr.enableCursor(on); });
+    chkCursor->setOnToggle([&](bool on) { guiMgr->enableCursor(on); });
 
     auto* chkCursorMode = new GuiCheckBox(winCtrl, "CursorHW", 10, 115);
     chkCursorMode->setChecked(false);
     chkCursorMode->setText("Kursor sprzętowy");
     chkCursorMode->setOnToggle([&](bool on) {
-        guiMgr.setCursorMode(on ? GuiMgr::CursorMode::System : GuiMgr::CursorMode::Custom);
+        guiMgr->setCursorMode(on ? GuiMgr::CursorMode::System : GuiMgr::CursorMode::Custom);
     });
 
     auto* chkChrome = new GuiCheckBox(winCtrl, "Chrome", 10, 145);
@@ -113,7 +112,7 @@ int main() {
     listBox->addItem("Piramida");
 
     // ── Okno 2: ComboBox ──
-    auto* winCombo = guiMgr.addWindow("ComboBox", 880, 460, 200, 80);
+    auto* winCombo = guiMgr->addWindow("ComboBox", 880, 460, 200, 80);
     auto* comboLabel = new GuiStaticText(winCombo, "", 10, 5);
     comboLabel->setText("Wybierz poziom:");
     auto* comboBox = new GuiComboBox(winCombo, "Poziom", 10, 30, 180);
@@ -126,7 +125,7 @@ int main() {
     });
 
     // ── Okno 3: ScrollBar ──
-    auto* winScroll = guiMgr.addWindow("ScrollBar", 30, 30, 240, 120);
+    auto* winScroll = guiMgr->addWindow("ScrollBar", 30, 30, 240, 120);
     auto* scrollLabel = new GuiStaticText(winScroll, "", 10, 5);
     scrollLabel->setText("ScrollBar (0–100):");
     auto* labelScroll = new GuiStaticText(winScroll, "", 10, 25);
@@ -137,12 +136,12 @@ int main() {
     });
 
     // ── Okno 4: Memo (log) ──
-    auto* winMemo = guiMgr.addWindow("Log zdarzeń", 30, 580, 420, 180);
+    auto* winMemo = guiMgr->addWindow("Log zdarzeń", 30, 580, 420, 180);
     auto* memo = new GuiMemo(winMemo, "log", 10, 10, 400, 150);
     memo->addLine("=== GUI Demo uruchomione ===");
 
     // ── Okno 5: Info (bez chrome) ──
-    auto* winInfo = guiMgr.addWindow("Info", 500, 550, 250, 110);
+    auto* winInfo = guiMgr->addWindow("Info", 500, 550, 250, 110);
     winInfo->setChromeVisible(false);
     auto* infoLabel2 = new GuiStaticText(winInfo, "", 10, 10);
     infoLabel2->setText("Okno bez belki —\nwidgety bez ramki.");
@@ -188,8 +187,8 @@ int main() {
         // Klawisze globalne
         static bool prevF1 = false, prevF2 = false;
         if (snap.keys[SDL_SCANCODE_F1] && !prevF1) {
-            guiMgr.enableCursor(!guiMgr.isCursorEnabled());
-            chkCursor->setChecked(guiMgr.isCursorEnabled());
+            guiMgr->enableCursor(!guiMgr->isCursorEnabled());
+            chkCursor->setChecked(guiMgr->isCursorEnabled());
         }
         prevF1 = snap.keys[SDL_SCANCODE_F1];
         if (snap.keys[SDL_SCANCODE_F2] && !prevF2) {
@@ -200,7 +199,7 @@ int main() {
         prevF2 = snap.keys[SDL_SCANCODE_F2];
 
         // Aktualizacja GUI (obsługuje automatycznie wszystkie widgety)
-        guiMgr.update(*e.getPlatform(), (float)e.getRenderer()->width(), (float)e.getRenderer()->height());
+        guiMgr->update(*e.getPlatform(), (float)e.getRenderer()->width(), (float)e.getRenderer()->height());
 
         // Rysowanie
         // FPS
@@ -210,7 +209,7 @@ int main() {
             e.setTextLabel(fpsStr.str(), "times", 10, 20, 0.6f, {1, 1, 0.3f, 1});
         }
 
-        guiMgr.render();
+        guiMgr->renderGui();
     };
 
     engine.run();

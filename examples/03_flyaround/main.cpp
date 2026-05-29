@@ -8,6 +8,7 @@
 #include "model_gltf.h"
 #include "material_system.h"
 #include "vulkan_util.h"
+#include "skybox_renderer.h"
 
 #include <SDL3/SDL.h>
 
@@ -71,9 +72,17 @@ int main() {
     renderer->loadTexture("skybox_fb", skyboxDir + "/box_12.dds");
     renderer->loadTexture("skybox_lr", skyboxDir + "/box_34.dds");
     renderer->loadTexture("skybox_top", skyboxDir + "/box_5.dds");
-    engine.setSkyboxEnabled(true, skyboxDir);
-    engine.setSkyboxExposure(0.5f);
-    // engine.setGridEnabled(true);
+
+    auto skybox = std::make_shared<SkyboxRenderer>();
+    SkyboxConfig skyboxCfg;
+    skyboxCfg.enabled = true;
+    skyboxCfg.directory = skyboxDir;
+    skyboxCfg.size = 3500;
+    skyboxCfg.verticalOffset = 100;
+    skybox->configure(skyboxCfg, "bin/assets/shaders/skybox");
+    skybox->setEnabled(true);
+    skybox->setExposure(0.5f);
+    renderer->addFeature(skybox);
 
     engine.loadFont("times", "assets/fonts/times.ttf", 48);
 
