@@ -24,8 +24,8 @@ int main() {
     auto* mats = engine.getMaterialManager();
 
     auto ocean = std::make_shared<OceanRenderer>();
-    renderer->allocateDescriptorSet("ocean");
     OceanConfig oceanCfg;
+
     oceanCfg.enabled = true;
     oceanCfg.waterLevel = 60.0f;
     oceanCfg.waveAmplitude = 1.4f;
@@ -37,7 +37,6 @@ int main() {
     renderer->addFeature(ocean);
 
     auto skydome = std::make_shared<SkydomeRenderer>();
-    renderer->allocateDescriptorSet("skydome");
     SkydomeConfig skydomeCfg;
     skydomeCfg.enabled = true;
     skydomeCfg.domeScale = 1.5f;

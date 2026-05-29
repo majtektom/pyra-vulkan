@@ -9,7 +9,12 @@ cbuffer PushConstants
 {
     column_major float4x4 model;
     float4 materialColor;
+    float4 lightDir;
+    float bumpIntensity;
+    uint diffuseIndex;
+    uint normalIndex;
 };
+
 
 struct VertexInput
 {

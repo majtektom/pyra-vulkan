@@ -9,10 +9,12 @@ cbuffer SkyboxPushConstants
 {
     float4 cameraPosition;
     float exposure;
+    uint skyboxIndex;
 };
 
-Texture2D texSampler : register(t1, space0);
-SamplerState texSamplerState : register(s1, space0);
+SamplerState globalSampler : register(s1, space0);
+Texture2D textures[] : register(t1, space0);
+
 
 struct VertexInput
 {
@@ -49,5 +51,5 @@ VertexOutput vertexMain(VertexInput input)
 
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
-    return texSampler.Sample(texSamplerState, input.texCoord) * exposure;
+    return textures[skyboxIndex].Sample(globalSampler, input.texCoord) * exposure;
 }

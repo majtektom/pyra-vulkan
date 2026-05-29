@@ -58,8 +58,8 @@ int main() {
     renderer->addFeature(grid);
 
     auto ocean = std::make_shared<OceanRenderer>();
-    renderer->allocateDescriptorSet("ocean");
     OceanConfig oceanCfg;
+
     oceanCfg.enabled = true;
     oceanCfg.waterLevel = -8.0f;
     oceanCfg.waveAmplitude = 1.0f;
@@ -71,7 +71,6 @@ int main() {
     renderer->addFeature(ocean);
 
     auto skydome = std::make_shared<SkydomeRenderer>();
-    renderer->allocateDescriptorSet("skydome");
     SkydomeConfig skydomeCfg;
     skydomeCfg.enabled = true;
     skydomeCfg.domeScale = 1.5f;

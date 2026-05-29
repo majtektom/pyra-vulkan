@@ -39,7 +39,7 @@ public:
         VkCommandBuffer commandBuffer,
         VkPipelineLayout skyboxPipelineLayout,
         const Vec3& cameraPosition,
-        const std::array<VkDescriptorSet, 3>& faceSets
+        const uint32_t indices[3]
     ) const;
  
     void setEnabled(bool e) { enabled_ = e; }
@@ -66,8 +66,10 @@ private:
     uint32_t indexCount_ = 0;
  
     struct PushConstants {
-        alignas(16) float cameraPosition[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float cameraPosition[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         float exposure = 1.0f;
+        uint32_t skyboxIndex = 0;
+        uint32_t pad[2];
     };
  
     float exposure_ = 0.7f;

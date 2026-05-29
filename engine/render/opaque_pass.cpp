@@ -7,7 +7,7 @@ namespace engine3d {
 OpaquePass::OpaquePass() : name_("OpaquePass") {}
 
 void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
-                         VkPipelineLayout pipelineLayout, const TextureDescriptorLookup& getTextureDescSet) {
+                         VkPipelineLayout pipelineLayout) {
     auto packets = scene.getOpaquePackets();
     
     // Sort front-to-back (nearest first) for early-Z optimization
@@ -21,10 +21,8 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
         VkPipelineLayout matLayout = packet.material->getPipeline().layout;
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, packet.material->getPipeline().pipeline);
 
-        VkDescriptorSet descSet = getTextureDescSet(packet.textureName, currentFrame);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                matLayout, 0, 1, &descSet, 0, nullptr);
-
+        // Global descriptor set (set 0) is already bound in Renderer::render
+        // We only need to bind bone descriptor set (set 1) if present
         if (packet.boneDescriptorSet != VK_NULL_HANDLE)
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     matLayout, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
@@ -51,12 +49,18 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
             Matrix4 model;
             std::array<float, 4> color;
             std::array<float, 4> lightDir;
-            std::array<float, 4> bumpIntensityPad;
+            float bumpIntensity;
+            uint32_t diffuseIndex;
+            uint32_t normalIndex;
+            float padding;
         } push;
         push.model = packet.transform;
         push.color = packet.materialColor;
         push.lightDir = {0.5f, 1.0f, 0.3f, 0.25f};
-        push.bumpIntensityPad = {packet.bumpIntensity, 0.0f, 0.0f, 0.0f};
+        push.bumpIntensity = packet.bumpIntensity;
+        push.diffuseIndex = packet.diffuseTextureIndex;
+        push.normalIndex = packet.normalTextureIndex;
+        push.padding = 0.0f;
 
         vkCmdPushConstants(commandBuffer, matLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

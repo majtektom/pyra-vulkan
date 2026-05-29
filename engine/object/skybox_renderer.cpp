@@ -146,7 +146,7 @@ void SkyboxRenderer::init(Renderer* renderer) {
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts = &descriptorSetLayout;
     VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(PushConstants);
     layoutInfo.pushConstantRangeCount = 1;
@@ -296,37 +296,39 @@ void SkyboxRenderer::cleanup(VkDevice device) {
 void SkyboxRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
     if (!ready_ || !enabled_ || !renderer_) return;
 
-    std::array<VkDescriptorSet, 3> faceSets = {};
-    faceSets[0] = renderer_->getTextureDescriptorSet("skybox_fb", frameIndex);
-    faceSets[1] = renderer_->getTextureDescriptorSet("skybox_lr", frameIndex);
-    faceSets[2] = renderer_->getTextureDescriptorSet("skybox_top", frameIndex);
+    uint32_t indices[3] = {};
+    indices[0] = renderer_->getTextureIndex("skybox_fb");
+    indices[1] = renderer_->getTextureIndex("skybox_lr");
+    indices[2] = renderer_->getTextureIndex("skybox_top");
 
-    recordDrawCommands(cmd, pipelineLayout_, view.cameraPosition, faceSets);
+    VkDescriptorSet globalSet = renderer_->getTextureDescriptorSet("", frameIndex);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &globalSet, 0, nullptr);
+
+    recordDrawCommands(cmd, pipelineLayout_, view.cameraPosition, indices);
 }
 
 void SkyboxRenderer::recordDrawCommands(
     VkCommandBuffer commandBuffer,
     VkPipelineLayout skyboxPipelineLayout,
     const Vec3& cameraPosition,
-    const std::array<VkDescriptorSet, 3>& faceSets
+    const uint32_t indices[3]
 ) const {
     if (!ready_ || !enabled_) return;
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 
-    PushConstants pushConstants{};
-    pushConstants.cameraPosition[0] = cameraPosition.x;
-    pushConstants.cameraPosition[1] = cameraPosition.y;
-    pushConstants.cameraPosition[2] = cameraPosition.z;
-    pushConstants.exposure = exposure_;
-    vkCmdPushConstants(
-        commandBuffer,
-        skyboxPipelineLayout,
-        VK_SHADER_STAGE_VERTEX_BIT,
-        0,
-        sizeof(PushConstants),
-        &pushConstants
-    );
+    struct PushConstants {
+        float cameraPosition[4];
+        float exposure;
+        uint32_t skyboxIndex;
+        uint32_t pad[2];
+    };
+
+    PushConstants push{};
+    push.cameraPosition[0] = cameraPosition.x;
+    push.cameraPosition[1] = cameraPosition.y;
+    push.cameraPosition[2] = cameraPosition.z;
+    push.exposure = exposure_;
 
     const VkBuffer vb[] = {vertexBuffer_};
     const VkDeviceSize offset[] = {0};
@@ -335,14 +337,17 @@ void SkyboxRenderer::recordDrawCommands(
 
     for (int face = 0; face < 5; ++face) {
         const int texIdx = kFaceMap[face];
-        if (texIdx < 3 && faceSets[texIdx] != VK_NULL_HANDLE) {
-            vkCmdBindDescriptorSets(
-                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                skyboxPipelineLayout,
-                0, 1, &faceSets[texIdx],
-                0, nullptr
-            );
-        }
+        push.skyboxIndex = indices[texIdx];
+        
+        vkCmdPushConstants(
+            commandBuffer,
+            skyboxPipelineLayout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(PushConstants),
+            &push
+        );
+        
         vkCmdDrawIndexed(commandBuffer, 4, 1, face * 4, 0, 0);
     }
 }

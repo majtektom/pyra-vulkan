@@ -12,11 +12,14 @@ cbuffer PushConstants
     column_major float4x4 model;
     float4 materialColor;
     float4 lightDir;
-    float4 bumpIntensityPad;
+    float bumpIntensity;
+    uint diffuseIndex;
+    uint normalIndex;
 };
 
-Texture2D texSampler : register(t1, space0);
-SamplerState texSamplerState : register(s1, space0);
+SamplerState globalSampler : register(s1, space0);
+Texture2D textures[] : register(t1, space0);
+
 
 struct VertexInput
 {
@@ -53,6 +56,6 @@ VertexOutput vertexMain(VertexInput input)
 
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
-    float4 tex = texSampler.Sample(texSamplerState, input.texCoord);
+    float4 tex = textures[diffuseIndex].Sample(globalSampler, input.texCoord);
     return float4(tex.rgb * input.color, tex.a);
 }

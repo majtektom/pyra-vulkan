@@ -196,6 +196,7 @@ void Engine::renderFrame() {
             } else {
                 packet.distanceToCamera = 0.0f;
             }
+            renderer->prepareRenderPacket(packet);
             renderScene.addPacket(packet);
         }
     }

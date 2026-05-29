@@ -32,9 +32,8 @@ private:
 class IRenderPass {
 public:
     virtual ~IRenderPass() = default;
-    using TextureDescriptorLookup = std::function<VkDescriptorSet(const std::string& textureName, uint32_t frameIndex)>;
     virtual void execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
-                         VkPipelineLayout pipelineLayout, const TextureDescriptorLookup& getTextureDescSet) = 0;
+                         VkPipelineLayout pipelineLayout) = 0;
     virtual const std::string& getName() const = 0;
 };
 

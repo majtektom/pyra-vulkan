@@ -36,6 +36,8 @@ struct RenderPacket {
     Matrix4 transform;
     std::shared_ptr<MaterialInstance> material;
     std::string textureName;
+    uint32_t diffuseTextureIndex = 0;
+    uint32_t normalTextureIndex = 0;
     float bumpIntensity = 1.0f;
     std::array<float,4> materialColor{1,1,1,1};
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;

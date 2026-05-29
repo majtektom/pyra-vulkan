@@ -6,7 +6,7 @@ namespace engine3d {
 TransparentPass::TransparentPass() : name_("TransparentPass") {}
 
 void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
-                              VkPipelineLayout pipelineLayout, const TextureDescriptorLookup& getTextureDescSet) {
+                              VkPipelineLayout pipelineLayout) {
     auto packets = scene.getTransparentPackets();
     
     // Sort: lower priority first, then back-to-front within same priority
@@ -18,15 +18,14 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
     for (const auto& packet : packets) {
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
 
+        VkPipelineLayout matLayout = packet.material->getPipeline().layout;
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, packet.material->getPipeline().pipeline);
 
-        VkDescriptorSet descSet = getTextureDescSet(packet.textureName, currentFrame);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                packet.material->getPipeline().layout, 0, 1, &descSet, 0, nullptr);
-
+        // Global descriptor set (set 0) is already bound in Renderer::render
+        // We only need to bind bone descriptor set (set 1) if present
         if (packet.boneDescriptorSet != VK_NULL_HANDLE)
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    packet.material->getPipeline().layout, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
+                                    matLayout, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
 
         VkBuffer vertexBuffers[] = {packet.vertexBuffer};
         VkDeviceSize offsets[] = {0};
@@ -50,14 +49,20 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
             Matrix4 model;
             std::array<float, 4> color;
             std::array<float, 4> lightDir;
-            std::array<float, 4> bumpIntensityPad;
+            float bumpIntensity;
+            uint32_t diffuseIndex;
+            uint32_t normalIndex;
+            float padding;
         } push;
         push.model = packet.transform;
         push.color = packet.materialColor;
         push.lightDir = {0.5f, 1.0f, 0.3f, 0.25f};
-        push.bumpIntensityPad = {packet.bumpIntensity, 0.0f, 0.0f, 0.0f};
+        push.bumpIntensity = packet.bumpIntensity;
+        push.diffuseIndex = packet.diffuseTextureIndex;
+        push.normalIndex = packet.normalTextureIndex;
+        push.padding = 0.0f;
 
-        vkCmdPushConstants(commandBuffer, packet.material->getPipeline().layout,
+        vkCmdPushConstants(commandBuffer, matLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(PushConstants), &push);
 

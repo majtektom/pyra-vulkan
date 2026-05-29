@@ -18,12 +18,13 @@ cbuffer PushConstants
     float4 materialColor;
     float4 lightDir;
     float bumpIntensity;
+    uint diffuseIndex;
+    uint normalIndex;
 };
 
-Texture2D texSampler : register(t1, space0);
-SamplerState texSamplerState : register(s1, space0);
-Texture2D normalSampler : register(t2, space0);
-SamplerState normalSamplerState : register(s2, space0);
+SamplerState globalSampler : register(s1, space0);
+Texture2D textures[] : register(t1, space0);
+
 
 struct VertexInput
 {
@@ -88,7 +89,7 @@ VertexOutput vertexMain(VertexInput input)
 
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
-    float4 albedo = texSampler.Sample(texSamplerState, input.texCoord) * float4(input.color, 1.0) * input.matColor;
+    float4 albedo = textures[diffuseIndex].Sample(globalSampler, input.texCoord) * float4(input.color, 1.0) * input.matColor;
 
     float3 N = normalize(input.worldNormal);
 

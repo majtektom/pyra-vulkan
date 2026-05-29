@@ -42,8 +42,10 @@ public:
 
     void loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
     void linkNormalMap(const std::string& diffuseName, const std::string& normalName);
-    void allocateDescriptorSet(const std::string& name);
     void setClearColor(float r, float g, float b, float a);
+
+    uint32_t getTextureIndex(const std::string& name) const;
+    void prepareRenderPacket(RenderPacket& packet) const;
 
     uint32_t width() const;
     uint32_t height() const;
