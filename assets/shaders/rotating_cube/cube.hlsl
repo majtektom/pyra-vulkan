@@ -8,11 +8,16 @@ cbuffer GlobalUniformBufferObject : register(b0)
 cbuffer PushConstants
 {
     column_major float4x4 model;
-    float4 materialColor;
-    float4 lightDir;
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
     float bumpIntensity;
-    uint diffuseIndex;
-    uint normalIndex;
+    uint baseColorTextureSet;
+    uint physicalDescriptorTextureSet;
+    uint normalTextureSet;
+    uint occlusionTextureSet;
+    uint emissiveTextureSet;
+    float alphaMaskCutoff;
 };
 
 SamplerState globalSampler : register(s1, space0);
@@ -48,11 +53,11 @@ VertexOutput vertexMain(VertexInput input)
     output.position = mul(proj, mul(view, mul(model, float4(input.position, 1.0))));
     output.color = input.color;
     output.texCoord = input.texCoord;
-    output.matColor = materialColor;
+    output.matColor = baseColorFactor;
     return output;
 }
 
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
-    return textures[diffuseIndex].Sample(globalSampler, input.texCoord) * float4(input.color, 1.0) * input.matColor;
+    return textures[baseColorTextureSet].Sample(globalSampler, input.texCoord) * float4(input.color, 1.0) * input.matColor;
 }

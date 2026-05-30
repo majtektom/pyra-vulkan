@@ -294,4 +294,56 @@ bool Engine::isFullscreen() const {
     return platform ? platform->isFullscreen() : false;
 }
 
+void Engine::setLightDirection(float x, float y, float z, float ambient) {
+    if (renderer) renderer->setLightDirection(x, y, z, ambient);
+}
+void Engine::setLightDirection(const std::array<float, 4>& dir) {
+    if (renderer) renderer->setLightDirection(dir);
+}
+
+void Engine::setShadowsEnabled(bool enabled) {
+    if (renderer) renderer->setShadowsEnabled(enabled);
+}
+bool Engine::shadowsEnabled() const {
+    return renderer ? renderer->shadowsEnabled() : false;
+}
+
+void Engine::setLightColor(float r, float g, float b) {
+    if (renderer) renderer->setLightColor(r, g, b);
+}
+
+void Engine::setLightingEnabled(bool enabled) {
+    if (renderer) renderer->setLightingEnabled(enabled);
+}
+
+bool Engine::isLightingEnabled() const {
+    return renderer ? renderer->isLightingEnabled() : false;
+}
+
+void Engine::setAmbientStrength(float strength) {
+    if (renderer) renderer->setAmbientStrength(strength);
+}
+
+void Engine::setAmbientColor(float r, float g, float b) {
+    if (renderer) renderer->setAmbientColor(r, g, b);
+}
+
+void Engine::clearLights() {
+    if (renderer) renderer->clearLights();
+}
+
+uint32_t Engine::addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity) {
+    return renderer ? renderer->addDirectionalLight(dx, dy, dz, r, g, b, intensity) : 0;
+}
+
+uint32_t Engine::addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range) {
+    return renderer ? renderer->addPointLight(px, py, pz, r, g, b, intensity, range) : 0;
+}
+
+uint32_t Engine::addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
+                              float r, float g, float b, float intensity, float range,
+                              float innerAngle, float outerAngle) {
+    return renderer ? renderer->addSpotLight(px, py, pz, dx, dy, dz, r, g, b, intensity, range, innerAngle, outerAngle) : 0;
+}
+
 } // namespace engine3d

@@ -66,6 +66,11 @@ int main() {
     auto* mats = engine.getMaterialManager();
 
     renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    engine.setLightingEnabled(true);
+    engine.setShadowsEnabled(false);
+    engine.setAmbientStrength(0.35f);
+    engine.setAmbientColor(0.45f, 0.48f, 0.55f);
+    engine.addDirectionalLight(0.3f, 0.8f, 0.5f, 0.9f, 0.9f, 0.7f, 3.2f);
 
     const std::string skyboxDir = "assets/skybox/noc";
     // const std::string skyboxDir = "assets/skybox/dzien";
@@ -324,7 +329,11 @@ int main() {
             mat.name = name;
             mat.textureName = texName;
             mat.cullMode = CullMode::Disabled;
-            if (!nmName.empty()) { renderer->linkNormalMap(texName, nmName); mat.bumpIntensity = 1.0f; }
+            if (!nmName.empty()) { mat.normalMapName = nmName; mat.bumpIntensity = 1.0f; }
+            if (!ormName.empty()) mat.metallicRoughnessTextureName = ormName;
+            if (!occName.empty()) mat.occlusionTextureName = occName;
+            if (!emName.empty()) mat.emissiveTextureName = emName;
+            mat.roughnessFactor = 0.5f;
             mats->add(mat);
 
             auto* e = engine.createEntity(name);
@@ -356,13 +365,6 @@ int main() {
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                          brainBoneBuffer, brainBoneMemory);
 
-        VkBuffer boneBuffer = brainBoneBuffer;
-        VkDeviceMemory boneMemory = brainBoneMemory;
-        vk::createBuffer(dev, renderer->physicalDevice(), boneSize,
-                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                         boneBuffer, boneMemory);
-
         VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
         VkDescriptorPoolCreateInfo bonePoolInfo{};
         bonePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -388,7 +390,7 @@ int main() {
         VkDescriptorSet boneDescSet;
         vkAllocateDescriptorSets(dev, &boneAlloc, &boneDescSet);
 
-        VkDescriptorBufferInfo boneBufInfo{boneBuffer, 0, boneSize};
+        VkDescriptorBufferInfo boneBufInfo{brainBoneBuffer, 0, boneSize};
         VkWriteDescriptorSet boneWrite{};
         boneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         boneWrite.dstSet = boneDescSet;
@@ -418,7 +420,6 @@ int main() {
             mat.name = name;
             mat.textureName = texName;
             mat.color = prim.baseColor;
-            mat.shaderProgram = "skinned";
             mat.cullMode = CullMode::Disabled;
             mats->add(mat);
 
@@ -488,6 +489,15 @@ int main() {
             if (snap.keys[SDL_SCANCODE_SPACE]) cc->moveUp(vel);
             if (snap.keys[SDL_SCANCODE_LCTRL]) cc->moveUp(-vel);
 
+            static bool lWasDown = false;
+            bool lDown = snap.keys[SDL_SCANCODE_L];
+            if (lDown && !lWasDown) {
+                bool cur = e.isLightingEnabled();
+                e.setLightingEnabled(!cur);
+                e.setShadowsEnabled(!cur);
+            }
+            lWasDown = lDown;
+
             cc->update(dt, *cam);
         }
 
@@ -496,6 +506,14 @@ int main() {
         e.setTextLabel(oss.str(), "times",
                                        e.getRenderer()->width() - 190.0f, 35.0f, 1.0f,
                                        {1.0f, 1.0f, 0.2f, 1.0f});
+
+        {
+            std::ostringstream lightTxt;
+            lightTxt << "Oswietlenie [L]: " << (e.isLightingEnabled() ? "WLACZONE" : "WYLACZONE");
+            e.setTextLabel(lightTxt.str(), "times", 10.0f, 90.0f, 0.7f,
+                           e.isLightingEnabled() ? std::array<float,4>{0.2f, 1.0f, 0.3f, 1.0f}
+                                                 : std::array<float,4>{1.0f, 0.3f, 0.3f, 1.0f});
+        }
 
         if (cam) {
             std::ostringstream pos;

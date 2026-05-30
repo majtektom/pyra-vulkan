@@ -87,6 +87,27 @@ public:
     void setFullscreen(bool fullscreen);
     bool isFullscreen() const;
 
+    void setLightDirection(float x, float y, float z, float ambient = 0.25f);
+    void setLightDirection(const std::array<float, 4>& dir);
+
+    void setShadowsEnabled(bool enabled);
+    bool shadowsEnabled() const;
+
+    void setLightColor(float r, float g, float b);
+
+    void setLightingEnabled(bool enabled);
+    bool isLightingEnabled() const;
+
+    void setAmbientStrength(float strength);
+    void setAmbientColor(float r, float g, float b);
+
+    void clearLights();
+    uint32_t addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity);
+    uint32_t addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range);
+    uint32_t addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
+                          float r, float g, float b, float intensity, float range,
+                          float innerAngleDeg, float outerAngleDeg);
+
     std::function<void(float, Engine&)> onUpdate;
 
 private:

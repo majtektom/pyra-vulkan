@@ -10,11 +10,16 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
 cbuffer PushConstants
 {
     column_major float4x4 model;
-    float4 materialColor;
-    float4 lightDir;
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
     float bumpIntensity;
-    uint diffuseIndex;
-    uint normalIndex;
+    uint baseColorTextureSet;
+    uint physicalDescriptorTextureSet;
+    uint normalTextureSet;
+    uint occlusionTextureSet;
+    uint emissiveTextureSet;
+    float alphaMaskCutoff;
 };
 
 SamplerState globalSampler : register(s1, space0);
@@ -56,6 +61,6 @@ VertexOutput vertexMain(VertexInput input)
 
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
-    float4 tex = textures[diffuseIndex].Sample(globalSampler, input.texCoord);
+    float4 tex = textures[baseColorTextureSet].Sample(globalSampler, input.texCoord);
     return float4(tex.rgb * input.color, tex.a);
 }

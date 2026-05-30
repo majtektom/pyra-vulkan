@@ -70,11 +70,7 @@ add_shader_bundle(
     skybox.vert.hlsl=skybox.hlsl@vertexMain
     skybox.frag.hlsl=skybox.hlsl@fragmentMain
 )
-add_shader_bundle(
-    skinned
-    skinned.vert.hlsl=skinned.hlsl@vertexMain
-    skinned.frag.hlsl=skinned.hlsl@fragmentMain
-)
+# "skinned" shader removed — skinning goes through gbuffer_skinned in deferred pipeline
 
 add_shader_bundle(
     terrain
@@ -104,6 +100,41 @@ add_shader_bundle(
     ocean
     ocean.vert.hlsl=ocean.hlsl@vertexMain
     ocean.frag.hlsl=ocean.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    shadow_depth
+    shadow_depth.vert.hlsl=shadow_depth.hlsl@vertexMain
+)
+
+add_shader_bundle(
+    lit
+    lit.vert.hlsl=lit.hlsl@vertexMain
+    lit.frag.hlsl=lit.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    unlit
+    unlit.vert.hlsl=unlit.hlsl@vertexMain
+    unlit.frag.hlsl=unlit.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    gbuffer
+    gbuffer.vert.hlsl=gbuffer.hlsl@vertexMain
+    gbuffer.frag.hlsl=gbuffer.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    gbuffer_skinned
+    gbuffer_skinned.vert.hlsl=gbuffer_skinned.hlsl@vertexMain
+    gbuffer_skinned.frag.hlsl=gbuffer_skinned.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    deferred
+    deferred.vert.hlsl=deferred.hlsl@vertexMain
+    deferred.frag.hlsl=deferred.hlsl@fragmentMain
 )
 
 target_compile_definitions(engine3d
@@ -155,4 +186,4 @@ target_link_libraries(engine3d
 )
 
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders skinned_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders)
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders lit_shaders unlit_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders)

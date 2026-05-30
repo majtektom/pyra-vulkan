@@ -24,6 +24,12 @@ public:
     virtual float getBumpIntensity() const = 0;
     virtual std::array<float,4> getColor() const = 0;
     virtual int getRenderPriority() const = 0;
+    virtual float getMetallicFactor() const = 0;
+    virtual float getRoughnessFactor() const = 0;
+    virtual const std::string& getMetallicRoughnessTextureName() const = 0;
+    virtual const std::string& getOcclusionTextureName() const = 0;
+    virtual const std::string& getEmissiveTextureName() const = 0;
+    virtual const std::string& getNormalMapName() const = 0;
 };
 
 struct RenderPacket {
@@ -38,11 +44,20 @@ struct RenderPacket {
     std::string textureName;
     uint32_t diffuseTextureIndex = 0;
     uint32_t normalTextureIndex = 0;
+    uint32_t metallicRoughnessTextureIndex = 0;
+    uint32_t occlusionTextureIndex = 0;
+    uint32_t emissiveTextureIndex = 0;
     float bumpIntensity = 1.0f;
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 1.0f;
     std::array<float,4> materialColor{1,1,1,1};
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
     int renderPriority = 0;
+    std::string pbrMetallicRoughnessTextureName;
+    std::string pbrOcclusionTextureName;
+    std::string pbrEmissiveTextureName;
+    std::string normalMapName;
 };
 
 struct RenderView {

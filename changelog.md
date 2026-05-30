@@ -1,4 +1,29 @@
-# 0.1
+# changelog
+
+## 0.3.2
+
+Shadow mapping — mapa cieni 2048×2048 (depth-only pass przed głównym renderingiem), PCF 3×3 dla miękkich cieni
+Dynamiczne światło — Physically Based Rendering (PBR) oraz Deferred Shading (z użyciem G-Buffera)
+Przykład 07_shadows — scena z podłogą + budynkami, światło krążące wokół sceny, włączone cienie, sterowanie WASD + mysz
+
+Flow renderowania
+1. Shadow pass        → shadow map (jak wcześniej)
+2. G-Buffer pass      → 4 tekstury RGBA16F + depth
+3. Bariera            → G-Buffer write → read
+4. Swapchain render:
+   a. Skybox/features → swapchain color + depth (LOAD depth z G-Buffer)
+   b. Deferred pass   → fullscreen triangle, czyta G-Buffer, liczy PBR
+   c. Transparent     → forward rendering
+   d. Overlay         → text/GUI
+5. Present
+G-Buffer (4 tekstury RGBA16F)
+RT	Zawartość
+0	baseColor.rgb + metallic
+1	worldNormal (packed) + roughness
+2	ao + emissiveStrength + pad
+3	worldPos.xyz
+
+## 0.3.1
 
 Dodane funkcje
 
@@ -27,3 +52,19 @@ Zmodyfikowane pliki
 - engine/render/renderer_core.cpp – główna implementacja timeline semaforów
 - engine/render/backend/vulkan_context.h/cpp – timeline feature, compute queue
 - engine/render/backend/vulkan_swapchain.h/cpp – konfigurowalny present mode
+
+## 0.3.0
+
+Bindless Rendering, Wszystkie zasoby (tekstury, bufory) są dostępne w jednym, ogromnym "tablicowym" deskryptorze. W shaderze po prostu pobierasz indeks materiału.
+
+## 0.2.0
+
+dodane , skydome, sprite, parciple
+
+## 0.1.0
+
+dodane terenu3d, modeli 3ds, md2, gltf
+
+## 0.0.1
+
+namiasta silnika, obsługa fontów, skybox, grid

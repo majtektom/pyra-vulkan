@@ -77,14 +77,14 @@ function(add_shader_bundle bundle_name)
             if(DXC_EXECUTABLE)
                 add_custom_command(
                     OUTPUT ${output_file}
-                    COMMAND ${DXC_EXECUTABLE} -spirv -T ${hlsl_profile} -E ${shader_entry_point} -Fo ${output_file} ${input_file}
+                    COMMAND ${DXC_EXECUTABLE} -spirv -T ${hlsl_profile} -E ${shader_entry_point} -I ${SHADER_SOURCE_ROOT} -Fo ${output_file} ${input_file}
                     DEPENDS ${input_file}
                     VERBATIM
                 )
             elseif(GLSLANG_VALIDATOR_EXECUTABLE)
                 add_custom_command(
                     OUTPUT ${output_file}
-                    COMMAND ${GLSLANG_VALIDATOR_EXECUTABLE} -V -D ${input_file} -S ${shader_stage} -e ${shader_entry_point} -o ${output_file}
+                    COMMAND ${GLSLANG_VALIDATOR_EXECUTABLE} -V -D -I${SHADER_SOURCE_ROOT} ${input_file} -S ${shader_stage} -e ${shader_entry_point} -o ${output_file}
                     DEPENDS ${input_file}
                     VERBATIM
                 )

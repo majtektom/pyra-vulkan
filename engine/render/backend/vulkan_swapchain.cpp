@@ -121,7 +121,7 @@ void VulkanSwapchain::createDepthResources() {
         ci.mipLevels = 1; ci.arrayLayers = 1;
         ci.format = depthFormat_;
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        ci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ci.samples = VK_SAMPLE_COUNT_1_BIT;
         if (vkCreateImage(dev, &ci, nullptr, &depthImages_[i]) != VK_SUCCESS)
             throw std::runtime_error("depth image create failed");

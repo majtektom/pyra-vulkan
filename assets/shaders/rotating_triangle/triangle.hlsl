@@ -8,11 +8,16 @@ cbuffer GlobalUniformBufferObject : register(b0)
 cbuffer PushConstants
 {
     column_major float4x4 model;
-    float4 materialColor;
-    float4 lightDir;
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
     float bumpIntensity;
-    uint diffuseIndex;
-    uint normalIndex;
+    uint baseColorTextureSet;
+    uint physicalDescriptorTextureSet;
+    uint normalTextureSet;
+    uint occlusionTextureSet;
+    uint emissiveTextureSet;
+    float alphaMaskCutoff;
 };
 
 
@@ -42,7 +47,7 @@ VertexOutput vertexMain(VertexInput input)
     VertexOutput output;
     output.position = mul(proj, mul(view, mul(model, float4(input.position, 1.0))));
     output.color = input.color;
-    output.matColor = materialColor;
+    output.matColor = baseColorFactor;
     return output;
 }
 

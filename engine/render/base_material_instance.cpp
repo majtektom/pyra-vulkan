@@ -37,6 +37,30 @@ public:
         return data_.renderPriority;
     }
 
+    float getMetallicFactor() const override {
+        return data_.metallicFactor;
+    }
+
+    float getRoughnessFactor() const override {
+        return data_.roughnessFactor;
+    }
+
+    const std::string& getMetallicRoughnessTextureName() const override {
+        return data_.metallicRoughnessTextureName;
+    }
+
+    const std::string& getOcclusionTextureName() const override {
+        return data_.occlusionTextureName;
+    }
+
+    const std::string& getEmissiveTextureName() const override {
+        return data_.emissiveTextureName;
+    }
+
+    const std::string& getNormalMapName() const override {
+        return data_.normalMapName;
+    }
+
 private:
     Material data_;
     VulkanPipeline pipeline_;

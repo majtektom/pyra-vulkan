@@ -198,6 +198,13 @@ struct Material {
     float shininess = 32.0f;
     float bumpIntensity = 1.0f;
     int renderPriority = 0;
+
+    // PBR metallic-roughness workflow
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 1.0f;
+    std::string metallicRoughnessTextureName;
+    std::string occlusionTextureName;
+    std::string emissiveTextureName;
 };
 
 struct CameraConfig {

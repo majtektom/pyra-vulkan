@@ -47,20 +47,29 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
 
         struct PushConstants {
             Matrix4 model;
-            std::array<float, 4> color;
-            std::array<float, 4> lightDir;
+            std::array<float, 4> baseColorFactor;
+            float metallicFactor;
+            float roughnessFactor;
             float bumpIntensity;
-            uint32_t diffuseIndex;
-            uint32_t normalIndex;
-            float padding;
+            uint32_t baseColorTextureSet;
+            uint32_t physicalDescriptorTextureSet;
+            uint32_t normalTextureSet;
+            uint32_t occlusionTextureSet;
+            uint32_t emissiveTextureSet;
+            float alphaMaskCutoff;
+            float _padding[3];
         } push;
         push.model = packet.transform;
-        push.color = packet.materialColor;
-        push.lightDir = {0.5f, 1.0f, 0.3f, 0.25f};
+        push.baseColorFactor = packet.materialColor;
+        push.metallicFactor = packet.metallicFactor;
+        push.roughnessFactor = packet.roughnessFactor;
         push.bumpIntensity = packet.bumpIntensity;
-        push.diffuseIndex = packet.diffuseTextureIndex;
-        push.normalIndex = packet.normalTextureIndex;
-        push.padding = 0.0f;
+        push.baseColorTextureSet = packet.diffuseTextureIndex;
+        push.physicalDescriptorTextureSet = packet.metallicRoughnessTextureIndex;
+        push.normalTextureSet = packet.normalTextureIndex;
+        push.occlusionTextureSet = packet.occlusionTextureIndex;
+        push.emissiveTextureSet = packet.emissiveTextureIndex;
+        push.alphaMaskCutoff = 0.5f;
 
         vkCmdPushConstants(commandBuffer, matLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
