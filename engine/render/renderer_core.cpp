@@ -912,7 +912,7 @@ private:
         Matrix4 lightView{};
         lightView.values[0] = s.x;   lightView.values[4] = s.y;   lightView.values[8]  = s.z;   lightView.values[12] = -dot(s, lightPos);
         lightView.values[1] = u.x;   lightView.values[5] = u.y;   lightView.values[9]  = u.z;   lightView.values[13] = -dot(u, lightPos);
-        lightView.values[2] = -f.x;  lightView.values[6] = -f.y;  lightView.values[10] = -f.z;  lightView.values[14] = -dot({-f.x, -f.y, -f.z}, lightPos);
+        lightView.values[2] = f.x;  lightView.values[6] = f.y;  lightView.values[10] = f.z;  lightView.values[14] = -dot(f, lightPos);
         lightView.values[3] = 0;     lightView.values[7] = 0;     lightView.values[11] = 0;     lightView.values[15] = 1;
 
         float half = 20.0f;

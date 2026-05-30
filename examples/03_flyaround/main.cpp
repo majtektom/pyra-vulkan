@@ -67,7 +67,7 @@ int main() {
 
     renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     engine.setLightingEnabled(true);
-    engine.setShadowsEnabled(false);
+    engine.setShadowsEnabled(true);
     engine.setAmbientStrength(0.35f);
     engine.setAmbientColor(0.45f, 0.48f, 0.55f);
     engine.addDirectionalLight(0.3f, 0.8f, 0.5f, 0.9f, 0.9f, 0.7f, 3.2f);

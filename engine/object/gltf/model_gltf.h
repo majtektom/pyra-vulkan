@@ -46,6 +46,8 @@ struct GltfModel {
     std::vector<Matrix4> nodeTransforms;
     std::vector<Matrix4> nodeLocalTransforms;
     std::vector<int> nodeParents;
+    std::vector<Vec3> nodeTranslations;
+    std::vector<Vec3> nodeScales;
 };
 
 GltfModel loadGltfModel(const std::string& path);

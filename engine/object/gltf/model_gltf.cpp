@@ -142,22 +142,18 @@ GltfModel loadGltfModel(const std::string& path) {
         if (!node.matrix.empty() && node.matrix.size() == 16) {
             for (int i = 0; i < 16; ++i) local.values[i] = (float)node.matrix[i];
         } else {
-            Matrix4 S = Matrix4::identity();
-            Matrix4 R = Matrix4::identity();
-            Matrix4 T = Matrix4::identity();
-            if (!node.scale.empty()) S = scale((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]);
             if (!node.rotation.empty()) {
                 Quaternion q{(float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2], (float)node.rotation[3]};
                 Vec3 v{1,0,0}; v = rotateVector(q, v);
                 Vec3 v2{0,1,0}; v2 = rotateVector(q, v2);
                 Vec3 v3{0,0,1}; v3 = rotateVector(q, v3);
-                R.values[0] = v.x; R.values[1] = v.y; R.values[2] = v.z;
-                R.values[4] = v2.x; R.values[5] = v2.y; R.values[6] = v2.z;
-                R.values[8] = v3.x; R.values[9] = v3.y; R.values[10] = v3.z;
+                Matrix4 r = Matrix4::identity();
+                r.values[0] = v.x; r.values[1] = v.y; r.values[2] = v.z;
+                r.values[4] = v2.x; r.values[5] = v2.y; r.values[6] = v2.z;
+                r.values[8] = v3.x; r.values[9] = v3.y; r.values[10] = v3.z;
+                local = multiply(local, r);
             }
-            if (!node.translation.empty()) T = translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]);
-            // GLTF: local = T * R * S
-            local = multiply(T, multiply(R, S));
+            if (!node.translation.empty()) local = multiply(local, translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
         }
         for (int child : node.children) {
             if (child == nodeIdx) continue;
@@ -289,6 +285,8 @@ GltfModel loadGltfModel(const std::string& path) {
     result.nodeParents.resize(model.nodes.size(), -1);
     result.nodeTransforms.resize(model.nodes.size(), Matrix4::identity());
     result.nodeLocalTransforms.resize(model.nodes.size(), Matrix4::identity());
+    result.nodeTranslations.resize(model.nodes.size(), {0,0,0});
+    result.nodeScales.resize(model.nodes.size(), {1,1,1});
     for (int ni = 0; ni < (int)model.nodes.size(); ++ni) {
         for (int c : model.nodes[ni].children) result.nodeParents[c] = ni;
         result.nodeTransforms[ni] = nodeWorldMatrix(ni);
@@ -310,6 +308,27 @@ GltfModel loadGltfModel(const std::string& path) {
             if (!node.translation.empty()) local = multiply(translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]), local);
         }
         result.nodeLocalTransforms[ni] = local;
+        if (!node.translation.empty()) result.nodeTranslations[ni] = {(float)node.translation[0], (float)node.translation[1], (float)node.translation[2]};
+        if (!node.scale.empty()) result.nodeScales[ni] = {(float)node.scale[0], (float)node.scale[1], (float)node.scale[2]};
+    }
+
+    // Recompute nodeTransforms from nodeLocalTransforms (consistent with worldMats)
+    {
+        int ncount = (int)result.nodeTransforms.size();
+        std::vector<bool> done(ncount, false);
+        for (int pass = 0; pass < ncount; ++pass) {
+            bool any = false;
+            for (int i = 0; i < ncount; ++i) {
+                if (done[i]) continue;
+                int p = result.nodeParents[i];
+                if (p >= 0 && !done[p]) continue;
+                result.nodeTransforms[i] = (p >= 0) ? multiply(result.nodeTransforms[p], result.nodeLocalTransforms[i])
+                                                     : result.nodeLocalTransforms[i];
+                done[i] = true;
+                any = true;
+            }
+            if (!any) break;
+        }
     }
 
     for (const auto& skin : model.skins) {
@@ -400,25 +419,11 @@ void evaluateAnimation(const GltfModel& model, int animIdx, float time, std::vec
         }
     }
 
-    // For animated nodes, fill missing TRS from the original local transform
+    // For animated nodes, fill missing TRS from original node data (not decomposed matrix!)
     for (int i = 0; i < ncount; ++i) {
         if (!local[i].animated) continue;
-        const auto& orig = model.nodeLocalTransforms[i];
-        if (!local[i].hasT) {
-            // Extract translation from original matrix (column 3)
-            local[i].t = {orig.values[12], orig.values[13], orig.values[14]};
-        }
-        if (!local[i].hasS) {
-            // Extract scale from column magnitudes of original matrix
-            float sx = std::sqrt(orig.values[0]*orig.values[0] + orig.values[1]*orig.values[1] + orig.values[2]*orig.values[2]);
-            float sy = std::sqrt(orig.values[4]*orig.values[4] + orig.values[5]*orig.values[5] + orig.values[6]*orig.values[6]);
-            float sz = std::sqrt(orig.values[8]*orig.values[8] + orig.values[9]*orig.values[9] + orig.values[10]*orig.values[10]);
-            local[i].s = {sx, sy, sz};
-        }
-        if (!local[i].hasR) {
-            // Keep identity quaternion (default) — rotation is encoded but we don't extract
-            // If there's no animation for rotation, the matrix will use nodeLocalTransforms fallback
-        }
+        if (!local[i].hasT) local[i].t = model.nodeTranslations[i];
+        if (!local[i].hasS) local[i].s = model.nodeScales[i];
     }
 
     std::vector<Matrix4> worldMats(ncount, Matrix4::identity());
