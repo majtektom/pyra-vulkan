@@ -50,5 +50,6 @@ struct GltfModel {
 
 GltfModel loadGltfModel(const std::string& path);
 void evaluateAnimation(const GltfModel& model, int animIdx, float time, std::vector<Matrix4>& jointMatrices);
+float getAnimationDuration(const GltfModel& model, int animIdx);
 
 } // namespace engine3d

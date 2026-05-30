@@ -7,12 +7,27 @@
 #define TINYGLTF_IMPLEMENTATION
 
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include "tiny_gltf.h"
 
 namespace engine3d {
 namespace {
+
+Matrix4 inverseMatrix4(const Matrix4& m) {
+    Matrix4 inv = Matrix4::identity();
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 3; c++)
+            inv.values[c * 4 + r] = m.values[r * 4 + c];
+    for (int r = 0; r < 3; r++) {
+        float dot = 0;
+        for (int c = 0; c < 3; c++)
+            dot += inv.values[c * 4 + r] * m.values[3 * 4 + c];
+        inv.values[3 * 4 + r] = -dot;
+    }
+    return inv;
+}
 
 template <typename T>
 const T* accessorData(const tinygltf::Model& model, int accessorIdx) {
@@ -127,18 +142,22 @@ GltfModel loadGltfModel(const std::string& path) {
         if (!node.matrix.empty() && node.matrix.size() == 16) {
             for (int i = 0; i < 16; ++i) local.values[i] = (float)node.matrix[i];
         } else {
+            Matrix4 S = Matrix4::identity();
+            Matrix4 R = Matrix4::identity();
+            Matrix4 T = Matrix4::identity();
+            if (!node.scale.empty()) S = scale((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]);
             if (!node.rotation.empty()) {
                 Quaternion q{(float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2], (float)node.rotation[3]};
                 Vec3 v{1,0,0}; v = rotateVector(q, v);
                 Vec3 v2{0,1,0}; v2 = rotateVector(q, v2);
                 Vec3 v3{0,0,1}; v3 = rotateVector(q, v3);
-                Matrix4 r = Matrix4::identity();
-                r.values[0] = v.x; r.values[1] = v.y; r.values[2] = v.z;
-                r.values[4] = v2.x; r.values[5] = v2.y; r.values[6] = v2.z;
-                r.values[8] = v3.x; r.values[9] = v3.y; r.values[10] = v3.z;
-                local = multiply(local, r);
+                R.values[0] = v.x; R.values[1] = v.y; R.values[2] = v.z;
+                R.values[4] = v2.x; R.values[5] = v2.y; R.values[6] = v2.z;
+                R.values[8] = v3.x; R.values[9] = v3.y; R.values[10] = v3.z;
             }
-            if (!node.translation.empty()) local = multiply(local, translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
+            if (!node.translation.empty()) T = translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]);
+            // GLTF: local = T * R * S
+            local = multiply(T, multiply(R, S));
         }
         for (int child : node.children) {
             if (child == nodeIdx) continue;
@@ -227,12 +246,38 @@ GltfModel loadGltfModel(const std::string& path) {
 
             const uint8_t* jointData = accessorData<uint8_t>(model, prim.attributes.count("JOINTS_0") ? prim.attributes.at("JOINTS_0") : -1);
             const float* weightData = accessorData<float>(model, prim.attributes.count("WEIGHTS_0") ? prim.attributes.at("WEIGHTS_0") : -1);
-            if (jointData && weightData) {
-                outPrim.joints.resize(vertexCount);
-                outPrim.weights.resize(vertexCount);
-                for (int i = 0; i < vertexCount; ++i) {
-                    outPrim.joints[i] = {jointData[i*4], jointData[i*4+1], jointData[i*4+2], jointData[i*4+3]};
-                    outPrim.weights[i] = {weightData[i*4], weightData[i*4+1], weightData[i*4+2], weightData[i*4+3]};
+            int jointAcc = prim.attributes.count("JOINTS_0") ? prim.attributes.at("JOINTS_0") : -1;
+            if (jointAcc >= 0) {
+                const auto& acc = model.accessors[jointAcc];
+                int stride = acc.ByteStride(model.bufferViews[acc.bufferView]);
+                if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                    const uint8_t* jointData8 = accessorData<uint8_t>(model, jointAcc);
+                    if (jointData8 && weightData) {
+                        outPrim.joints.resize(vertexCount);
+                        outPrim.weights.resize(vertexCount);
+                        for (int i = 0; i < vertexCount; ++i) {
+                            const uint8_t* jointPtr = reinterpret_cast<const uint8_t*>(reinterpret_cast<const uint8_t*>(jointData8) + i * stride);
+                            for (int j = 0; j < 4; ++j) {
+                                outPrim.joints[i][j] = static_cast<uint32_t>(jointPtr[j]);
+                                outPrim.weights[i][j] = weightData[i*4 + j];
+                            }
+                        }
+                    }
+                } else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                    const uint16_t* jointData16 = accessorData<uint16_t>(model, jointAcc);
+                    if (jointData16 && weightData) {
+                        outPrim.joints.resize(vertexCount);
+                        outPrim.weights.resize(vertexCount);
+                        for (int i = 0; i < vertexCount; ++i) {
+                            const uint16_t* jointPtr = reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(jointData16) + i * stride);
+                            for (int j = 0; j < 4; ++j) {
+                                outPrim.joints[i][j] = static_cast<uint32_t>(jointPtr[j]);
+                                outPrim.weights[i][j] = weightData[i*4 + j];
+                            }
+                        }
+                    }
+                } else {
+                    std::cerr << "Unsupported JOINTS_0 componentType: " << acc.componentType << std::endl;
                 }
             }
 
@@ -262,7 +307,7 @@ GltfModel loadGltfModel(const std::string& path) {
                 local.values[8] = v3.x; local.values[9] = v3.y; local.values[10] = v3.z;
             }
             if (!node.scale.empty()) local = multiply(local, scale((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]));
-            if (!node.translation.empty()) local = multiply(local, translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
+            if (!node.translation.empty()) local = multiply(translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]), local);
         }
         result.nodeLocalTransforms[ni] = local;
     }
@@ -296,8 +341,12 @@ GltfModel loadGltfModel(const std::string& path) {
             if (timeData && valueData) {
                 int tc = (int)model.accessors[samp.input].count;
                 int vc = (int)model.accessors[samp.output].count;
+                int numComp = 1;
+                int accType = model.accessors[samp.output].type;
+                if (accType == TINYGLTF_TYPE_VEC3) numComp = 3;
+                else if (accType == TINYGLTF_TYPE_VEC4) numComp = 4;
                 gc.times.assign(timeData, timeData + tc);
-                gc.values.assign(valueData, valueData + vc);
+                gc.values.assign(valueData, valueData + vc * numComp);
             }
             ga.channels.push_back(std::move(gc));
         }
@@ -351,28 +400,61 @@ void evaluateAnimation(const GltfModel& model, int animIdx, float time, std::vec
         }
     }
 
-    std::vector<Matrix4> worldMats(ncount, Matrix4::identity());
+    // For animated nodes, fill missing TRS from the original local transform
     for (int i = 0; i < ncount; ++i) {
-        Matrix4 localMat;
-        if (!local[i].animated) {
-            localMat = model.nodeLocalTransforms[i];
-        } else {
-            auto& l = local[i];
-            if (!l.hasT && !l.hasR && !l.hasS) {
+        if (!local[i].animated) continue;
+        const auto& orig = model.nodeLocalTransforms[i];
+        if (!local[i].hasT) {
+            // Extract translation from original matrix (column 3)
+            local[i].t = {orig.values[12], orig.values[13], orig.values[14]};
+        }
+        if (!local[i].hasS) {
+            // Extract scale from column magnitudes of original matrix
+            float sx = std::sqrt(orig.values[0]*orig.values[0] + orig.values[1]*orig.values[1] + orig.values[2]*orig.values[2]);
+            float sy = std::sqrt(orig.values[4]*orig.values[4] + orig.values[5]*orig.values[5] + orig.values[6]*orig.values[6]);
+            float sz = std::sqrt(orig.values[8]*orig.values[8] + orig.values[9]*orig.values[9] + orig.values[10]*orig.values[10]);
+            local[i].s = {sx, sy, sz};
+        }
+        if (!local[i].hasR) {
+            // Keep identity quaternion (default) — rotation is encoded but we don't extract
+            // If there's no animation for rotation, the matrix will use nodeLocalTransforms fallback
+        }
+    }
+
+    std::vector<Matrix4> worldMats(ncount, Matrix4::identity());
+    std::vector<bool> done(ncount, false);
+    for (int pass = 0; pass < ncount; ++pass) {
+        bool anyChange = false;
+        for (int i = 0; i < ncount; ++i) {
+            if (done[i]) continue;
+            int p = model.nodeParents[i];
+            if (p >= 0 && !done[p]) continue;
+            Matrix4 localMat;
+            if (!local[i].animated) {
                 localMat = model.nodeLocalTransforms[i];
             } else {
-                Matrix4 m = Matrix4::identity();
-                Vec3 v{1,0,0}; v = rotateVector(l.r, v);
-                Vec3 v2{0,1,0}; v2 = rotateVector(l.r, v2);
-                Vec3 v3{0,0,1}; v3 = rotateVector(l.r, v3);
-                m.values[0]=v.x; m.values[1]=v.y; m.values[2]=v.z;
-                m.values[4]=v2.x; m.values[5]=v2.y; m.values[6]=v2.z;
-                m.values[8]=v3.x; m.values[9]=v3.y; m.values[10]=v3.z;
-                localMat = multiply(translation(l.t.x, l.t.y, l.t.z), multiply(m, scale(l.s.x, l.s.y, l.s.z)));
+                auto& l = local[i];
+                if (!l.hasT && !l.hasR && !l.hasS) {
+                    localMat = model.nodeLocalTransforms[i];
+                } else {
+                    Matrix4 S = scale(l.s.x, l.s.y, l.s.z);
+                    Matrix4 R = Matrix4::identity();
+                    Vec3 v{1,0,0}; v = rotateVector(l.r, v);
+                    Vec3 v2{0,1,0}; v2 = rotateVector(l.r, v2);
+                    Vec3 v3{0,0,1}; v3 = rotateVector(l.r, v3);
+                    R.values[0]=v.x; R.values[1]=v.y; R.values[2]=v.z;
+                    R.values[4]=v2.x; R.values[5]=v2.y; R.values[6]=v2.z;
+                    R.values[8]=v3.x; R.values[9]=v3.y; R.values[10]=v3.z;
+                    Matrix4 T = translation(l.t.x, l.t.y, l.t.z);
+                    // GLTF: local = T * R * S
+                    localMat = multiply(T, multiply(R, S));
+                }
             }
+            worldMats[i] = (p >= 0) ? multiply(worldMats[p], localMat) : localMat;
+            done[i] = true;
+            anyChange = true;
         }
-        int p = model.nodeParents[i];
-        worldMats[i] = (p >= 0) ? multiply(worldMats[p], localMat) : localMat;
+        if (!anyChange) break;
     }
 
     if (!model.skins.empty()) {
@@ -380,10 +462,24 @@ void evaluateAnimation(const GltfModel& model, int animIdx, float time, std::vec
         jointMatrices.resize(skin.joints.size());
         for (size_t j = 0; j < skin.joints.size(); ++j) {
             int ni = skin.joints[j];
-            jointMatrices[j] = multiply((ni >= 0 && ni < ncount) ? worldMats[ni] : Matrix4::identity(),
-                                        skin.inverseBindMatrices[j]);
+            Matrix4 wm = (ni >= 0 && ni < ncount) ? worldMats[ni] : Matrix4::identity();
+            Matrix4 bindPose = (ni >= 0 && ni < ncount) ? model.nodeTransforms[ni] : Matrix4::identity();
+            jointMatrices[j] = multiply(wm, inverseMatrix4(bindPose));
         }
     }
+}
+
+float getAnimationDuration(const GltfModel& model, int animIdx) {
+    if (animIdx < 0 || animIdx >= (int)model.animations.size()) return 0.0f;
+    const auto& anim = model.animations[animIdx];
+    float maxTime = 0.0f;
+    for (const auto& ch : anim.channels) {
+        if (!ch.times.empty()) {
+            float last = ch.times.back();
+            if (last > maxTime) maxTime = last;
+        }
+    }
+    return maxTime;
 }
 
 } // namespace engine3d

@@ -94,14 +94,13 @@ float3x3 inverseTranspose3x3(float4x4 m)
 VertexOutput vertexMain(VertexInput input)
 {
     // Clamp joint indices to valid range
-    uint4 joints = min(input.joints, (uint4)(MAX_BONES-1));
-    float4 weights = input.weights;
-    float totalWeight = weights.x + weights.y + weights.z + weights.w;
+    uint4 clampedJoints = min(input.joints, (uint4)(MAX_BONES-1));
+    float4 clampedWeights = input.weights;
+    float clampedTotalWeight = clampedWeights.x + clampedWeights.y + clampedWeights.z + clampedWeights.w;
 
-    float4x4 skinMat = float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1);
-
-    // TEST: wyłącz skinning, użyj tylko boneMatrices[0] (bind pose)
-    skinMat = boneMatrices[0];
+    // TEST: skinMat = boneMatrices[clampedJoints.x] (bez wag)
+    float4x4 skinMat = boneMatrices[clampedJoints.x];
+    // skinMat = boneMatrices[0];
 
     float4 skinnedPos = mul(skinMat, float4(input.position, 1.0));
     float4 worldPos4 = mul(model, skinnedPos);
@@ -111,8 +110,6 @@ VertexOutput vertexMain(VertexInput input)
     output.position = mul(proj, mul(view, worldPos4));
     output.worldPos = worldPos4.xyz;
     output.worldNormal = normalize(worldNormal4.xyz);
-    // Debug: visualize skinned position as color (uncomment for test)
-    // output.color = skinnedPos.xyz * 0.1 + 0.5;
     output.color = input.color;
     output.texCoord = input.texCoord;
     return output;

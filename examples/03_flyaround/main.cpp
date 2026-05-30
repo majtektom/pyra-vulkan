@@ -449,7 +449,7 @@ int main() {
             }
 
             auto* tc = e->addComponent<TransformComponent>();
-            tc->translation = {-40.0f, 10.0f, 20.0f};
+            tc->translation = {-40.0f, 0.0f, 20.0f};
             tc->rotation = {0.0f, 0.0f, 0.0f};
             tc->scale = {10.0f, 10.0f, 10.0f};
         }
@@ -536,6 +536,8 @@ int main() {
                       dev = brainDev](float dt, Engine& e) mutable {
         static float animTime = 0.0f;
         animTime += dt;
+        float dur = getAnimationDuration(*model, 0);
+        if (dur > 0.001f) animTime = fmodf(animTime, dur);
         std::vector<Matrix4> jointMats;
         evaluateAnimation(*model, 0, animTime, jointMats);
         static int dbgCount = 0;
