@@ -9,7 +9,7 @@
 
 #include <vulkan/vulkan.h>
 
-#include "math.h"
+#include "core/math.h"
 
 namespace engine3d {
 

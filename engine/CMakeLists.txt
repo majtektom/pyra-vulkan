@@ -2,8 +2,8 @@ add_library(engine3d SHARED
     core/engine.cpp
     core/component.cpp
     core/entity.cpp
-    core/transform_component.cpp
     core/mesh_component.cpp
+    core/mesh_manager.cpp
     camera/camera_component.cpp
     camera/camera_controller.cpp
     platform/platform.cpp
@@ -25,28 +25,28 @@ add_library(engine3d SHARED
     object/model_md2.cpp
     object/gltf/model_gltf.cpp
     object/terrain.cpp
-    object/media_library.cpp
-    object/mesh_manager.cpp
-    font/font_manager.cpp
-    font/font_atlas_loader.cpp
     object/grid_renderer.cpp
     object/skybox_renderer.cpp
     object/skydome_renderer.cpp
     object/ocean_renderer.cpp
-    particle/particle_system.cpp
-    sprite/sprite.cpp
-    font/text_overlay_renderer.cpp
-    gui/gui.cpp
-    gui/gui_button.cpp
-    gui/gui_input_text.cpp
-    gui/gui_list_box.cpp
-    gui/gui_static_text.cpp
-    gui/gui_check_box.cpp
-    gui/gui_combo_box.cpp
-    gui/gui_memo.cpp
-    gui/gui_track_bar.cpp
-    gui/gui_scroll_bar.cpp
-    gui/gui_renderer.cpp
+    feature/particle/particle_event.cpp
+    feature/particle/emitter.cpp
+    feature/particle/system.cpp
+    feature/sprite/sprite.cpp
+    feature/font/font_manager.cpp
+    feature/font/font_atlas_loader.cpp
+    feature/font/text_overlay_renderer.cpp
+    feature/gui/gui.cpp
+    feature/gui/gui_button.cpp
+    feature/gui/gui_input_text.cpp
+    feature/gui/gui_list_box.cpp
+    feature/gui/gui_static_text.cpp
+    feature/gui/gui_check_box.cpp
+    feature/gui/gui_combo_box.cpp
+    feature/gui/gui_memo.cpp
+    feature/gui/gui_track_bar.cpp
+    feature/gui/gui_scroll_bar.cpp
+    feature/gui/gui_renderer.cpp
     scene/scene_manager.cpp
 )
 
@@ -108,18 +108,6 @@ add_shader_bundle(
 )
 
 add_shader_bundle(
-    lit
-    lit.vert.hlsl=lit.hlsl@vertexMain
-    lit.frag.hlsl=lit.hlsl@fragmentMain
-)
-
-add_shader_bundle(
-    unlit
-    unlit.vert.hlsl=unlit.hlsl@vertexMain
-    unlit.frag.hlsl=unlit.hlsl@fragmentMain
-)
-
-add_shader_bundle(
     gbuffer
     gbuffer.vert.hlsl=gbuffer.hlsl@vertexMain
     gbuffer.frag.hlsl=gbuffer.hlsl@fragmentMain
@@ -149,17 +137,6 @@ target_compile_definitions(engine3d
 target_include_directories(engine3d
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/render
-        ${CMAKE_CURRENT_SOURCE_DIR}/camera
-        ${CMAKE_CURRENT_SOURCE_DIR}/scene
-        ${CMAKE_CURRENT_SOURCE_DIR}/platform
-        ${CMAKE_CURRENT_SOURCE_DIR}/object
-        ${CMAKE_CURRENT_SOURCE_DIR}/object/gltf
-        ${CMAKE_CURRENT_SOURCE_DIR}/font
-        ${CMAKE_CURRENT_SOURCE_DIR}/particle
-        ${CMAKE_CURRENT_SOURCE_DIR}/sprite
-        ${CMAKE_CURRENT_SOURCE_DIR}/gui
 )
 
 if(TARGET PkgConfig::SDL3)
@@ -186,4 +163,4 @@ target_link_libraries(engine3d
 )
 
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders lit_shaders unlit_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders)
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders)

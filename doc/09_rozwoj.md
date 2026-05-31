@@ -6,10 +6,6 @@
 Przenieś fizykę cząstek na GPU. Zamiast aktualizować 75k cząstek na CPU,
 użyj compute shadera z SSBO. Eliminuje to upload wierzchołków co klatkę.
 
-### 2. Instanced rendering -zrobione
-Zamiast generować 4 wierzchołki na każdą cząstkę, użyj jednego quada +
-per-instance data (pozycja, skala, kolor). `vkCmdDrawIndexed(4, particleCount, ...)`.
-Redukuje zużycie pamięci i transfer CPU→GPU.
 
 ### 3. Deferred rendering / wiele render passów
 Rozdziel geometrię od oświetlenia:
@@ -82,17 +78,6 @@ jednoplikowa i obsługuje wszystkie platformy.
 
 ---
 
-## Animacja
-
-### 16. Animacja szkieletowa (MD5)
-Loader MD5 już istnieje w kodzie (`model_md5.cpp`) ale nie jest podłączony.
-Szkielet + animacje kanałów to podstawa postaci.
-
-### 17. Morph target animation
-Prostsza alternatywa dla szkieletu — przechowuj kilka wersji mesh i interpoluj.
-
----
-
 ## Narzędzia
 
 ### 18. Własny edytor scen
@@ -111,32 +96,3 @@ Wyświetlaj w UI.
 - Testy loadera 3DS (znane pliki → oczekiwane wierzchołki)
 - Testy systemu cząstek
 - Testy matematyki (macierze, wektory)
-
-### 21. CI/CD
-GitHub Actions do automatycznego budowania i testowania na każdym pushu.
-
-### 22. Alokator Vulkan (VMA) - zrobione - vk_mem_alloc.h
-Użyj `VulkanMemoryAllocator` zamiast ręcznego `vkAllocateMemory`.
-Redukuje fragmentację i przyspiesza alokację.
-
-### 23. Dynamiczna rekompilacja shaderów - zrobione
-Użyj `glslang` lub `shaderc` w runtime zamiast prekompilowanych SPIR-V.
-Hot-reload bez restartu aplikacji.
-
-### 8. Hot-reloading shaderów - zrobione
-Wykrywaj zmiany w plikach `.hlsl` i rekompiluj w locie. Ogromnie przyspiesza
-iterację podczas pisania shaderów.
-
----
-
-## Priorytety rozwoju
-
-| Priorytet | Funkcja | Wpływ |
-|-----------|---------|-------|
-| 🔴 Wysoki | Cienie (shadow mapping) | Ogromna poprawa wizualna |
-| 🔴 Wysoki | Instanced rendering dla cząstek | Duży wzrost FPS |
-| 🟡 Średni | Animacja szkieletowa | Postacie, przeciwnicy |
-| 🟡 Średni | Audio 3D | Immersja |
-| 🟡 Średni | Wieloplatformowość (SDL2) | Więcej użytkowników |
-| 🟢 Niski | Edytor ImGui | Szybszy development |
-| 🟢 Niski | Hot-reload shaderów | Szybsze iterowanie |

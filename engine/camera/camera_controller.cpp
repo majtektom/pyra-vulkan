@@ -1,6 +1,7 @@
-#include "camera_controller.h"
-#include "camera_component.h"
-#include "types.h"
+#include "camera/camera_controller.h"
+#include "camera/camera_component.h"
+#include "core/entity.h"
+#include "core/types.h"
 #include <algorithm>
 #include <cmath>
 
@@ -54,7 +55,7 @@ void CameraController::update(float deltaTime, CameraComponent& cam) {
     realPosition_ = add(realPosition_, movement);
     position_ = realPosition_;
 
-    cam.position = position_;
+    cam.getOwner()->transform().position = position_;
     cam.target = add(position_, forward);
     cam.up = normalize(cross(right, forward));
 }

@@ -1,12 +1,11 @@
-#include "engine.h"
-#include "renderer.h"
-#include "mesh_component.h"
-#include "transform_component.h"
-#include "camera_component.h"
 #include <SDL3/SDL.h>
 #include <cmath>
 #include <sstream>
 #include <iomanip>
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
 
 using namespace engine3d;
 
@@ -92,22 +91,9 @@ int main() {
     engine.getMeshManager()->loadMesh("marker_point", makeSphere(16, 0.25f, 0.15f, 2.0f, 1.8f));
     engine.getMeshManager()->loadMesh("marker_spot", makeColoredBox(0.35f, 0.35f, 0.35f, 0.2f, 1.5f, 2.0f));
 
-    Material matLit;
-    matLit.name = "lit_mat";
-    matLit.shaderProgram = "lit";
-    engine.getMaterialManager()->add(matLit);
-    auto litInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(matLit);
-
-    Material matUnlit;
-    matUnlit.name = "unlit_marker";
-    matUnlit.shaderProgram = "unlit";
-    engine.getMaterialManager()->add(matUnlit);
-    auto unlitInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(matUnlit);
-
     auto* floorE = engine.createEntity("floor");
-    floorE->addComponent<MeshComponent>("floor")->materialInstance = litInst;
-    auto* ft = floorE->addComponent<TransformComponent>();
-    ft->translation = {0, -0.1f, 0};
+    floorE->addComponent<MeshComponent>("floor");
+    floorE->transform().position = {0, -0.1f, 0};
 
     struct { const char* mesh; float x, y, z; } obstacles[] = {
         {"box1", -4, 1.5f, 2}, {"box2",  3, 2.0f, -3},
@@ -117,29 +103,26 @@ int main() {
     };
     for (auto& obs : obstacles) {
         auto* e = engine.createEntity(obs.mesh);
-        e->addComponent<MeshComponent>(obs.mesh)->materialInstance = litInst;
-        auto* t = e->addComponent<TransformComponent>();
-        t->translation = {obs.x, obs.y, obs.z};
+        e->addComponent<MeshComponent>(obs.mesh);
+        e->transform().position = {obs.x, obs.y, obs.z};
     }
 
     auto* markerDir = engine.createEntity("marker_dir");
-    markerDir->addComponent<MeshComponent>("marker_dir")->materialInstance = unlitInst;
-    auto* mdT = markerDir->addComponent<TransformComponent>();
+    markerDir->addComponent<MeshComponent>("marker_dir");
 
     auto* markerPoint = engine.createEntity("marker_point");
-    markerPoint->addComponent<MeshComponent>("marker_point")->materialInstance = unlitInst;
-    auto* mpT = markerPoint->addComponent<TransformComponent>();
+    markerPoint->addComponent<MeshComponent>("marker_point");
 
     auto* markerSpot = engine.createEntity("marker_spot");
-    markerSpot->addComponent<MeshComponent>("marker_spot")->materialInstance = unlitInst;
-    auto* msT = markerSpot->addComponent<TransformComponent>();
+    markerSpot->addComponent<MeshComponent>("marker_spot");
 
-    auto* camera = engine.createEntity("camera")->addComponent<CameraComponent>();
-    camera->position = {0, 8, -15};
+    auto* cameraEntity = engine.createEntity("camera");
+    auto* camera = cameraEntity->addComponent<CameraComponent>();
+    cameraEntity->transform().position = {0, 8, -15};
     camera->fieldOfViewDegrees = 55;
     camera->farPlane = 200;
     engine.setActiveCamera(camera);
-    engine.getCameraController()->setPositionAndTarget(camera->position, {0, 1, 0});
+    engine.getCameraController()->setPositionAndTarget(cameraEntity->transform().position, {0, 1, 0});
 
     engine.onUpdate = [&](float dt, Engine& e) {
         auto snap = e.getPlatform()->pollInput();
@@ -199,7 +182,7 @@ int main() {
         float sz = std::sin(sunAngle) * sunRad;
         float sy = 9.0f;
 
-        mdT->translation = {sx, sy, sz};
+        markerDir->transform().position = {sx, sy, sz};
         markerDir->setActive(light1On);
 
         if (light1On) {
@@ -210,7 +193,7 @@ int main() {
 
         // 2. Point light (green marker) — bouncing up and down
         float py = 2.0f + std::abs(std::sin(time * 0.8f)) * 4.0f;
-        mpT->translation = {1.0f, py, 0.0f};
+        markerPoint->transform().position = {1.0f, py, 0.0f};
         markerPoint->setActive(light2On);
 
         if (light2On) {
@@ -226,7 +209,7 @@ int main() {
         float spz = std::sin(spotAngle) * spotR;
         float spy = spotH;
 
-        msT->translation = {spx, spy, spz};
+        markerSpot->transform().position = {spx, spy, spz};
         markerSpot->setActive(light3On);
 
         if (light3On) {

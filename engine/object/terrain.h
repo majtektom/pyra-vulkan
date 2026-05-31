@@ -1,12 +1,12 @@
 #pragma once
 
-#include "types.h"
-#include "math.h"
-#include "../render/render_feature.h"
 #include <string>
 #include <vector>
 #include <array>
 #include <vulkan/vulkan.h>
+#include "core/types.h"
+#include "core/math.h"
+#include "render/render_feature.h"
 
 namespace engine3d {
 
@@ -24,13 +24,13 @@ struct TerrainLayer {
 
 class Terrain : public IRenderFeature {
 public:
-    Terrain() = default;
+    Terrain() : name_("Terrain") {}
     ~Terrain() override;
 
     void init(Renderer* renderer) override;
     void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
     bool isActive() const override { return ready_; }
-    const std::string& getName() const override { static std::string n = "Terrain"; return n; }
+    const std::string& getName() const override { return name_; }
     Stage getStage() const override { return Stage::AfterOpaque; }
 
     bool loadFromImage(const std::string& path, float scaleXZ = 10.0f, float scaleY = 2.0f,
@@ -96,6 +96,7 @@ private:
     std::vector<Node*> visibleNodes_;
     Renderer* renderer_ = nullptr;
     Engine* engine_ = nullptr;
+    std::string name_;
     bool ready_ = false;
     int numLayers_ = 0;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;

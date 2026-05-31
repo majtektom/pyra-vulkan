@@ -1,8 +1,8 @@
 #pragma once
 
-#include "render_types.h"
 #include <functional>
 #include <vector>
+#include "render/render_types.h"
 
 namespace engine3d {
 
@@ -14,7 +14,7 @@ public:
     }
 
     void addPacket(const RenderPacket& packet) {
-        if (packet.material->isTransparent()) {
+        if (packet.material && packet.material->isTransparent()) {
             transparentPackets.push_back(packet);
         } else {
             opaquePackets.push_back(packet);

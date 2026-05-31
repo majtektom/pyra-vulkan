@@ -9,20 +9,20 @@
 #include <unordered_map>
 #include <vector>
 
-#include "camera_component.h"
-#include "camera_controller.h"
-#include "entity.h"
-#include "material_manager.h"
-#include "platform.h"
-#include "scene_manager.h"
-#include "shader_manager.h"
-#include "texture_manager.h"
-#include "types.h"
-#include "../render/backend/vulkan_context.h"
-#include "../render/material_system.h"
-#include "../render/render_pass.h"
-#include "../object/mesh_manager.h"
-#include "../font/text_overlay_renderer.h"
+#include "camera/camera_component.h"
+#include "camera/camera_controller.h"
+#include "render/material_manager.h"
+#include "platform/platform.h"
+#include "scene/scene_manager.h"
+#include "render/shader_manager.h"
+#include "render/texture_manager.h"
+#include "render/backend/vulkan_context.h"
+#include "render/material_system.h"
+#include "render/render_pass.h"
+#include "core/mesh_manager.h"
+#include "feature/font/text_overlay_renderer.h"
+#include "core/types.h"
+#include "core/entity.h"
 
 namespace engine3d {
 

@@ -1,27 +1,31 @@
 # changelog
 
+## 0.4.0
+
+system obiektów oparty na ECS (Entity-Component-System) z domieszką Data-Oriented Design
+Shadow mapping — mapa cieni 2048×2048 (depth-only pass przed głównym renderingiem), PCF 3×3 dla miękkich cieni
+
 ## 0.3.2
 
-Shadow mapping — mapa cieni 2048×2048 (depth-only pass przed głównym renderingiem), PCF 3×3 dla miękkich cieni
 Dynamiczne światło — Physically Based Rendering (PBR) oraz Deferred Shading (z użyciem G-Buffera)
 Przykład 07_shadows — scena z podłogą + budynkami, światło krążące wokół sceny, włączone cienie, sterowanie WASD + mysz
 
 Flow renderowania
-1. Shadow pass        → shadow map (jak wcześniej)
-2. G-Buffer pass      → 4 tekstury RGBA16F + depth
-3. Bariera            → G-Buffer write → read
-4. Swapchain render:
+
+1. G-Buffer pass      → 4 tekstury RGBA16F + depth
+2. Bariera            → G-Buffer write → read
+3. Swapchain render:
    a. Skybox/features → swapchain color + depth (LOAD depth z G-Buffer)
    b. Deferred pass   → fullscreen triangle, czyta G-Buffer, liczy PBR
    c. Transparent     → forward rendering
    d. Overlay         → text/GUI
-5. Present
-G-Buffer (4 tekstury RGBA16F)
-RT	Zawartość
-0	baseColor.rgb + metallic
-1	worldNormal (packed) + roughness
-2	ao + emissiveStrength + pad
-3	worldPos.xyz
+4. Present
+   G-Buffer (4 tekstury RGBA16F)
+   RT	Zawartość
+   0	baseColor.rgb + metallic
+   1	worldNormal (packed) + roughness
+   2	ao + emissiveStrength + pad
+   3	worldPos.xyz
 
 ## 0.3.1
 
@@ -44,14 +48,6 @@ engine->setSynchronizationMode(SynchronizationMode::Off);       // Brak fence'ó
 engine->setPresentMode(PresentMode::Immediate);  // V-Sync OFF (tearing)
 engine->setPresentMode(PresentMode::Mailbox);    // V-Sync OFF (bez tearingu)
 engine->setPresentMode(PresentMode::Fifo);       // V-Sync ON (domyślnie)
-Zmodyfikowane pliki
-
-- engine/core/types.h – enums SynchronizationMode, PresentMode
-- engine/core/engine.h/cpp – API setSynchronizationMode, setPresentMode
-- engine/render/renderer.h – publiczne metody
-- engine/render/renderer_core.cpp – główna implementacja timeline semaforów
-- engine/render/backend/vulkan_context.h/cpp – timeline feature, compute queue
-- engine/render/backend/vulkan_swapchain.h/cpp – konfigurowalny present mode
 
 ## 0.3.0
 

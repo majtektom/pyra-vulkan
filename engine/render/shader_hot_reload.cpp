@@ -1,6 +1,3 @@
-#include "shader_hot_reload.h"
-#include "vulkan_util.h"
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +7,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+#include "render/shader_hot_reload.h"
+#include "render/vulkan_util.h"
 namespace engine3d {
 
 ShaderHotReload::ShaderHotReload(const std::string& shaderDir, const std::string& outputDir)

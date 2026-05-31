@@ -1,7 +1,6 @@
-#include "mesh_component.h"
-#include "entity.h"
-#include "transform_component.h"
-#include "../object/mesh_manager.h"
+#include "core/mesh_component.h"
+#include "core/entity.h"
+#include "core/mesh_manager.h"
 
 namespace engine3d {
 
@@ -14,7 +13,7 @@ MeshComponent::MeshComponent(const MeshData& meshData)
     : Component("Mesh"), meshData(meshData) {}
 
 void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, MeshManager& meshManager) {
-    if (!active || !materialInstance) return;
+    if (!isActive() || !owner) return;
 
     auto gpuMesh = meshManager.getMesh(meshName);
     if (!gpuMesh) return;
@@ -24,23 +23,21 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     packet.indexBuffer = gpuMesh->indexBuffer ? gpuMesh->indexBuffer->handle() : VK_NULL_HANDLE;
     packet.indexCount = gpuMesh->indexCount;
 
-    if (auto* transform = owner->getComponent<TransformComponent>()) {
-        packet.transform = transform->getModelMatrix();
-    } else {
-        packet.transform = Matrix4::identity();
-    }
+    packet.transform = owner->transform().getLocalMatrix();
 
-    packet.material = materialInstance;
-    packet.textureName = materialInstance->getTextureName();
-    packet.bumpIntensity = materialInstance->getBumpIntensity();
-    packet.materialColor = materialInstance->getColor();
-    packet.renderPriority = materialInstance->getRenderPriority();
-    packet.metallicFactor = materialInstance->getMetallicFactor();
-    packet.roughnessFactor = materialInstance->getRoughnessFactor();
-    packet.pbrMetallicRoughnessTextureName = materialInstance->getMetallicRoughnessTextureName();
-    packet.pbrOcclusionTextureName = materialInstance->getOcclusionTextureName();
-    packet.pbrEmissiveTextureName = materialInstance->getEmissiveTextureName();
-    packet.normalMapName = materialInstance->getNormalMapName();
+    if (materialInstance) {
+        packet.material = materialInstance;
+        packet.textureName = materialInstance->getTextureName();
+        packet.bumpIntensity = materialInstance->getBumpIntensity();
+        packet.materialColor = materialInstance->getColor();
+        packet.renderPriority = materialInstance->getRenderPriority();
+        packet.metallicFactor = materialInstance->getMetallicFactor();
+        packet.roughnessFactor = materialInstance->getRoughnessFactor();
+        packet.pbrMetallicRoughnessTextureName = materialInstance->getMetallicRoughnessTextureName();
+        packet.pbrOcclusionTextureName = materialInstance->getOcclusionTextureName();
+        packet.pbrEmissiveTextureName = materialInstance->getEmissiveTextureName();
+        packet.normalMapName = materialInstance->getNormalMapName();
+    }
     packet.skinVertexBuffer = skinVertexBuffer;
     packet.boneDescriptorSet = boneDescriptorSet;
     packet.instanceBuffer = gpuMesh->instanceBuffer ? gpuMesh->instanceBuffer->handle() : VK_NULL_HANDLE;

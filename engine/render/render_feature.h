@@ -1,7 +1,7 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include "render_types.h"
+#include "render/render_types.h"
 #include <string>
 #include <memory>
 

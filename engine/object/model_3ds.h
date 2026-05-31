@@ -1,19 +1,14 @@
 #pragma once
-#pragma once
 
 #include <string>
 #include <vector>
 
-#include "object.h"
-#include "media_library.h"
-#include "math.h"
-#include "types.h"
+#include "core/math.h"
+#include "core/types.h"
 
 namespace engine3d {
 
-class Object3ds;
-
-class Model3ds : public VObjectMedia {
+class Model3ds  {
 public:
     struct tChunk {
         unsigned short int ID;
@@ -87,10 +82,10 @@ public:
     std::vector<t3DObject*> objectList;
 
     Model3ds();
-    ~Model3ds() override;
+    ~Model3ds();
 
-    bool load(const std::string& name) override;
-    bool unload() override;
+    bool load(const std::string& name);
+    bool unload();
 
     void setCurrentFrame(int frame);
 
@@ -132,21 +127,7 @@ private:
     unsigned short keyNumberOfNodes = 0;
 
     int texMapType = 0; // 0=default, 1=texture, 2=opacity
-
-    friend Object3ds;
 };
-
-class Object3ds : public VObject {
-    Model3ds* mo = nullptr;
-public:
-    Object3ds() = default;
-    ~Object3ds() override;
-
-    void setModel(Model3ds* m);
-    void render() override;
-    Model3ds* getModel() const { return mo; }
-};
-
 
 // Deklaracja funkcji konwersji materiału 3ds -> silnikowy
 Material Convert3dsMaterialToEngineMaterial(const Model3ds::tMaterialInfo& mat3ds);

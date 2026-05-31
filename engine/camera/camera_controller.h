@@ -1,6 +1,6 @@
 #pragma once
 
-#include "math.h"
+#include "core/math.h"
 
 struct SDL_Window;
 

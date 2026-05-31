@@ -1,8 +1,7 @@
-#include "engine.h"
-#include "renderer.h"
-#include "mesh_component.h"
-#include "transform_component.h"
-#include "camera_component.h"
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
 
 using namespace engine3d;
 
@@ -52,9 +51,6 @@ int main() {
         Material mat;
         mat.name = name;
         mat.textureName = texName;
-        mat.shaderProgram = "rotating_cube";
-        mat.vertexEntryPoint = "vertexMain";
-        mat.fragmentEntryPoint = "fragmentMain";
         engine.getMaterialManager()->add(mat);
         return engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
     };
@@ -68,33 +64,33 @@ int main() {
         auto* e = engine.createEntity(name);
         auto* mc = e->addComponent<MeshComponent>("cube");
         mc->materialInstance = mat;
-        auto* tc = e->addComponent<TransformComponent>();
-        tc->translation = pos;
-        tc->scale = scale;
+        e->transform().position = pos;
+        e->transform().scale = scale;
     };
 
     makeCube("cube1", {-2.2f, 0.0f, 0.0f}, {0.8f, 0.8f, 0.8f}, mat1);
     makeCube("cube2", {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, mat2);
     makeCube("cube3", {2.2f, 0.0f, 0.0f}, {0.8f, 0.8f, 0.8f}, mat3);
 
-    auto* camera = engine.createEntity("camera")->addComponent<CameraComponent>();
-    camera->position = {0.0f, 0.0f, 5.5f};
+    auto* camEntity = engine.createEntity("camera");
+    auto* camera = camEntity->addComponent<CameraComponent>();
+    camEntity->transform().position = {0.0f, 0.0f, 5.5f};
     camera->fieldOfViewDegrees = 45.0f;
     engine.setActiveCamera(camera);
 
     engine.onUpdate = [](float dt, Engine& e) {
         auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
         if (cam) {
-            cam->position = {0.0f, 0.0f, 5.5f};
+            cam->getOwner()->transform().position = {0.0f, 0.0f, 5.5f};
             cam->target = {0.0f, 0.0f, 0.0f};
             cam->up = {0.0f, 1.0f, 0.0f};
         }
         auto rotate = [&](const std::string& name, float rx, float ry, float rz) {
             auto* entity = e.getEntity(name);
-            if (auto* tc = entity->getComponent<TransformComponent>()) {
-                tc->rotation.x += dt * rx;
-                tc->rotation.y += dt * ry;
-                tc->rotation.z += dt * rz;
+            if (entity) {
+                entity->transform().rotation.x += dt * rx;
+                entity->transform().rotation.y += dt * ry;
+                entity->transform().rotation.z += dt * rz;
             }
         };
         rotate("cube1", 0.65f, 1.0f, 0.0f);

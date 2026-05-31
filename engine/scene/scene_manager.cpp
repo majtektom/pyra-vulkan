@@ -1,7 +1,6 @@
-#include "scene_manager.h"
-
 #include <algorithm>
 
+#include "scene/scene_manager.h"
 namespace engine3d {
 
 Layer::Layer(std::string name) : name_(std::move(name)) {}

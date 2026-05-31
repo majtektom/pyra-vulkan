@@ -1,5 +1,5 @@
-#include "model_md2.h"
-#include "math.h"
+#include "core/math.h"
+#include "object/model_md2.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>

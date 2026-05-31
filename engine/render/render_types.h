@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
-#include "math.h"
-#include "types.h"
+#include "core/math.h"
+#include "core/types.h"
 
 namespace engine3d {
 
@@ -69,11 +69,5 @@ struct RenderView {
 };
 
 class MeshManager;
-
-class IRenderable {
-public:
-    virtual ~IRenderable() = default;
-    virtual void collectRenderPackets(std::vector<RenderPacket>& packets, MeshManager& meshManager) = 0;
-};
 
 } // namespace engine3d

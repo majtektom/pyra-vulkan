@@ -1,14 +1,13 @@
-#include "skydome_renderer.h"
-#include "../render/renderer.h"
-#include "../../render/vulkan_util.h"
-#include "math.h"
-#include "types.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
+#include "render/renderer.h"
+#include "render/vulkan_util.h"
+#include "core/math.h"
+#include "core/types.h"
+#include "object/skydome_renderer.h"
 
 namespace engine3d {
 
@@ -132,7 +131,7 @@ void computeSkyColors(float timeOfDay,
     }
 }
 
-SkydomeRenderer::SkydomeRenderer() = default;
+SkydomeRenderer::SkydomeRenderer() : name_("SkydomeRenderer") {}
 SkydomeRenderer::~SkydomeRenderer() {
     if (renderer_) {
         cleanup(renderer_->device());

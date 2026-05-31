@@ -1,22 +1,21 @@
-#include "engine.h"
-#include "renderer.h"
-#include "types.h"
-#include "math.h"
-#include "mesh_component.h"
-#include "transform_component.h"
-#include "camera_component.h"
-#include "gui.h"
-#include "gui_button.h"
-#include "gui_check_box.h"
-#include "gui_list_box.h"
-#include "gui_track_bar.h"
-#include "gui_static_text.h"
-#include "gui_combo_box.h"
-#include "gui_scroll_bar.h"
-#include "gui_memo.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <sstream>
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "core/types.h"
+#include "core/math.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
+#include "feature/gui/gui.h"
+#include "feature/gui/gui_button.h"
+#include "feature/gui/gui_check_box.h"
+#include "feature/gui/gui_list_box.h"
+#include "feature/gui/gui_track_bar.h"
+#include "feature/gui/gui_static_text.h"
+#include "feature/gui/gui_combo_box.h"
+#include "feature/gui/gui_scroll_bar.h"
+#include "feature/gui/gui_memo.h"
 
 using namespace engine3d;
 
@@ -44,11 +43,11 @@ int main() {
         engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
 
     auto* camera = engine.createEntity("camera")->addComponent<CameraComponent>();
-    camera->position = {0, 3, -8};
+    camera->getOwner()->transform().position = {0, 3, -8};
     camera->fieldOfViewDegrees = 50;
     camera->farPlane = 1000;
     engine.setActiveCamera(camera);
-    engine.getCameraController()->setPositionAndTarget(camera->position, {0, 0, 0});
+    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, {0, 0, 0});
 
     auto guiMgr = std::make_shared<GuiMgr>();
     auto drawText = [&engine](const std::string& text, float x, float y, float scale, std::array<float, 4> color) {
@@ -64,7 +63,7 @@ int main() {
     auto* btnReset = new GuiButton(winCtrl, "Resetuj", 10, 10, 150, 28);
     btnReset->setText("Resetuj kamerę");
     btnReset->setOnClick([&]() {
-        camera->position = {0, 3, -8};
+        camera->getOwner()->transform().position = {0, 3, -8};
         engine.getCameraController()->setPositionAndTarget({0, 3, -8}, {0, 0, 0});
     });
 

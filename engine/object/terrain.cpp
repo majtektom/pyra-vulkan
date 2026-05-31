@@ -1,11 +1,3 @@
-#include "terrain.h"
-#include "math.h"
-#include "mesh_component.h"
-#include "engine.h"
-#include "mesh_manager.h"
-#include "renderer.h"
-#include "vulkan_util.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -14,6 +6,13 @@
 #include <fstream>
 #include <stdexcept>
 #include <stb_image.h>
+#include "core/math.h"
+#include "core/mesh_component.h"
+#include "core/engine.h"
+#include "core/mesh_manager.h"
+#include "render/renderer.h"
+#include "render/vulkan_util.h"
+#include "object/terrain.h"
 
 namespace engine3d {
 
@@ -485,7 +484,7 @@ void Terrain::update(const CameraComponent* cam, MeshManager& meshManager, const
 
 void Terrain::updateNodes(Node* node, const CameraComponent* cam) {
     if (!node) return;
-    Vec3 camPos = cam->position;
+    Vec3 camPos = cam->getOwner()->transform().position;
     float dist = std::sqrt((camPos.x - node->cx) * (camPos.x - node->cx) +
                            (camPos.z - node->cz) * (camPos.z - node->cz));
     float detailThresh = node->sizeXZ * 1.2f;
@@ -615,6 +614,7 @@ void Terrain::cleanupPipeline() {
 Terrain::~Terrain() {
     cleanupPipeline();
     deleteTree(root_);
+    delete root_;
     root_ = nullptr;
 }
 
@@ -629,11 +629,9 @@ void Terrain::deleteTree(Node* node) {
     for (int i = 0; i < 4; ++i) {
         if (node->children[i]) {
             deleteTree(node->children[i]);
-            delete node->children[i];
             node->children[i] = nullptr;
         }
     }
-    delete node;
 }
 
 // --- Height query ---

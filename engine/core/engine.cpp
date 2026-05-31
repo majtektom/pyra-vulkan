@@ -1,11 +1,11 @@
-#include "engine.h"
-#include "renderer.h"
-#include "font_manager.h"
-#include "mesh_component.h"
-#include "../render/backend/vulkan_context.h"
-#include "../render/material_system.h"
-#include "../object/mesh_manager.h"
-#include "../render/shader_hot_reload.h"
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "feature/font/font_manager.h"
+#include "core/mesh_component.h"
+#include "render/backend/vulkan_context.h"
+#include "render/material_system.h"
+#include "core/mesh_manager.h"
+#include "render/shader_hot_reload.h"
 
 #include <chrono>
 #include <cmath>
@@ -191,7 +191,8 @@ void Engine::renderFrame() {
         for (auto& packet : packets) {
             if (activeCamera) {
                 Vec3 objPos = { packet.transform.values[12], packet.transform.values[13], packet.transform.values[14] };
-                Vec3 diff = subtract(objPos, activeCamera->position);
+                Vec3 camPos = activeCamera->getOwner()->transform().position;
+                Vec3 diff = subtract(objPos, camPos);
                 packet.distanceToCamera = std::sqrt(dot(diff, diff));
             } else {
                 packet.distanceToCamera = 0.0f;
@@ -199,14 +200,15 @@ void Engine::renderFrame() {
             renderer->prepareRenderPacket(packet);
             renderScene.addPacket(packet);
         }
-    }
+        }
 
     RenderView renderView{};
     if (activeCamera) {
         renderView.view = activeCamera->getViewMatrix();
         renderView.projection = activeCamera->getProjectionMatrix();
-        renderView.cameraPosition = activeCamera->position;
-        Vec3 forward = normalize(subtract(activeCamera->target, activeCamera->position));
+        renderView.cameraPosition = activeCamera->getOwner()->transform().position;
+        Vec3 camPos = activeCamera->getOwner()->transform().position;
+        Vec3 forward = normalize(subtract(activeCamera->target, camPos));
         renderView.cameraRight = normalize(cross(forward, activeCamera->up));
         renderView.cameraUp = normalize(cross(renderView.cameraRight, forward));
     }

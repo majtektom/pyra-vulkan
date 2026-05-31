@@ -4,9 +4,9 @@
 #include <string>
 #include <functional>
 
-#include "types.h"
-#include "math.h"
-#include "render_pass.h"
+#include "core/types.h"
+#include "core/math.h"
+#include "render/render_pass.h"
 
 namespace engine3d {
 
@@ -17,7 +17,6 @@ class ShaderManager;
 class TextureManager;
 class Platform;
 class MeshComponent;
-class TransformComponent;
 class VulkanContext;
 class IRenderFeature;
 

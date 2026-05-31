@@ -1,13 +1,13 @@
-#include "skybox_renderer.h"
-#include "../render/renderer.h"
-#include "vulkan_util.h"
 #include <array>
-#include <stdexcept>
 #include <vector>
+#include <stdexcept>
+#include "render/renderer.h"
+#include "render/vulkan_util.h"
+#include "object/skybox_renderer.h"
 
 namespace engine3d {
 
-SkyboxRenderer::SkyboxRenderer() = default;
+SkyboxRenderer::SkyboxRenderer() : name_("SkyboxRenderer") {}
 SkyboxRenderer::~SkyboxRenderer() {
     if (renderer_) {
         cleanup(renderer_->device());

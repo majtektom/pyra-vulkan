@@ -1,22 +1,21 @@
-#include "renderer.h"
-#include "backend/vulkan_context.h"
-#include "backend/vulkan_swapchain.h"
-#include "render_pass.h"
-#include "standard_passes.h"
-#include "platform.h"
-#include "entity.h"
-#include "mesh_component.h"
-#include "texture_manager.h"
-#include "vulkan_util.h"
-#include "texture_asset_loader.h"
-#include "camera_component.h"
-#include <cstring>
 #include <iostream>
 #include <array>
 #include <unordered_map>
-
-#include "render_feature.h"
 #include <vector>
+#include <cstring>
+#include "render/backend/vulkan_context.h"
+#include "render/backend/vulkan_swapchain.h"
+#include "render/standard_passes.h"
+#include "platform/platform.h"
+#include "core/entity.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
+#include "render/render_pass.h"
+#include "render/texture_manager.h"
+#include "render/vulkan_util.h"
+#include "render/texture_asset_loader.h"
+#include "render/renderer.h"
+#include "render/render_feature.h"
 
 namespace engine3d {
 
@@ -189,7 +188,7 @@ public:
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
 
             for (const auto& packet : scene.getOpaquePackets()) {
-                if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
+                if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
                 VkBuffer vbs[] = {packet.vertexBuffer};
                 VkDeviceSize off[] = {0};
                 vkCmdBindVertexBuffers(cmd, 0, 1, vbs, off);
@@ -281,7 +280,7 @@ public:
         auto opaquePackets = scene.getOpaquePackets();
 
         for (const auto& packet : opaquePackets) {
-            if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
+            if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
 
             bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
 
@@ -706,52 +705,58 @@ public:
     }
 
     void cleanup() {
-        if (!vulkanContext_ || !vulkanContext_->device()) return;
+        if (cleanedUp_ || !vulkanContext_ || !vulkanContext_->device()) return;
         VkDevice device = vulkanContext_->device();
         vkDeviceWaitIdle(device);
+
+        features_.clear();
+        passes_.clear();
+
         cleanupGBuffer();
         for (auto& [name, tex] : textures_) {
-            if (tex.sampler) vkDestroySampler(device, tex.sampler, nullptr);
-            if (tex.imageView) vkDestroyImageView(device, tex.imageView, nullptr);
+            if (tex.sampler) { vkDestroySampler(device, tex.sampler, nullptr); tex.sampler = VK_NULL_HANDLE; }
+            if (tex.imageView) { vkDestroyImageView(device, tex.imageView, nullptr); tex.imageView = VK_NULL_HANDLE; }
             if (tex.image) {
-                vkDestroyImage(device, tex.image, nullptr);
-                vkFreeMemory(device, tex.imageMemory, nullptr);
+                vkDestroyImage(device, tex.image, nullptr); tex.image = VK_NULL_HANDLE;
+                vkFreeMemory(device, tex.imageMemory, nullptr); tex.imageMemory = VK_NULL_HANDLE;
             }
         }
         textures_.clear();
         for (int i = 0; i < kMaxFrames; i++) {
-            vkDestroySemaphore(device, imageAvailableSemaphores_[i], nullptr);
-            vkDestroySemaphore(device, renderFinishedSemaphores_[i], nullptr);
-            vkDestroySemaphore(device, presentReadySemaphores_[i], nullptr);
-            vkDestroySemaphore(device, renderTimelineSemaphores_[i], nullptr);
-            vkDestroyFence(device, inFlightFences_[i], nullptr);
-            if (uniformBuffersMapped_[i]) vkUnmapMemory(device, uniformBuffersMemory_[i]);
-            if (uniformBuffers_[i]) { vkDestroyBuffer(device, uniformBuffers_[i], nullptr);
-                vkFreeMemory(device, uniformBuffersMemory_[i], nullptr); }
+            if (imageAvailableSemaphores_[i]) { vkDestroySemaphore(device, imageAvailableSemaphores_[i], nullptr); imageAvailableSemaphores_[i] = VK_NULL_HANDLE; }
+            if (renderFinishedSemaphores_[i]) { vkDestroySemaphore(device, renderFinishedSemaphores_[i], nullptr); renderFinishedSemaphores_[i] = VK_NULL_HANDLE; }
+            if (presentReadySemaphores_[i]) { vkDestroySemaphore(device, presentReadySemaphores_[i], nullptr); presentReadySemaphores_[i] = VK_NULL_HANDLE; }
+            if (renderTimelineSemaphores_[i]) { vkDestroySemaphore(device, renderTimelineSemaphores_[i], nullptr); renderTimelineSemaphores_[i] = VK_NULL_HANDLE; }
+            if (inFlightFences_[i]) { vkDestroyFence(device, inFlightFences_[i], nullptr); inFlightFences_[i] = VK_NULL_HANDLE; }
+            if (uniformBuffersMapped_[i]) { vkUnmapMemory(device, uniformBuffersMemory_[i]); uniformBuffersMapped_[i] = nullptr; }
+            if (uniformBuffers_[i]) { vkDestroyBuffer(device, uniformBuffers_[i], nullptr); uniformBuffers_[i] = VK_NULL_HANDLE;
+                vkFreeMemory(device, uniformBuffersMemory_[i], nullptr); uniformBuffersMemory_[i] = VK_NULL_HANDLE; }
         }
-        if (descriptorPool_) vkDestroyDescriptorPool(device, descriptorPool_, nullptr);
-        if (descriptorSetLayout_) vkDestroyDescriptorSetLayout(device, descriptorSetLayout_, nullptr);
-        if (boneDescriptorSetLayout_) vkDestroyDescriptorSetLayout(device, boneDescriptorSetLayout_, nullptr);
-        if (pipelineLayout_) vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
+        if (descriptorPool_) { vkDestroyDescriptorPool(device, descriptorPool_, nullptr); descriptorPool_ = VK_NULL_HANDLE; }
+        if (descriptorSetLayout_) { vkDestroyDescriptorSetLayout(device, descriptorSetLayout_, nullptr); descriptorSetLayout_ = VK_NULL_HANDLE; }
+        if (boneDescriptorSetLayout_) { vkDestroyDescriptorSetLayout(device, boneDescriptorSetLayout_, nullptr); boneDescriptorSetLayout_ = VK_NULL_HANDLE; }
+        if (pipelineLayout_) { vkDestroyPipelineLayout(device, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
         
-        if (defaultSampler_) vkDestroySampler(device, defaultSampler_, nullptr);
-        if (defaultImageView_) vkDestroyImageView(device, defaultImageView_, nullptr);
-        if (defaultImage_) { vkDestroyImage(device, defaultImage_, nullptr); vkFreeMemory(device, defaultImageMemory_, nullptr); }
-        if (defaultNormalSampler_) vkDestroySampler(device, defaultNormalSampler_, nullptr);
-        if (defaultNormalImageView_) vkDestroyImageView(device, defaultNormalImageView_, nullptr);
-        if (defaultNormalImage_) { vkDestroyImage(device, defaultNormalImage_, nullptr); vkFreeMemory(device, defaultNormalImageMemory_, nullptr); }
-        if (defaultOrmSampler_) vkDestroySampler(device, defaultOrmSampler_, nullptr);
-        if (defaultOrmImageView_) vkDestroyImageView(device, defaultOrmImageView_, nullptr);
-        if (defaultOrmImage_) { vkDestroyImage(device, defaultOrmImage_, nullptr); vkFreeMemory(device, defaultOrmImageMemory_, nullptr); }
-        if (defaultBlackSampler_) vkDestroySampler(device, defaultBlackSampler_, nullptr);
-        if (defaultBlackImageView_) vkDestroyImageView(device, defaultBlackImageView_, nullptr);
-        if (defaultBlackImage_) { vkDestroyImage(device, defaultBlackImage_, nullptr); vkFreeMemory(device, defaultBlackImageMemory_, nullptr); }
+        if (defaultSampler_) { vkDestroySampler(device, defaultSampler_, nullptr); defaultSampler_ = VK_NULL_HANDLE; }
+        if (defaultImageView_) { vkDestroyImageView(device, defaultImageView_, nullptr); defaultImageView_ = VK_NULL_HANDLE; }
+        if (defaultImage_) { vkDestroyImage(device, defaultImage_, nullptr); defaultImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultImageMemory_, nullptr); defaultImageMemory_ = VK_NULL_HANDLE; }
+        if (defaultNormalSampler_) { vkDestroySampler(device, defaultNormalSampler_, nullptr); defaultNormalSampler_ = VK_NULL_HANDLE; }
+        if (defaultNormalImageView_) { vkDestroyImageView(device, defaultNormalImageView_, nullptr); defaultNormalImageView_ = VK_NULL_HANDLE; }
+        if (defaultNormalImage_) { vkDestroyImage(device, defaultNormalImage_, nullptr); defaultNormalImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultNormalImageMemory_, nullptr); defaultNormalImageMemory_ = VK_NULL_HANDLE; }
+        if (defaultOrmSampler_) { vkDestroySampler(device, defaultOrmSampler_, nullptr); defaultOrmSampler_ = VK_NULL_HANDLE; }
+        if (defaultOrmImageView_) { vkDestroyImageView(device, defaultOrmImageView_, nullptr); defaultOrmImageView_ = VK_NULL_HANDLE; }
+        if (defaultOrmImage_) { vkDestroyImage(device, defaultOrmImage_, nullptr); defaultOrmImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultOrmImageMemory_, nullptr); defaultOrmImageMemory_ = VK_NULL_HANDLE; }
+        if (defaultBlackSampler_) { vkDestroySampler(device, defaultBlackSampler_, nullptr); defaultBlackSampler_ = VK_NULL_HANDLE; }
+        if (defaultBlackImageView_) { vkDestroyImageView(device, defaultBlackImageView_, nullptr); defaultBlackImageView_ = VK_NULL_HANDLE; }
+        if (defaultBlackImage_) { vkDestroyImage(device, defaultBlackImage_, nullptr); defaultBlackImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultBlackImageMemory_, nullptr); defaultBlackImageMemory_ = VK_NULL_HANDLE; }
 
-        if (shadowPipeline_) vkDestroyPipeline(device, shadowPipeline_, nullptr);
-        if (shadowPipelineLayout_) vkDestroyPipelineLayout(device, shadowPipelineLayout_, nullptr);
-        if (shadowSampler_) vkDestroySampler(device, shadowSampler_, nullptr);
-        if (shadowMapView_) vkDestroyImageView(device, shadowMapView_, nullptr);
-        if (shadowMapImage_) { vkDestroyImage(device, shadowMapImage_, nullptr); vkFreeMemory(device, shadowMapMemory_, nullptr); }
+        if (shadowPipeline_) { vkDestroyPipeline(device, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
+        if (shadowPipelineLayout_) { vkDestroyPipelineLayout(device, shadowPipelineLayout_, nullptr); shadowPipelineLayout_ = VK_NULL_HANDLE; }
+        if (shadowSampler_) { vkDestroySampler(device, shadowSampler_, nullptr); shadowSampler_ = VK_NULL_HANDLE; }
+        if (shadowMapView_) { vkDestroyImageView(device, shadowMapView_, nullptr); shadowMapView_ = VK_NULL_HANDLE; }
+        if (shadowMapImage_) { vkDestroyImage(device, shadowMapImage_, nullptr); shadowMapImage_ = VK_NULL_HANDLE; vkFreeMemory(device, shadowMapMemory_, nullptr); shadowMapMemory_ = VK_NULL_HANDLE; }
+
+        cleanedUp_ = true;
     }
 
     uint32_t width() const { return platform_->width(); }
@@ -1973,6 +1978,7 @@ private:
     float ambientStrength_ = 0.3f;
     float ambientColor_[3] = {1.0f, 1.0f, 1.0f};
     bool shadowsEnabled_ = false;
+    bool cleanedUp_ = false;
 
     LightData storedLights_[kMaxLights] = {};
     uint32_t storedLightCount_ = 0;

@@ -1,11 +1,10 @@
-#include "platform.h"
+#include "platform/platform.h"
 
 #include <SDL3/SDL.h>
 #if ENGINE3D_HAS_TTF
 #include <SDL3_ttf/SDL_ttf.h>
 #endif
 #include <algorithm>
-#include <cstring>
 #include <stdexcept>
 
 namespace engine3d {
@@ -53,9 +52,9 @@ Platform::~Platform() {
 }
 
 void Platform::processEvents() {
-    mouseDeltaX_ = 0;
-    mouseDeltaY_ = 0;
-    mouseWheel_ = 0;
+    input_.mouseDeltaX = 0;
+    input_.mouseDeltaY = 0;
+    input_.mouseWheel = 0;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -77,7 +76,7 @@ void Platform::processEvents() {
         case SDL_EVENT_KEY_DOWN: {
             SDL_Scancode sc = event.key.scancode;
             if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
-                keys_[static_cast<int>(sc)] = true;
+                input_.keys[static_cast<int>(sc)] = true;
             }
             if (event.key.key == SDLK_ESCAPE) {
                 shouldClose_ = true;
@@ -87,7 +86,7 @@ void Platform::processEvents() {
         case SDL_EVENT_KEY_UP: {
             SDL_Scancode sc = event.key.scancode;
             if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
-                keys_[static_cast<int>(sc)] = false;
+                input_.keys[static_cast<int>(sc)] = false;
             }
             break;
         }
@@ -95,23 +94,23 @@ void Platform::processEvents() {
             if (!pointerGrabbed_) {
                 grabPointer(true);
             }
-            if (event.button.button == SDL_BUTTON_LEFT)  mouseButtons_[0] = true;
-            if (event.button.button == SDL_BUTTON_RIGHT) mouseButtons_[1] = true;
+            if (event.button.button == SDL_BUTTON_LEFT)  input_.mouseButtons[0] = true;
+            if (event.button.button == SDL_BUTTON_RIGHT) input_.mouseButtons[1] = true;
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
-            if (event.button.button == SDL_BUTTON_LEFT)  mouseButtons_[0] = false;
-            if (event.button.button == SDL_BUTTON_RIGHT) mouseButtons_[1] = false;
+            if (event.button.button == SDL_BUTTON_LEFT)  input_.mouseButtons[0] = false;
+            if (event.button.button == SDL_BUTTON_RIGHT) input_.mouseButtons[1] = false;
             break;
         case SDL_EVENT_MOUSE_MOTION:
             if (pointerGrabbed_) {
-                mouseDeltaX_ += static_cast<int>(event.motion.xrel);
-                mouseDeltaY_ += static_cast<int>(event.motion.yrel);
+                input_.mouseDeltaX += static_cast<int>(event.motion.xrel);
+                input_.mouseDeltaY += static_cast<int>(event.motion.yrel);
             }
-            mouseX_ = static_cast<int>(event.motion.x);
-            mouseY_ = static_cast<int>(event.motion.y);
+            input_.mouseX = static_cast<int>(event.motion.x);
+            input_.mouseY = static_cast<int>(event.motion.y);
             break;
         case SDL_EVENT_MOUSE_WHEEL:
-            mouseWheel_ += static_cast<int>(event.wheel.y);
+            input_.mouseWheel += static_cast<int>(event.wheel.y);
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             if (pointerGrabbed_) {
@@ -120,7 +119,7 @@ void Platform::processEvents() {
             break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
             if (!pointerGrabbed_) {
-                std::fill(std::begin(keys_), std::end(keys_), false);
+                std::fill(std::begin(input_.keys), std::end(input_.keys), false);
             }
             break;
         }
@@ -160,15 +159,7 @@ void Platform::setFullscreen(bool fullscreen) {
 bool Platform::isFullscreen() const { return fullscreen_; }
 
 InputSnapshot Platform::pollInput() {
-    InputSnapshot snap{};
-    std::memcpy(snap.keys, keys_, sizeof(keys_));
-    snap.mouseDeltaX = mouseDeltaX_;
-    snap.mouseDeltaY = mouseDeltaY_;
-    std::memcpy(snap.mouseButtons, mouseButtons_, sizeof(mouseButtons_));
-    snap.mouseX = mouseX_;
-    snap.mouseY = mouseY_;
-    snap.mouseWheel = mouseWheel_;
-    return snap;
+    return input_;
 }
 
 }  // namespace engine3d

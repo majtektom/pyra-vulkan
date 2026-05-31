@@ -1,9 +1,9 @@
 #pragma once
 
-#include "render_types.h"
-#include "../core/resource_manager.h"
-#include "backend/vulkan_context.h"
+#include "render/backend/vulkan_context.h"
 #include <unordered_map>
+#include "render/render_types.h"
+#include "core/resource_manager.h"
 
 namespace engine3d {
 

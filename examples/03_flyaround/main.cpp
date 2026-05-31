@@ -1,15 +1,3 @@
-#include "engine.h"
-#include "renderer.h"
-#include "mesh_component.h"
-#include "transform_component.h"
-#include "camera_component.h"
-#include "model_3ds.h"
-#include "model_md2.h"
-#include "model_gltf.h"
-#include "material_system.h"
-#include "vulkan_util.h"
-#include "skybox_renderer.h"
-
 #include <SDL3/SDL.h>
 
 #include <chrono>
@@ -20,6 +8,17 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
+#include "object/model_3ds.h"
+#include "object/model_md2.h"
+#include "object/gltf/model_gltf.h"
+#include "object/skybox_renderer.h"
+#include "render/material_system.h"
+#include "render/vulkan_util.h"
+
 
 using namespace engine3d;
 
@@ -146,9 +145,9 @@ int main() {
         auto* e = engine.createEntity(name);
         auto* mc = e->addComponent<MeshComponent>(meshName);
         mc->materialName = matName;
-        auto* tc = e->addComponent<TransformComponent>();
-        tc->translation = pos;
-        tc->scale = {2.0f, 2.0f, 2.0f};
+        // transform is built into Entity
+        e->transform().position = pos;
+        e->transform().scale = {2.0f, 2.0f, 2.0f};
     };
 
     addObj("floor", "floor", "podloga", {0,0,0});
@@ -244,9 +243,9 @@ int main() {
             auto* e = engine.createEntity(meshName);
             auto* mc = e->addComponent<MeshComponent>(meshName);
             mc->materialName = matName;
-            auto* tc = e->addComponent<TransformComponent>();
-            tc->translation = position;
-            tc->scale = {0.3f, 0.3f, 0.3f};
+            // transform is built into Entity
+            e->transform().position = position;
+            e->transform().scale = {0.3f, 0.3f, 0.3f};
         }
     };
 
@@ -290,19 +289,19 @@ int main() {
             auto* e = engine.createEntity("goblin_bump");
             auto* mc = e->addComponent<MeshComponent>("goblin_md2");
             mc->materialName = "goblin_bump";
-            auto* tc = e->addComponent<TransformComponent>();
-            tc->translation = {-50.0f, 7.0f, -5.0f};
-            tc->rotation = {-90.0f, 0.0f, 0.0f};
-            tc->scale = {0.4f, 0.4f, 0.4f};
+            // transform is built into Entity
+            e->transform().position = {-50.0f, 7.0f, -5.0f};
+            e->transform().rotation = {-90.0f, 0.0f, 0.0f};
+            e->transform().scale = {0.4f, 0.4f, 0.4f};
         }
         {
             auto* e = engine.createEntity("goblin_flat");
             auto* mc = e->addComponent<MeshComponent>("goblin_md2");
             mc->materialName = "goblin_flat";
-            auto* tc = e->addComponent<TransformComponent>();
-            tc->translation = {-50.0f, 7.0f, -20.0f};
-            tc->rotation = {-90.0f, 0.0f, 0.0f};
-            tc->scale = {0.4f, 0.4f, 0.4f};
+            // transform is built into Entity
+            e->transform().position = {-50.0f, 7.0f, -20.0f};
+            e->transform().rotation = {-90.0f, 0.0f, 0.0f};
+            e->transform().scale = {0.4f, 0.4f, 0.4f};
         }
     }
 
@@ -339,10 +338,10 @@ int main() {
             auto* e = engine.createEntity(name);
             auto* mc = e->addComponent<MeshComponent>(name);
             mc->materialName = name;
-            auto* tc = e->addComponent<TransformComponent>();
-            tc->translation = {-190.0f, 30.0f, 20.0f};
-            tc->rotation = {0.0f, 0.0f, 0.0f};
-            tc->scale = {0.2f, 0.2f, 0.2f};
+            // transform is built into Entity
+            e->transform().position = {-190.0f, 30.0f, 20.0f};
+            e->transform().rotation = {0.0f, 0.0f, 0.0f};
+            e->transform().scale = {0.2f, 0.2f, 0.2f};
         }
     }
 
@@ -448,15 +447,15 @@ int main() {
                 mc->skinVertexBuffer = svb;
             }
 
-            auto* tc = e->addComponent<TransformComponent>();
-            tc->translation = {-40.0f, 0.0f, 20.0f};
-            tc->rotation = {0.0f, 0.0f, 0.0f};
-            tc->scale = {10.0f, 10.0f, 10.0f};
+            // transform is built into Entity
+            e->transform().position = {-40.0f, 0.0f, 20.0f};
+            e->transform().rotation = {0.0f, 0.0f, 0.0f};
+            e->transform().scale = {10.0f, 10.0f, 10.0f};
         }
     }
 
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
-    camera->position = {-60.0f, 15.0f, -62.0f};
+    camera->getOwner()->transform().position = {-60.0f, 15.0f, -62.0f};
     camera->target = {0.5f, 0.0f, 0.5f};
     camera->fieldOfViewDegrees = 50.0f;
     camera->nearPlane = 1.5f;
@@ -464,7 +463,7 @@ int main() {
     engine.setActiveCamera(camera);
 
     // Inicjalizacja kontrolera kamery (tylko raz)
-    engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
+    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
 
     engine.onUpdate = [&, md2Model, md2State](float dt, Engine& e) {
         MeshData animMesh;
@@ -518,11 +517,11 @@ int main() {
         if (cam) {
             std::ostringstream pos;
             pos << "pos: " << std::fixed << std::setprecision(0)
-                << cam->position.x << " " << cam->position.y << " " << cam->position.z;
+                << cam->getOwner()->transform().position.x << " " << cam->getOwner()->transform().position.y << " " << cam->getOwner()->transform().position.z;
             e.setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f,
                                           {0.7f, 0.7f, 1.0f, 1.0f});
 
-            Vec3 dir = normalize(subtract(cam->target, cam->position));
+            Vec3 dir = normalize(subtract(cam->target, cam->getOwner()->transform().position));
             std::ostringstream look;
             look << "dir: " << std::fixed << std::setprecision(2)
                  << dir.x << " " << dir.y << " " << dir.z;

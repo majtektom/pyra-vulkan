@@ -1,11 +1,12 @@
-#include "camera_component.h"
+#include "core/entity.h"
+#include "camera/camera_component.h"
 
 namespace engine3d {
 
 CameraComponent::CameraComponent() : Component("Camera") {}
 
 Matrix4 CameraComponent::getViewMatrix() const {
-    return lookAt(position, target, up);
+    return lookAt(owner->transform().position, target, up);
 }
 
 Matrix4 CameraComponent::getProjectionMatrix() const {

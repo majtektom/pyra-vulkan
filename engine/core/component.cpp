@@ -1,4 +1,4 @@
-#include "component.h"
+#include "core/component.h"
 
 namespace engine3d {
 

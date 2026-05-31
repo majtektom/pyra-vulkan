@@ -4,9 +4,9 @@
 #include <string>
 #include <vulkan/vulkan.h>
 
-#include "math.h"
-#include "types.h"
-#include "../render/render_feature.h"
+#include "core/math.h"
+#include "core/types.h"
+#include "render/render_feature.h"
 
 namespace engine3d {
 
@@ -20,7 +20,7 @@ public:
     void init(Renderer* renderer) override;
     void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
     bool isActive() const override { return enabled_ && ready_; }
-    const std::string& getName() const override { static std::string name = "OceanRenderer"; return name; }
+    const std::string& getName() const override { return name_; }
     Stage getStage() const override { return Stage::AfterTransparent; }
 
     void configure(const OceanConfig& config, const std::string& shaderDir, const std::string& descName);
@@ -39,6 +39,7 @@ private:
         const OceanConfig& config
     ) const;
 
+    std::string name_;
     bool enabled_ = false;
     bool ready_ = false;
     Renderer* renderer_ = nullptr;

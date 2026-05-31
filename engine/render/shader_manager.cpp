@@ -1,6 +1,6 @@
-#include "shader_manager.h"
-
 #include <stdexcept>
+
+#include "render/shader_manager.h"
 
 namespace engine3d {
 

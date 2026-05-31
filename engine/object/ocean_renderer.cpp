@@ -1,12 +1,11 @@
-#include "ocean_renderer.h"
-#include "../render/renderer.h"
-#include "../../render/vulkan_util.h"
-#include "math.h"
-#include "types.h"
-
 #include <array>
 #include <stdexcept>
 #include <vector>
+#include "render/renderer.h"
+#include "render/vulkan_util.h"
+#include "core/math.h"
+#include "core/types.h"
+#include "object/ocean_renderer.h"
 
 namespace engine3d {
 
@@ -59,7 +58,7 @@ void generateOceanMesh(std::vector<Vertex>& vertices, std::vector<uint32_t>& ind
 
 }  // namespace
 
-OceanRenderer::OceanRenderer() = default;
+OceanRenderer::OceanRenderer() : name_("OceanRenderer") {}
 OceanRenderer::~OceanRenderer() {
     if (renderer_) {
         cleanup(renderer_->device());

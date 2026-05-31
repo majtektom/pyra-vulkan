@@ -1,6 +1,3 @@
 add_executable(04_particles_example main.cpp)
 target_link_libraries(04_particles_example PRIVATE engine3d)
-target_compile_definitions(04_particles_example PRIVATE
-    EXAMPLE_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/rotating_cube"
-)
-add_dependencies(04_particles_example rotating_cube_shaders sprite_shaders skydome_shaders ocean_shaders)
+add_dependencies(04_particles_example sprite_shaders skydome_shaders ocean_shaders)

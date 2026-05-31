@@ -1,5 +1,3 @@
-#include "texture_asset_loader.h"
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -12,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "render/texture_asset_loader.h"
 namespace engine3d {
 namespace {
 

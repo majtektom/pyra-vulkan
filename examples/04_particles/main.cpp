@@ -1,15 +1,3 @@
-#include "engine.h"
-#include "renderer.h"
-#include "types.h"
-#include "math.h"
-#include "mesh_component.h"
-#include "camera_component.h"
-#include "particle_system.h"
-#include "sprite.h"
-#include "grid_renderer.h"
-#include "ocean_renderer.h"
-#include "skydome_renderer.h"
-
 #include <SDL3/SDL.h>
 
 #include <cmath>
@@ -18,6 +6,18 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "core/types.h"
+#include "core/math.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
+#include "feature/particle/system.h"
+#include "feature/sprite/sprite.h"
+#include "object/grid_renderer.h"
+#include "object/ocean_renderer.h"
+#include "object/skydome_renderer.h"
+
 
 using namespace engine3d;
 
@@ -59,7 +59,6 @@ int main() {
 
     auto ocean = std::make_shared<OceanRenderer>();
     OceanConfig oceanCfg;
-
     oceanCfg.enabled = true;
     oceanCfg.waterLevel = -8.0f;
     oceanCfg.waveAmplitude = 1.0f;
@@ -85,7 +84,7 @@ int main() {
     skydome->setEnabled(true);
     renderer->addFeature(skydome);
 
-    CParticleSystem particleSys;
+    particles::ParticleSystem particleSys;
     if (!particleSys.load("assets/textures/particles/przyklad.particle")) {
         std::cout << "No .particle file found, using hardcoded setup\n";
         auto* emitter = particleSys.addEmitter("fountain");
@@ -144,14 +143,14 @@ int main() {
     spriteSys.initialize(engine);
 
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
-    camera->position = {0.0f, 5.0f, -15.0f};
+    camera->getOwner()->transform().position = {0.0f, 5.0f, -15.0f};
     camera->target = {0.0f, 0.5f, 0.0f};
     camera->fieldOfViewDegrees = 60.0f;
     camera->nearPlane = 0.5f;
     camera->farPlane = 16000.0f;
     engine.setActiveCamera(camera);
 
-    engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
+    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
 
     engine.onUpdate = [&particleSys, &spriteSys, firenId, wybuchId, &timeOfDay, &cloudCov, &cloudDir, &skydomeCfg, &oceanCfg, &engine, &skydome, &ocean, dayNightSpeed, weatherSpeed](float dt, Engine& e) {
         static float animTime = 0.0f;
@@ -177,7 +176,7 @@ int main() {
         particleSys.update(dt, e);
 
         if (cam) {
-            particleSys.setCameraPosition(cam->position);
+            particleSys.setCameraPosition(cam->getOwner()->transform().position);
         }
 
         {
@@ -228,11 +227,11 @@ int main() {
         if (cam) {
             std::ostringstream pos;
             pos << "pos: " << std::fixed << std::setprecision(0)
-                << cam->position.x << " " << cam->position.y << " " << cam->position.z;
+                << cam->getOwner()->transform().position.x << " " << cam->getOwner()->transform().position.y << " " << cam->getOwner()->transform().position.z;
             e.setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f,
                                           {0.7f, 0.7f, 1.0f, 1.0f});
 
-            Vec3 dir = normalize(subtract(cam->target, cam->position));
+            Vec3 dir = normalize(subtract(cam->target, cam->getOwner()->transform().position));
             std::ostringstream look;
             look << "dir: " << std::fixed << std::setprecision(2)
                  << dir.x << " " << dir.y << " " << dir.z;

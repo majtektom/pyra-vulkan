@@ -7,18 +7,22 @@
 #include <type_traits>
 #include <vector>
 
-#include "component.h"
+#include "core/component.h"
+#include "core/transform_component.h"
 
 namespace engine3d {
 
 class Entity {
 public:
     explicit Entity(const std::string& entityName);
-    virtual ~Entity() = default;
+    ~Entity() = default;
 
-    const std::string& getName() const { return name; }
-    bool isActive() const { return active; }
-    void setActive(bool isActive) { active = isActive; }
+    const std::string& getName() const { return name_; }
+    bool isActive() const { return active_; }
+    void setActive(bool isActive) { active_ = isActive; }
+
+    TransformComponent& transform() { return *transform_; }
+    const TransformComponent& transform() const { return *transform_; }
 
     void initialize();
     void update(std::chrono::milliseconds deltaTime);
@@ -30,7 +34,7 @@ public:
         auto component = std::make_unique<T>(std::forward<Args>(args)...);
         T* componentPtr = component.get();
         componentPtr->setOwner(this);
-        components.push_back(std::move(component));
+        components_.push_back(std::move(component));
         componentPtr->initialize();
         return componentPtr;
     }
@@ -38,7 +42,7 @@ public:
     template <typename T>
     T* getComponent() const {
         static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
-        for (auto it = components.rbegin(); it != components.rend(); ++it) {
+        for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
             if (auto* casted = dynamic_cast<T*>(it->get())) {
                 return casted;
             }
@@ -49,9 +53,9 @@ public:
     template <typename T>
     bool removeComponent() {
         static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
-        for (auto it = components.rbegin(); it != components.rend(); ++it) {
+        for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
             if (dynamic_cast<T*>(it->get()) != nullptr) {
-                components.erase(std::next(it).base());
+                components_.erase(std::next(it).base());
                 return true;
             }
         }
@@ -65,9 +69,10 @@ public:
     }
 
 private:
-    std::string name;
-    bool active = true;
-    std::vector<std::unique_ptr<Component>> components;
+    std::string name_;
+    bool active_ = true;
+    TransformComponent* transform_ = nullptr;
+    std::vector<std::unique_ptr<Component>> components_;
 };
 
 } // namespace engine3d

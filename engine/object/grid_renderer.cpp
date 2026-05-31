@@ -1,13 +1,13 @@
-#include "grid_renderer.h"
-#include "../render/renderer.h"
-#include "vulkan_util.h"
 #include <array>
 #include <stdexcept>
 #include <vector>
+#include "render/vulkan_util.h"
+#include "render/renderer.h"
+#include "object/grid_renderer.h"
 
 namespace engine3d {
 
-GridRenderer::GridRenderer() = default;
+GridRenderer::GridRenderer() : name_("GridRenderer") {}
 GridRenderer::~GridRenderer() {
     if (renderer_) {
         cleanup(renderer_->device());

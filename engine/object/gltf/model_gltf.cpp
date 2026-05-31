@@ -1,5 +1,5 @@
-#include "model_gltf.h"
-#include "math.h"
+#include "object/gltf/model_gltf.h"
+#include "core/math.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -10,7 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include "tiny_gltf.h"
+#include "object/gltf/tiny_gltf.h"
 
 namespace engine3d {
 namespace {

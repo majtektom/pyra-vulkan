@@ -5,9 +5,9 @@
 #include <string>
 #include <vulkan/vulkan.h>
 
-#include "math.h"
-#include "types.h"
-#include "../render/render_feature.h"
+#include "core/math.h"
+#include "core/types.h"
+#include "render/render_feature.h"
 
 namespace engine3d {
 
@@ -35,16 +35,17 @@ void computeSkyColors(float timeOfDay,
                       std::array<float, 4>& horizonColor,
                       std::array<float, 4>& sunColorOut);
 
+class Renderer;
+
 class SkydomeRenderer : public IRenderFeature {
 public:
     SkydomeRenderer();
     ~SkydomeRenderer() override;
 
-    // IRenderFeature implementation
     void init(Renderer* renderer) override;
     void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
     bool isActive() const override { return enabled_ && ready_; }
-    const std::string& getName() const override { static std::string name = "SkydomeRenderer"; return name; }
+    const std::string& getName() const override { return name_; }
     Stage getStage() const override { return Stage::BeforeOpaque; }
 
     // Manual config
@@ -56,6 +57,7 @@ public:
     VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
 
 private:
+    std::string name_;
     bool enabled_ = false;
     bool ready_ = false;
     SkydomeConfig config_;

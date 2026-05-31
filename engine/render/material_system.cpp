@@ -1,6 +1,6 @@
-#include "material_system.h"
-#include "base_material_instance.cpp"
-#include "vulkan_util.h"
+#include "render/material_system.h"
+#include "render/base_material_instance.h"
+#include "render/vulkan_util.h"
 #include <array>
 #include <stdexcept>
 #include <vector>

@@ -1,16 +1,15 @@
-#include "engine.h"
-#include "renderer.h"
-#include "types.h"
-#include "mesh_component.h"
-#include "transform_component.h"
-#include "camera_component.h"
-#include "terrain.h"
-#include "ocean_renderer.h"
-#include "skydome_renderer.h"
 #include <SDL3/SDL.h>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include "core/engine.h"
+#include "render/renderer.h"
+#include "core/types.h"
+#include "core/mesh_component.h"
+#include "camera/camera_component.h"
+#include "object/terrain.h"
+#include "object/ocean_renderer.h"
+#include "object/skydome_renderer.h"
 
 using namespace engine3d;
 
@@ -78,13 +77,13 @@ int main() {
     terrain.setupMultiTexture(engine);
 
     auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
-    camera->position = {0.0f, 120.0f, 0.0f};
+    camera->getOwner()->transform().position = {0.0f, 120.0f, 0.0f};
     camera->target = {1.0f, 0.0f, 0.0f};
     camera->fieldOfViewDegrees = 60.0f;
     camera->nearPlane = 0.5f;
     camera->farPlane = 8000.0f;
     engine.setActiveCamera(camera);
-    engine.getCameraController()->setPositionAndTarget(camera->position, camera->target);
+    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
     engine.enableShaderHotReload(true);
 
     bool cursorGrabbed = true;
@@ -113,7 +112,7 @@ int main() {
             if (snap.keys[SDL_SCANCODE_LCTRL]) cc->moveUp(-vel);
             cc->update(dt, *cam);
             if (snap.keys[SDL_SCANCODE_G])
-                cam->position.y = terrain.getHeight(cam->position.x, cam->position.z) + 3.0f;
+                cam->getOwner()->transform().position.y = terrain.getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
         }
 
         terrain.update(cam, *engine.getMeshManager(), terrain.meshName());
@@ -152,8 +151,8 @@ int main() {
         if (cam) {
             std::ostringstream pos;
             pos << "pos: " << std::fixed << std::setprecision(0)
-                << cam->position.x << " " << cam->position.y << " " << cam->position.z
-                << "  h: " << std::setprecision(1) << terrain.getHeight(cam->position.x, cam->position.z);
+                << cam->getOwner()->transform().position.x << " " << cam->getOwner()->transform().position.y << " " << cam->getOwner()->transform().position.z
+                << "  h: " << std::setprecision(1) << terrain.getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z);
             e.setTextLabel(pos.str(), "times", 10, 75, 0.6f, {0.7f, 0.7f, 1.0f, 1.0f});
         }
     };

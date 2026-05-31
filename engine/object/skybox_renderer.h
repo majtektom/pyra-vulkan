@@ -1,31 +1,27 @@
 #pragma once
- 
+
 #include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
- 
-#include "types.h"
-#include "../render/render_feature.h"
- 
+
+#include "core/types.h"
+#include "render/render_feature.h"
+
 namespace engine3d {
- 
+
 class Renderer;
- 
-// SkyboxRenderer rysuje niebo jako piec scian (brak podlogi) z teksturami DDS.
-// Odpowiednik Plazer::CSkyBox ze starego projektu (skyBox.h/skyBox.cpp).
-// Kazda instancja tworzy wlasny pipeline Vulkan, bufory vertex/index i zarzadza teksturami.
+
 class SkyboxRenderer : public IRenderFeature {
 public:
     SkyboxRenderer();
     ~SkyboxRenderer() override;
- 
-    // Metody IRenderFeature
+
     void init(Renderer* renderer) override;
     void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
     bool isActive() const override { return enabled_ && ready_; }
-    const std::string& getName() const override { static std::string name = "SkyboxRenderer"; return name; }
+    const std::string& getName() const override { return name_; }
     Stage getStage() const override { return Stage::BeforeOpaque; }
  
     // Konfiguracja
@@ -51,6 +47,7 @@ public:
     [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
  
 private:
+    std::string name_;
     bool enabled_ = false;
     bool ready_ = false;
     Renderer* renderer_ = nullptr;

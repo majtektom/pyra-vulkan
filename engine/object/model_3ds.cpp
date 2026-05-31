@@ -1,7 +1,5 @@
-
-
-#include "model_3ds.h"
-#include "material_system.h"
+#include "render/material_system.h"
+#include "object/model_3ds.h"
 
 namespace engine3d {
 
@@ -289,7 +287,7 @@ bool Model3ds::unload() {
 
 bool Model3ds::load(const std::string& name) {
     ray = 1.0f;
-    this->name = name;
+    // this->name = name;
     if (name.empty()) {
         std::cerr << "[Model3ds] No file name" << std::endl;
         return false;
@@ -1108,27 +1106,6 @@ void Model3ds::computeNormals(t3DObject* object) {
 
     delete[] pTempNormals;
     delete[] pNormals;
-}
-
-Object3ds::~Object3ds() {
-    if (mo) {
-        mo->reference--;
-    }
-}
-
-void Object3ds::setModel(Model3ds* m) {
-    if (mo)
-        mo->reference--;
-    if (m) {
-        model = m;
-        mo = m;
-        mo->reference++;
-        ray = m->ray;
-    }
-}
-
-void Object3ds::render() {
-    if (!mo) return;
 }
 
 } // namespace engine3d

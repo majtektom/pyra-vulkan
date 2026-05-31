@@ -1,29 +1,25 @@
 #pragma once
- 
+
 #include <cstdint>
 #include <string>
 #include <vulkan/vulkan.h>
- 
-#include "types.h"
-#include "../render/render_feature.h"
- 
+
+#include "core/types.h"
+#include "render/render_feature.h"
+
 namespace engine3d {
- 
+
 class Renderer;
- 
-// GridRenderer rysuje pomocnicza siatke na plaszczyznie XZ.
-// Odpowiednik Plazer::Grid3d ze starego projektu (Grid.h/Grid.cpp).
-// Kazda instancja tworzy wlasny pipeline Vulkan i bufor wierzcholkow.
+
 class GridRenderer : public IRenderFeature {
 public:
     GridRenderer();
     ~GridRenderer() override;
- 
-    // Metody IRenderFeature
+
     void init(Renderer* renderer) override;
     void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) override;
     bool isActive() const override { return enabled_ && ready_; }
-    const std::string& getName() const override { static std::string name = "GridRenderer"; return name; }
+    const std::string& getName() const override { return name_; }
     Stage getStage() const override { return Stage::AfterOpaque; }
  
     // Konfiguracja
@@ -48,6 +44,7 @@ public:
     void setEnabled(bool e) { enabled_ = e; }
  
 private:
+    std::string name_;
     bool enabled_ = false;
     bool ready_ = false;
     Renderer* renderer_ = nullptr;

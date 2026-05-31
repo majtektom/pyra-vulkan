@@ -1,15 +1,3 @@
-add_shader_bundle(
-    rotating_cube
-    rotating_cube.vert.hlsl=cube.hlsl@vertexMain
-    rotating_cube.frag.hlsl=cube.hlsl@fragmentMain
-)
-
-add_executable(02_rotating_cube_example
-    main.cpp
-)
-
+add_executable(02_rotating_cube_example main.cpp)
 target_link_libraries(02_rotating_cube_example PRIVATE engine3d)
-target_compile_definitions(02_rotating_cube_example PRIVATE
-    EXAMPLE_SHADER_DIR="${rotating_cube_SHADER_DIR}"
-)
-add_dependencies(02_rotating_cube_example ${rotating_cube_SHADER_TARGET})
+add_dependencies(02_rotating_cube_example)

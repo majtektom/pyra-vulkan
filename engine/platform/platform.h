@@ -47,13 +47,7 @@ private:
     uint32_t width_ = 0;
     uint32_t height_ = 0;
 
-    bool keys_[256] = {};
-    int mouseDeltaX_ = 0;
-    int mouseDeltaY_ = 0;
-    bool mouseButtons_[5] = {};
-    int mouseX_ = 0;
-    int mouseY_ = 0;
-    int mouseWheel_ = 0;
+    InputSnapshot input_;
     bool pointerGrabbed_ = false;
     bool fullscreen_ = false;
 };
