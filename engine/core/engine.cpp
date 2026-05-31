@@ -310,6 +310,10 @@ bool Engine::shadowsEnabled() const {
     return renderer ? renderer->shadowsEnabled() : false;
 }
 
+void Engine::configureDirectionalShadow(float halfSize) {
+    if (renderer) renderer->configureDirectionalShadow(halfSize);
+}
+
 void Engine::setLightColor(float r, float g, float b) {
     if (renderer) renderer->setLightColor(r, g, b);
 }

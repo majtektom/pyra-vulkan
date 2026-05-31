@@ -54,6 +54,8 @@ public:
     void setShadowsEnabled(bool enabled);
     bool shadowsEnabled() const;
 
+    void configureDirectionalShadow(float halfSize);
+
     void setLightColor(float r, float g, float b);
 
     void setLightingEnabled(bool enabled);

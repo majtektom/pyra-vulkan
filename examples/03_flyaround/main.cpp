@@ -69,7 +69,8 @@ int main() {
     engine.setShadowsEnabled(true);
     engine.setAmbientStrength(0.35f);
     engine.setAmbientColor(0.45f, 0.48f, 0.55f);
-    engine.addDirectionalLight(0.3f, 0.8f, 0.5f, 0.9f, 0.9f, 0.7f, 3.2f);
+    engine.addDirectionalLight(2.3f, 2.8f, 2.5f, 0.9f, 0.9f, 0.7f, 3.2f);
+    engine.configureDirectionalShadow(240.0f);
 
     const std::string skyboxDir = "assets/skybox/noc";
     // const std::string skyboxDir = "assets/skybox/dzien";
@@ -252,7 +253,7 @@ int main() {
     addModel("assets/models/3ds/bronie/M4.3DS", "m4", {-20.0f, 10.0f, 0.0f}, true, "assets/models/3ds/bronie/m4.dds");
     addModel("assets/models/3ds/drzewko5.3DS", "DRZEWKO", {20.0f, 0.0f, 10.0f});
     addModel("assets/models/3ds/trawa/grass.3ds", "grass", {15.0f, 0.0f, 0.0f});
-    addModel("assets/models/3ds/D1.3DS", "D1", {35.0f, 0.0f, 0.0f});
+    addModel("assets/models/3ds/D1.3DS", "D1", {-5.0f, 0.0f, 10.0f});
 
     auto md2Model = std::make_shared<Md2ModelData>();
     auto md2State = std::make_shared<Md2AnimationState>();

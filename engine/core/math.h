@@ -215,6 +215,17 @@ struct Matrix4 {
     return matrix;
 }
 
+[[nodiscard]] inline Matrix4 ortho(float left, float right, float bottom, float top, float nearPlane, float farPlane) {
+    Matrix4 matrix = Matrix4::identity();
+    matrix.values[0] = 2.0f / (right - left);
+    matrix.values[5] = 2.0f / (bottom - top); // Flip Y for Vulkan
+    matrix.values[10] = -1.0f / (farPlane - nearPlane); // Map negative Z to [0,1]
+    matrix.values[12] = -(right + left) / (right - left);
+    matrix.values[13] = -(bottom + top) / (bottom - top);
+    matrix.values[14] = -nearPlane / (farPlane - nearPlane);
+    return matrix;
+}
+
 // Buduje macierz widoku kamery na podstawie pozycji oka, celu patrzenia i wektora "gora".
 [[nodiscard]] inline Matrix4 lookAt(const Vec3& eye, const Vec3& center, const Vec3& up) {
     const Vec3 forward = normalize(subtract(center, eye));

@@ -24,6 +24,7 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     packet.indexCount = gpuMesh->indexCount;
 
     packet.transform = owner->transform().getLocalMatrix();
+    packet.castShadows = castShadows;
 
     if (materialInstance) {
         packet.material = materialInstance;

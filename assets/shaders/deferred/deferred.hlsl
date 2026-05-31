@@ -1,36 +1,26 @@
 #include "shared/pbr.hlsl"
 
+struct LightData {
+    column_major float4x4 lightViewProj;
+    float4 position;    // xyz = world position, w = shadow map layer index
+    float4 direction;   // xyz = light direction, w = type: 1=dir, 2=point, 3=spot
+    float4 color;       // rgb = color, w = intensity
+    float4 params;      // x=innerCos, y=outerCos, z=range, w=unused
+};
+
 cbuffer GlobalUniformBufferObject : register(b0, space0)
 {
     column_major float4x4 view;
     column_major float4x4 proj;
     float4 camRight;
     float4 camUp;
-    column_major float4x4 lightViewProj;
-    float4 _padLightDir;
-    uint shadowMapIndex;
-    uint lightingEnabled;
-    float ambientStrength;
-    uint lightCount;
-    float4 _padLightColor;
-    float4 ambientColor;
     float4 cameraPos;
-    float4 lights_0_position;
-    float4 lights_0_direction;
-    float4 lights_0_color;
-    float4 lights_0_params;
-    float4 lights_1_position;
-    float4 lights_1_direction;
-    float4 lights_1_color;
-    float4 lights_1_params;
-    float4 lights_2_position;
-    float4 lights_2_direction;
-    float4 lights_2_color;
-    float4 lights_2_params;
-    float4 lights_3_position;
-    float4 lights_3_direction;
-    float4 lights_3_color;
-    float4 lights_3_params;
+    float4 ambientColor;
+    float ambientStrength;
+    uint lightingEnabled;
+    uint lightCount;
+    uint shadowsEnabled;
+    LightData lights[16];
 };
 
 [[vk::binding(0, 1)]] Texture2D<float4> gbufferAlbedo;
@@ -38,6 +28,8 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
 [[vk::binding(1, 1)]] Texture2D<float4> gbufferNormal;
 [[vk::binding(2, 1)]] Texture2D<float4> gbufferOcclusion;
 [[vk::binding(3, 1)]] Texture2D<float4> gbufferWorldPos;
+[[vk::binding(4, 1)]] Texture2DArray<float> shadowMapArray;
+[[vk::binding(4, 1)]] SamplerComparisonState shadowSampler;
 
 struct VertexOutput
 {
@@ -51,6 +43,39 @@ VertexOutput vertexMain(uint vid : SV_VertexID)
     o.uv = float2((vid << 1) & 2, vid & 2);
     o.position = float4(o.uv * float2(2.0, 2.0) + float2(-1.0, -1.0), 0.0, 1.0);
     return o;
+}
+
+float sampleShadow(uint lightIndex, float3 worldPos, float3 N)
+{
+    float3 L = (lights[lightIndex].direction.w == 1.0) ? 
+               normalize(lights[lightIndex].direction.xyz) : 
+               normalize(lights[lightIndex].position.xyz - worldPos);
+
+    // Dynamic bias based on normal and light direction
+    float bias = max(0.01 * (1.0 - dot(N, L)), 0.002);
+    float4 shadowPos = mul(lights[lightIndex].lightViewProj, float4(worldPos + N * bias, 1.0));
+    float3 projCoords = shadowPos.xyz / shadowPos.w;
+    
+    // Transform to [0,1] range
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    
+    if (projCoords.z > 1.0) return 1.0;
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 1.0;
+
+    float shadow = 0.0;
+    float2 texelSize = 1.0 / 2048.0;
+    float layer = lights[lightIndex].position.w;
+
+    // PCF 3x3
+    for(int x = -1; x <= 1; ++x)
+    {
+        for(int y = -1; y <= 1; ++y)
+        {
+            shadow += shadowMapArray.SampleCmpLevelZero(shadowSampler, float3(projCoords.xy + float2(x, y) * texelSize, layer), projCoords.z);
+        }
+    }
+    
+    return shadow / 9.0;
 }
 
 float4 fragmentMain(VertexOutput input) : SV_Target0
@@ -68,79 +93,58 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     float emissiveStrength = occlusionEmissive.g;
 
     float3 worldPos = worldPosData.xyz;
-
-    // Discard pixels without GBuffer data (skybox regions)
     if (worldPosData.w < 0.5) discard;
 
-    float4 baseColorOut = float4(baseColor, 1.0);
-
-    if (lightingEnabled == 0)
-    {
-        return baseColorOut;
-    }
-
-    if (lightingEnabled == 0)
-    {
-        return baseColorOut;
-    }
+    if (lightingEnabled == 0) return float4(baseColor, 1.0);
 
     float3 V = normalize(cameraPos.xyz - worldPos);
     float NdotV = max(dot(N, V), 0.0);
-
-    float3 F0 = float3(0.04, 0.04, 0.04);
-    F0 = lerp(F0, baseColor, metallic);
+    float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
 
     float3 Lo = float3(0.0, 0.0, 0.0);
-    uint count = min(lightCount, 4u);
+    uint count = min(lightCount, 16u);
 
     for (uint i = 0; i < count; i++)
     {
-        float4 pos = getLightPosition(i, lights_0_position, lights_1_position, lights_2_position, lights_3_position);
-        float4 dir = getLightDirection(i, lights_0_direction, lights_1_direction, lights_2_direction, lights_3_direction);
-        float4 col = getLightColor(i, lights_0_color, lights_1_color, lights_2_color, lights_3_color);
-        float4 par = getLightParams(i, lights_0_params, lights_1_params, lights_2_params, lights_3_params);
-        uint ltype = uint(dir.w);
+        float3 pos = lights[i].position.xyz;
+        float3 dir = lights[i].direction.xyz;
+        float3 col = lights[i].color.rgb;
+        float intensity = lights[i].color.w;
+        float4 par = lights[i].params;
+        uint ltype = uint(lights[i].direction.w);
 
+        float3 L;
+        float3 radiance;
+        
         if (ltype == 1) // directional
         {
-            float3 L = normalize(dir.xyz);
-            float3 radiance = col.rgb * col.w;
-            Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance);
+            L = normalize(dir);
+            radiance = col * intensity;
         }
-        else if (ltype == 2) // point
+        else if (ltype == 2 || ltype == 3) // point or spot
         {
-            float3 Lvec = pos.xyz - worldPos;
+            float3 Lvec = pos - worldPos;
             float dist = length(Lvec);
             float range = max(par.z, 0.001);
             float attenuation = 1.0 / (1.0 + (dist * dist) / (range * range));
-            float3 L = Lvec / dist;
-            float3 radiance = col.rgb * col.w * attenuation;
-            Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance);
+            L = Lvec / dist;
+            radiance = col * intensity * attenuation;
+            
+            if (ltype == 3) // spot
+            {
+                float theta = dot(-L, normalize(dir));
+                radiance *= smoothstep(par.y, par.x, theta);
+            }
         }
-        else if (ltype == 3) // spot
-        {
-            float3 Lvec = pos.xyz - worldPos;
-            float dist = length(Lvec);
-            float range = max(par.z, 0.001);
-            float attenuation = 1.0 / (1.0 + (dist * dist) / (range * range));
-            float3 L = Lvec / dist;
+        else continue;
 
-            float3 spotDir = normalize(dir.xyz);
-            float theta = dot(-L, spotDir);
-            float inner = max(par.x, 0.01);
-            float outer = max(par.y, 0.0);
-            float spotIntensity = smoothstep(outer, inner, theta);
-
-            float3 radiance = col.rgb * col.w * attenuation * spotIntensity;
-            Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance);
-        }
+        float shadow = (shadowsEnabled != 0) ? sampleShadow(i, worldPos, N) : 1.0;
+        Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance) * shadow;
     }
 
     float3 ambientContrib = baseColor * ambientStrength * ambientColor.rgb * ao;
-
     float3 color = ambientContrib + Lo + baseColor * emissiveStrength;
-
     color = saturate(color);
 
-    return float4(color, baseColorOut.a);
+    return float4(color, 1.0);
 }

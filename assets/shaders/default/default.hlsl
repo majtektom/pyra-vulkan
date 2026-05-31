@@ -1,34 +1,24 @@
+struct LightData {
+    column_major float4x4 lightViewProj;
+    float4 position;    // xyz = world position, w = shadow map layer index
+    float4 direction;   // xyz = light direction, w = type: 1=dir, 2=point, 3=spot
+    float4 color;       // rgb = color, w = intensity multiplier
+    float4 params;      // x=innerCos, y=outerCos, z=range, w=unused
+};
+
 cbuffer GlobalUniformBufferObject : register(b0, space0)
 {
     column_major float4x4 view;
     column_major float4x4 proj;
     float4 camRight;
     float4 camUp;
-    column_major float4x4 lightViewProj;
-    float4 _padLightDir;
-    uint shadowMapIndex;
-    uint lightingEnabled;
-    float ambientStrength;
-    uint lightCount;
-    float4 _padLightColor;
-    float4 ambientColor;
     float4 cameraPos;
-    float4 lights_0_position;
-    float4 lights_0_direction;
-    float4 lights_0_color;
-    float4 lights_0_params;
-    float4 lights_1_position;
-    float4 lights_1_direction;
-    float4 lights_1_color;
-    float4 lights_1_params;
-    float4 lights_2_position;
-    float4 lights_2_direction;
-    float4 lights_2_color;
-    float4 lights_2_params;
-    float4 lights_3_position;
-    float4 lights_3_direction;
-    float4 lights_3_color;
-    float4 lights_3_params;
+    float4 ambientColor;
+    float ambientStrength;
+    uint lightingEnabled;
+    uint lightCount;
+    uint shadowsEnabled;
+    LightData lights[16];
 };
 
 [[vk::push_constant]]
@@ -67,17 +57,6 @@ struct VertexOutput
     [[vk::location(2)]] float4 matColor : TEXCOORD1;
     [[vk::location(3)]] float3 worldPos : TEXCOORD2;
     [[vk::location(4)]] float3 worldNormal : TEXCOORD3;
-    [[vk::location(5)]] float4 lightSpacePos : TEXCOORD4;
-};
-
-struct FragmentInput
-{
-    [[vk::location(0)]] float3 color : COLOR;
-    [[vk::location(1)]] float2 texCoord : TEXCOORD0;
-    [[vk::location(2)]] float4 matColor : TEXCOORD1;
-    [[vk::location(3)]] float3 worldPos : TEXCOORD2;
-    [[vk::location(4)]] float3 worldNormal : TEXCOORD3;
-    [[vk::location(5)]] float4 lightSpacePos : TEXCOORD4;
 };
 
 static const float PI = 3.14159265359;
@@ -98,7 +77,6 @@ VertexOutput vertexMain(VertexInput input)
     output.color = input.color;
     output.texCoord = input.texCoord;
     output.matColor = baseColorFactor;
-    output.lightSpacePos = mul(lightViewProj, worldPos4);
     return output;
 }
 
@@ -127,65 +105,6 @@ float3 FresnelSchlick(float cosTheta, float3 F0)
     return F0 + (1.0 - F0) * pow(max(1.0 - cosTheta, 0.0), 5.0);
 }
 
-float shadowFactor(float4 lightSpacePos, uint shadowIdx)
-{
-    float3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    projCoords = projCoords * 0.5 + 0.5;
-
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0 ||
-        projCoords.z < 0.0 || projCoords.z > 1.0)
-        return 1.0;
-
-    float bias = 0.002;
-    float currentDepth = projCoords.z - bias;
-
-    float shadow = 0.0;
-    float2 texelSize = float2(1.0 / 2048.0, 1.0 / 2048.0);
-    for (int x = -1; x <= 1; x++)
-    {
-        for (int y = -1; y <= 1; y++)
-        {
-            float2 uv = projCoords.xy + float2(x, y) * texelSize;
-            float depth = textures[shadowIdx].SampleLevel(globalSampler, uv, 0).r;
-            shadow += (currentDepth > depth) ? 0.3 : 1.0;
-        }
-    }
-    return shadow / 9.0;
-}
-
-float4 getLightPosition(uint i)
-{
-    if (i == 0) return lights_0_position;
-    if (i == 1) return lights_1_position;
-    if (i == 2) return lights_2_position;
-    return lights_3_position;
-}
-
-float4 getLightDirection(uint i)
-{
-    if (i == 0) return lights_0_direction;
-    if (i == 1) return lights_1_direction;
-    if (i == 2) return lights_2_direction;
-    return lights_3_direction;
-}
-
-float4 getLightColor(uint i)
-{
-    if (i == 0) return lights_0_color;
-    if (i == 1) return lights_1_color;
-    if (i == 2) return lights_2_color;
-    return lights_3_color;
-}
-
-float4 getLightParams(uint i)
-{
-    if (i == 0) return lights_0_params;
-    if (i == 1) return lights_1_params;
-    if (i == 2) return lights_2_params;
-    return lights_3_params;
-}
-
 float3 pbrDirectLight(float3 N, float3 V, float3 baseColor, float metallic, float roughness,
                       float NdotV, float3 F0, float3 L, float3 radiance)
 {
@@ -206,9 +125,13 @@ float3 pbrDirectLight(float3 N, float3 V, float3 baseColor, float metallic, floa
     return (kD * baseColor / PI + specular) * radiance * NdotL;
 }
 
-float4 fragmentMain(FragmentInput input) : SV_Target0
+float4 fragmentMain(VertexOutput input) : SV_Target0
 {
     float4 baseColor = textures[baseColorTextureSet].Sample(globalSampler, input.texCoord) * float4(input.color, 1.0) * input.matColor;
+
+    // Alpha discard for cutout materials
+    if (baseColor.a < alphaMaskCutoff)
+        discard;
 
     float3 N = normalize(input.worldNormal);
     float3 dp1 = ddx(input.worldPos);
@@ -249,55 +172,45 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     float3 F0 = float3(0.04, 0.04, 0.04);
     F0 = lerp(F0, baseColor.rgb, metallic);
 
-    float s = (shadowMapIndex > 0) ? shadowFactor(input.lightSpacePos, shadowMapIndex) : 1.0;
-
     float3 Lo = float3(0.0, 0.0, 0.0);
 
-    uint count = min(lightCount, 4u);
+    uint count = min(lightCount, 16u);
     for (uint i = 0; i < count; i++)
     {
-        float4 pos = getLightPosition(i);
-        float4 dir = getLightDirection(i);
-        float4 col = getLightColor(i);
-        float4 par = getLightParams(i);
-        uint ltype = uint(dir.w);
+        float3 pos = lights[i].position.xyz;
+        float3 dir = lights[i].direction.xyz;
+        float3 col = lights[i].color.rgb;
+        float intensity = lights[i].color.w;
+        float4 par = lights[i].params;
+        uint ltype = uint(lights[i].direction.w);
+
+        float3 L;
+        float3 radiance;
 
         if (ltype == 1) // directional
         {
-            float3 L = normalize(dir.xyz);
-            float3 radiance = col.rgb * col.w;
-            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
+            L = normalize(dir);
+            radiance = col * intensity;
         }
-        else if (ltype == 2) // point
+        else if (ltype == 2 || ltype == 3) // point or spot
         {
-            float3 Lvec = pos.xyz - input.worldPos;
+            float3 Lvec = pos - input.worldPos;
             float dist = length(Lvec);
             float range = max(par.z, 0.001);
             float attenuation = 1.0 / (1.0 + (dist * dist) / (range * range));
-            float3 L = Lvec / dist;
-            float3 radiance = col.rgb * col.w * attenuation;
-            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
-        }
-        else if (ltype == 3) // spot
-        {
-            float3 Lvec = pos.xyz - input.worldPos;
-            float dist = length(Lvec);
-            float range = max(par.z, 0.001);
-            float attenuation = 1.0 / (1.0 + (dist * dist) / (range * range));
-            float3 L = Lvec / dist;
+            L = Lvec / dist;
+            radiance = col * intensity * attenuation;
 
-            float3 spotDir = normalize(dir.xyz);
-            float theta = dot(-L, spotDir);
-            float inner = max(par.x, 0.01);
-            float outer = max(par.y, 0.0);
-            float spotIntensity = smoothstep(outer, inner, theta);
-
-            float3 radiance = col.rgb * col.w * attenuation * spotIntensity;
-            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
+            if (ltype == 3) // spot
+            {
+                float theta = dot(-L, normalize(dir));
+                radiance *= smoothstep(par.y, par.x, theta);
+            }
         }
+        else continue;
+
+        Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
     }
-
-    Lo *= s;
 
     float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
 

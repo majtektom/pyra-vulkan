@@ -22,6 +22,7 @@ public:
     MeshData meshData;
     std::string textureName;
     std::string materialName;
+    bool castShadows = true;
 
     std::shared_ptr<MaterialInstance> materialInstance;
     VkBuffer skinVertexBuffer = VK_NULL_HANDLE;

@@ -105,6 +105,13 @@ add_shader_bundle(
 add_shader_bundle(
     shadow_depth
     shadow_depth.vert.hlsl=shadow_depth.hlsl@vertexMain
+    shadow_depth.frag.hlsl=shadow_depth.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    shadow_depth_skinned
+    shadow_depth_skinned.vert.hlsl=shadow_depth_skinned.hlsl@vertexMain
+    shadow_depth_skinned.frag.hlsl=shadow_depth_skinned.hlsl@fragmentMain
 )
 
 add_shader_bundle(
@@ -163,4 +170,4 @@ target_link_libraries(engine3d
 )
 
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders)
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders shadow_depth_skinned_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders)

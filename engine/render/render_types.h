@@ -54,6 +54,7 @@ struct RenderPacket {
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
     int renderPriority = 0;
+    bool castShadows = true;
     std::string pbrMetallicRoughnessTextureName;
     std::string pbrOcclusionTextureName;
     std::string pbrEmissiveTextureName;

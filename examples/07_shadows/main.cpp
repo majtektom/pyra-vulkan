@@ -73,6 +73,7 @@ int main() {
     auto* renderer = engine.getRenderer();
     renderer->setClearColor(0.02f, 0.02f, 0.05f, 1.0f);
     renderer->setShadowsEnabled(true);
+    engine.configureDirectionalShadow(30.0f);
     engine.setLightingEnabled(true);
     engine.setAmbientStrength(0.12f);
     engine.setAmbientColor(0.25f, 0.25f, 0.35f);
@@ -108,13 +109,13 @@ int main() {
     }
 
     auto* markerDir = engine.createEntity("marker_dir");
-    markerDir->addComponent<MeshComponent>("marker_dir");
+    markerDir->addComponent<MeshComponent>("marker_dir")->castShadows = false;
 
     auto* markerPoint = engine.createEntity("marker_point");
-    markerPoint->addComponent<MeshComponent>("marker_point");
+    markerPoint->addComponent<MeshComponent>("marker_point")->castShadows = false;
 
     auto* markerSpot = engine.createEntity("marker_spot");
-    markerSpot->addComponent<MeshComponent>("marker_spot");
+    markerSpot->addComponent<MeshComponent>("marker_spot")->castShadows = false;
 
     auto* cameraEntity = engine.createEntity("camera");
     auto* camera = cameraEntity->addComponent<CameraComponent>();

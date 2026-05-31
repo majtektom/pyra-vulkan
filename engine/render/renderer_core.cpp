@@ -22,11 +22,12 @@ namespace engine3d {
 constexpr int kMaxFrames = 2;
 constexpr int kMaxDescriptorSets = 64;
 
-constexpr int kMaxLights = 4;
+constexpr int kMaxLights = 16;
 
 struct LightData {
-    float position[4];    // xyz = world position (point/spot), w = pad
-    float direction[4];   // xyz = normalized direction OF light rays (NOT negated), w = type: 1=dir, 2=point, 3=spot
+    Matrix4 lightViewProj;
+    float position[4];    // xyz = world position (point/spot), w = shadow map index
+    float direction[4];   // xyz = normalized direction OF light rays, w = type: 1=dir, 2=point, 3=spot
     float color[4];       // rgb = color, w = intensity multiplier
     float params[4];      // spot: innerCutoffCos, outerCutoffCos, range, pad
 };
@@ -36,15 +37,12 @@ struct GlobalUBO {
     Matrix4 proj;
     float camRight[4];
     float camUp[4];
-    Matrix4 lightViewProj;
-    float _padLightDir[4];
-    uint32_t shadowMapIndex;
-    uint32_t lightingEnabled;
-    float ambientStrength;
-    uint32_t lightCount;
-    float _padLightColor[4];
-    float ambientColor[4];
     float cameraPos[4];
+    float ambientColor[4];
+    float ambientStrength;
+    uint32_t lightingEnabled;
+    uint32_t lightCount;
+    uint32_t shadowsEnabled;
     LightData lights[kMaxLights];
 };
 
@@ -92,6 +90,7 @@ public:
             createCommandBuffers();
             createShadowResources();
             createShadowPipeline();
+            createShadowSkinnedPipeline();
             createGBufferResources();
             std::cout << "Deferred PBR Renderer initialized." << std::endl;
             return true;
@@ -157,52 +156,75 @@ public:
             shadowBarrier.subresourceRange.baseMipLevel = 0;
             shadowBarrier.subresourceRange.levelCount = 1;
             shadowBarrier.subresourceRange.baseArrayLayer = 0;
-            shadowBarrier.subresourceRange.layerCount = 1;
+            shadowBarrier.subresourceRange.layerCount = kMaxLights;
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                                  0, 0, nullptr, 0, nullptr, 1, &shadowBarrier);
 
-            VkRenderingAttachmentInfo shadowDepthAttachment{};
-            shadowDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            shadowDepthAttachment.imageView = shadowMapView_;
-            shadowDepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            shadowDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            shadowDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            shadowDepthAttachment.clearValue.depthStencil = {1.0f, 0};
+            for (uint32_t i = 0; i < std::min(storedLightCount_, (uint32_t)kMaxLights); i++) {
+                VkRenderingAttachmentInfo shadowDepthAttachment{};
+                shadowDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+                shadowDepthAttachment.imageView = shadowMapLayerViews_[i];
+                shadowDepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                shadowDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                shadowDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                shadowDepthAttachment.clearValue.depthStencil = {1.0f, 0};
 
-            VkRenderingInfo shadowRenderingInfo{};
-            shadowRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-            shadowRenderingInfo.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
-            shadowRenderingInfo.layerCount = 1;
-            shadowRenderingInfo.colorAttachmentCount = 0;
-            shadowRenderingInfo.pDepthAttachment = &shadowDepthAttachment;
+                VkRenderingInfo shadowRenderingInfo{};
+                shadowRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+                shadowRenderingInfo.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+                shadowRenderingInfo.layerCount = 1;
+                shadowRenderingInfo.colorAttachmentCount = 0;
+                shadowRenderingInfo.pDepthAttachment = &shadowDepthAttachment;
 
-            vkCmdBeginRendering(cmd, &shadowRenderingInfo);
+                vkCmdBeginRendering(cmd, &shadowRenderingInfo);
 
-            VkViewport shadowViewport{0.0f, 0.0f, (float)kShadowMapSize, (float)kShadowMapSize, 0.0f, 1.0f};
-            VkRect2D shadowScissor{{0, 0}, {kShadowMapSize, kShadowMapSize}};
-            vkCmdSetViewport(cmd, 0, 1, &shadowViewport);
-            vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
+                VkViewport shadowViewport{0.0f, 0.0f, (float)kShadowMapSize, (float)kShadowMapSize, 0.0f, 1.0f};
+                VkRect2D shadowScissor{{0, 0}, {kShadowMapSize, kShadowMapSize}};
+                vkCmdSetViewport(cmd, 0, 1, &shadowViewport);
+                vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
 
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+                for (const auto& packet : scene.getShadowPackets()) {
+                    bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
 
-            for (const auto& packet : scene.getOpaquePackets()) {
-                if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
-                VkBuffer vbs[] = {packet.vertexBuffer};
-                VkDeviceSize off[] = {0};
-                vkCmdBindVertexBuffers(cmd, 0, 1, vbs, off);
-                if (packet.indexBuffer != VK_NULL_HANDLE)
-                    vkCmdBindIndexBuffer(cmd, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                    if (isSkinned) {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipeline_);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
+                    } else {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
+                    }
 
-                vkCmdPushConstants(cmd, shadowPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT,
-                                   0, sizeof(Matrix4), &packet.transform);
+                    VkBuffer vbs[] = {packet.vertexBuffer};
+                    VkDeviceSize off[] = {0};
+                    vkCmdBindVertexBuffers(cmd, 0, 1, vbs, off);
+                    if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
+                        VkBuffer skinVBs[] = {packet.skinVertexBuffer};
+                        VkDeviceSize skinOffs[] = {0};
+                        vkCmdBindVertexBuffers(cmd, 1, 1, skinVBs, skinOffs);
+                    }
+                    if (packet.indexBuffer != VK_NULL_HANDLE)
+                        vkCmdBindIndexBuffer(cmd, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-                if (packet.indexBuffer != VK_NULL_HANDLE)
-                    vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+                    struct ShadowPush { Matrix4 model; Matrix4 lvp; float alphaCutoff; uint32_t texSet; float _pad[2]; } push;
+                    push.model = packet.transform;
+                    push.lvp = storedLights_[i].lightViewProj;
+                    push.alphaCutoff = packet.material && packet.material->isTransparent() ? 0.5f : 0.0f;
+                    push.texSet = packet.diffuseTextureIndex;
+                    push._pad[0] = 0; push._pad[1] = 0;
+
+                    VkPipelineLayout pushLayout = isSkinned ? shadowSkinnedPipelineLayout_ : shadowPipelineLayout_;
+                    vkCmdPushConstants(cmd, pushLayout,
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                       0, sizeof(push), &push);
+
+                    if (packet.indexBuffer != VK_NULL_HANDLE)
+                        vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+                }
+
+                vkCmdEndRendering(cmd);
             }
-
-            vkCmdEndRendering(cmd);
 
             shadowBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             shadowBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -713,6 +735,19 @@ public:
         passes_.clear();
 
         cleanupGBuffer();
+        if (shadowMapView_) { vkDestroyImageView(device, shadowMapView_, nullptr); shadowMapView_ = VK_NULL_HANDLE; }
+        for (auto view : shadowMapLayerViews_) {
+            if (view) vkDestroyImageView(device, view, nullptr);
+        }
+        shadowMapLayerViews_.clear();
+        if (shadowMapImage_) { vkDestroyImage(device, shadowMapImage_, nullptr); shadowMapImage_ = VK_NULL_HANDLE; }
+        if (shadowMapMemory_) { vkFreeMemory(device, shadowMapMemory_, nullptr); shadowMapMemory_ = VK_NULL_HANDLE; }
+        if (shadowSampler_) { vkDestroySampler(device, shadowSampler_, nullptr); shadowSampler_ = VK_NULL_HANDLE; }
+        if (shadowPipeline_) { vkDestroyPipeline(device, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
+        if (shadowPipelineLayout_) { vkDestroyPipelineLayout(device, shadowPipelineLayout_, nullptr); shadowPipelineLayout_ = VK_NULL_HANDLE; }
+        if (shadowSkinnedPipeline_) { vkDestroyPipeline(device, shadowSkinnedPipeline_, nullptr); shadowSkinnedPipeline_ = VK_NULL_HANDLE; }
+        if (shadowSkinnedPipelineLayout_) { vkDestroyPipelineLayout(device, shadowSkinnedPipelineLayout_, nullptr); shadowSkinnedPipelineLayout_ = VK_NULL_HANDLE; }
+
         for (auto& [name, tex] : textures_) {
             if (tex.sampler) { vkDestroySampler(device, tex.sampler, nullptr); tex.sampler = VK_NULL_HANDLE; }
             if (tex.imageView) { vkDestroyImageView(device, tex.imageView, nullptr); tex.imageView = VK_NULL_HANDLE; }
@@ -817,6 +852,10 @@ public:
 
     void setAmbientStrength(float s) { ambientStrength_ = s; }
 
+    void setDirectionalShadowConfig(float halfSize, bool /*unused*/) {
+        dirShadowHalfSize_ = halfSize;
+    }
+
     void setAmbientColor(float r, float g, float b) {
         ambientColor_[0] = r; ambientColor_[1] = g; ambientColor_[2] = b;
     }
@@ -894,58 +933,56 @@ private:
         GlobalUBO ubo{};
         ubo.view = view.view;
         ubo.proj = view.projection;
-        ubo.camRight[0] = view.cameraRight.x; ubo.camRight[1] = view.cameraRight.y; ubo.camRight[2] = view.cameraRight.z; ubo.camRight[3] = 0.0f;
-        ubo.camUp[0] = view.cameraUp.x; ubo.camUp[1] = view.cameraUp.y; ubo.camUp[2] = view.cameraUp.z; ubo.camUp[3] = 0.0f;
+        std::memcpy(ubo.camRight, &view.cameraRight, sizeof(Vec3));
+        std::memcpy(ubo.camUp, &view.cameraUp, sizeof(Vec3));
+        std::memcpy(ubo.cameraPos, &view.cameraPosition, sizeof(Vec3));
         
-        Vec3 lightTarget = {0, 0, 0};
-        float dist = 15.0f;
-        float ldx = storedLightCount_ > 0 ? storedLights_[0].direction[0] : 0.5f;
-        float ldy = storedLightCount_ > 0 ? storedLights_[0].direction[1] : 1.0f;
-        float ldz = storedLightCount_ > 0 ? storedLights_[0].direction[2] : 0.3f;
-        Vec3 lightPos = {
-            lightTarget.x - ldx * dist,
-            lightTarget.y - ldy * dist,
-            lightTarget.z - ldz * dist
-        };
-        Vec3 up = {0, 1, 0};
-        if (std::abs(ldy) > 0.99f) up = {1, 0, 0};
-
-        Vec3 f = normalize(subtract(lightTarget, lightPos));
-        Vec3 s = normalize(cross(f, up));
-        Vec3 u = cross(s, f);
-
-        Matrix4 lightView{};
-        lightView.values[0] = s.x;   lightView.values[4] = s.y;   lightView.values[8]  = s.z;   lightView.values[12] = -dot(s, lightPos);
-        lightView.values[1] = u.x;   lightView.values[5] = u.y;   lightView.values[9]  = u.z;   lightView.values[13] = -dot(u, lightPos);
-        lightView.values[2] = f.x;  lightView.values[6] = f.y;  lightView.values[10] = f.z;  lightView.values[14] = -dot(f, lightPos);
-        lightView.values[3] = 0;     lightView.values[7] = 0;     lightView.values[11] = 0;     lightView.values[15] = 1;
-
-        float half = 20.0f;
-        float zNear = 0.1f;
-        float zFar = 100.0f;
-        Matrix4 lightProj{};
-        lightProj.values[0] = 1.0f/half; lightProj.values[4] = 0;          lightProj.values[8]  = 0;                lightProj.values[12] = 0;
-        lightProj.values[1] = 0;          lightProj.values[5] = 1.0f/half; lightProj.values[9]  = 0;                lightProj.values[13] = 0;
-        lightProj.values[2] = 0;          lightProj.values[6] = 0;          lightProj.values[10] = 1.0f/(zFar-zNear); lightProj.values[14] = -zNear/(zFar-zNear);
-        lightProj.values[3] = 0;          lightProj.values[7] = 0;          lightProj.values[11] = 0;                lightProj.values[15] = 1;
-
-        ubo.lightViewProj = multiply(lightProj, lightView);
-        ubo.shadowMapIndex = shadowsEnabled_ ? getTextureIndex("shadow_map") : 0;
         ubo.lightingEnabled = lightingEnabled_ ? 1u : 0u;
+        ubo.shadowsEnabled = shadowsEnabled_ ? 1u : 0u;
         ubo.ambientStrength = ambientStrength_;
-        ubo.lightCount = storedLightCount_;
-        ubo.ambientColor[0] = ambientColor_[0];
-        ubo.ambientColor[1] = ambientColor_[1];
-        ubo.ambientColor[2] = ambientColor_[2];
+        ubo.lightCount = std::min(storedLightCount_, (uint32_t)kMaxLights);
+        std::memcpy(ubo.ambientColor, ambientColor_, sizeof(ambientColor_));
         ubo.ambientColor[3] = 1.0f;
 
-        ubo.cameraPos[0] = view.cameraPosition.x;
-        ubo.cameraPos[1] = view.cameraPosition.y;
-        ubo.cameraPos[2] = view.cameraPosition.z;
-        ubo.cameraPos[3] = 0.0f;
+        for (uint32_t i = 0; i < ubo.lightCount; i++) {
+            LightData& l = storedLights_[i];
+            uint32_t type = (uint32_t)l.direction[3];
+            
+            Matrix4 lView, lProj;
+            Vec3 lPos = {l.position[0], l.position[1], l.position[2]};
+            Vec3 lDir = {l.direction[0], l.direction[1], l.direction[2]};
+            
+            if (type == 1) { // Directional
+                Vec3 camPos = view.cameraPosition;
+                Vec3 target = {camPos.x, 0.0f, camPos.z};
+                float halfSize = dirShadowHalfSize_;
+                float dist = halfSize * 1.5f;
+                lPos = {target.x + lDir.x * dist, target.y + lDir.y * dist, target.z + lDir.z * dist};
+                Vec3 up = std::abs(lDir.y) > 0.99f ? Vec3{1,0,0} : Vec3{0,1,0};
+                lView = lookAt(lPos, target, up);
+                float farPlane = dist + halfSize * 3.0f;
+                lProj = ortho(-halfSize, halfSize, -halfSize, halfSize, 0.5f, farPlane);
+            } else if (type == 3) { // Spot
+                Vec3 target = add(lPos, lDir);
+                Vec3 up = std::abs(lDir.y) > 0.99f ? Vec3{1,0,0} : Vec3{0,1,0};
+                lView = lookAt(lPos, target, up);
+                float outerAngle = std::acos(l.params[1]) * 2.0f;
+                lProj = perspective(outerAngle, 1.0f, 0.1f, l.params[2]);
+            } else if (type == 2) { // Point
+                // Point lights look straight down at the scene center for better floor coverage
+                Vec3 target = {lPos.x, 0.0f, lPos.z};
+                lView = lookAt(lPos, target, Vec3{0, 0, 1});
+                lProj = perspective(radians(120.0f), 1.0f, 0.1f, l.params[2]);
+            } else {
+                lView = Matrix4::identity();
+                lProj = Matrix4::identity();
+            }
+            
+            l.lightViewProj = multiply(lProj, lView);
+            l.position[3] = (float)i; 
+        }
 
-        memcpy(ubo.lights, storedLights_, sizeof(storedLights_));
-
+        std::memcpy(ubo.lights, storedLights_, sizeof(storedLights_));
         std::memcpy(uniformBuffersMapped_[currentFrame_], &ubo, sizeof(ubo));
     }
 
@@ -1243,10 +1280,30 @@ private:
                         VK_FORMAT_D32_SFLOAT,
                         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        shadowMapImage_, shadowMapMemory_);
+                        shadowMapImage_, shadowMapMemory_, kMaxLights);
 
         shadowMapView_ = vk::createImageView(device, shadowMapImage_, VK_FORMAT_D32_SFLOAT,
-                                              VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+                                              VK_IMAGE_ASPECT_DEPTH_BIT, 1, kMaxLights, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+
+        shadowMapLayerViews_.resize(kMaxLights);
+        for (uint32_t i = 0; i < kMaxLights; i++) {
+            shadowMapLayerViews_[i] = vk::createImageView(device, shadowMapImage_, VK_FORMAT_D32_SFLOAT,
+                                                           VK_IMAGE_ASPECT_DEPTH_BIT, 1, 1, VK_IMAGE_VIEW_TYPE_2D);
+            // Manually set the base array layer for each view
+            vkDestroyImageView(device, shadowMapLayerViews_[i], nullptr);
+            
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = shadowMapImage_;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = VK_FORMAT_D32_SFLOAT;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = i;
+            viewInfo.subresourceRange.layerCount = 1;
+            vkCreateImageView(device, &viewInfo, nullptr, &shadowMapLayerViews_[i]);
+        }
 
         VkSamplerCreateInfo samplerInfo{};
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1256,7 +1313,8 @@ private:
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareEnable = VK_TRUE;
+        samplerInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         samplerInfo.maxLod = 1.0f;
         vkCreateSampler(device, &samplerInfo, nullptr, &shadowSampler_);
@@ -1282,7 +1340,7 @@ private:
         barrier.subresourceRange.baseMipLevel = 0;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
+        barrier.subresourceRange.layerCount = kMaxLights;
 
         VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
@@ -1312,13 +1370,23 @@ private:
         VkDevice device = vulkanContext_->device();
 
         auto vertCode = vk::readFile("bin/assets/shaders/shadow_depth/shadow_depth.vert.spv");
+        auto fragCode = vk::readFile("bin/assets/shaders/shadow_depth/shadow_depth.frag.spv");
         VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
+        VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
 
         VkPipelineShaderStageCreateInfo vertStage{};
         vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
         vertStage.module = vertModule;
         vertStage.pName = "vertexMain";
+
+        VkPipelineShaderStageCreateInfo fragStage{};
+        fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragStage.module = fragModule;
+        fragStage.pName = "fragmentMain";
+
+        VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
 
         auto bindingDesc = Vertex::bindingDescription();
         auto attrDescs = Vertex::attributeDescriptions();
@@ -1365,10 +1433,11 @@ private:
         dynamicState.dynamicStateCount = 2;
         dynamicState.pDynamicStates = dynStates;
 
+        constexpr uint32_t kShadowPushSize = sizeof(Matrix4) * 2 + sizeof(float) + sizeof(uint32_t) + sizeof(float) * 2;
         VkPushConstantRange pushRange{};
-        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;
-        pushRange.size = sizeof(Matrix4);
+        pushRange.size = kShadowPushSize;
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1380,8 +1449,8 @@ private:
 
         VkGraphicsPipelineCreateInfo pipelineInfo{};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipelineInfo.stageCount = 1;
-        pipelineInfo.pStages = &vertStage;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = stages;
         pipelineInfo.pVertexInputState = &vertexInput;
         pipelineInfo.pInputAssemblyState = &inputAssembly;
         pipelineInfo.pViewportState = &viewportState;
@@ -1399,6 +1468,133 @@ private:
 
         vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowPipeline_);
         vkDestroyShaderModule(device, vertModule, nullptr);
+        vkDestroyShaderModule(device, fragModule, nullptr);
+    }
+
+    void createShadowSkinnedPipeline() {
+        VkDevice device = vulkanContext_->device();
+
+        auto vertCode = vk::readFile("bin/assets/shaders/shadow_depth_skinned/shadow_depth_skinned.vert.spv");
+        auto fragCode = vk::readFile("bin/assets/shaders/shadow_depth_skinned/shadow_depth_skinned.frag.spv");
+        VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
+        VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
+
+        VkPipelineShaderStageCreateInfo vertStage{};
+        vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertStage.module = vertModule;
+        vertStage.pName = "vertexMain";
+
+        VkPipelineShaderStageCreateInfo fragStage{};
+        fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragStage.module = fragModule;
+        fragStage.pName = "fragmentMain";
+
+        VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
+
+        auto bindingDesc = Vertex::bindingDescription();
+        auto attrDescs = Vertex::attributeDescriptions();
+
+        VkVertexInputBindingDescription skinBinding{};
+        skinBinding.binding = 1;
+        skinBinding.stride = sizeof(uint32_t) * 4 + sizeof(float) * 4;
+        skinBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        VkVertexInputAttributeDescription skinAttrs[2]{};
+        skinAttrs[0].binding = 1;
+        skinAttrs[0].location = 4;
+        skinAttrs[0].format = VK_FORMAT_R32G32B32A32_UINT;
+        skinAttrs[0].offset = 0;
+        skinAttrs[1].binding = 1;
+        skinAttrs[1].location = 5;
+        skinAttrs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        skinAttrs[1].offset = sizeof(uint32_t) * 4;
+
+        std::vector<VkVertexInputBindingDescription> bindings = {bindingDesc, skinBinding};
+        std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
+        allAttrs.push_back(skinAttrs[0]);
+        allAttrs.push_back(skinAttrs[1]);
+
+        VkPipelineVertexInputStateCreateInfo vertexInput{};
+        vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInput.vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size());
+        vertexInput.pVertexBindingDescriptions = bindings.data();
+        vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(allAttrs.size());
+        vertexInput.pVertexAttributeDescriptions = allAttrs.data();
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.depthBiasEnable = VK_TRUE;
+        rasterizer.depthBiasConstantFactor = 1.25f;
+        rasterizer.depthBiasSlopeFactor = 1.75f;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+        VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        dynamicState.dynamicStateCount = 2;
+        dynamicState.pDynamicStates = dynStates;
+
+        constexpr uint32_t kShadowPushSize = sizeof(Matrix4) * 2 + sizeof(float) + sizeof(uint32_t) + sizeof(float) * 2;
+        VkPushConstantRange pushRange{};
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushRange.offset = 0;
+        pushRange.size = kShadowPushSize;
+
+        VkPipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        VkDescriptorSetLayout setLayouts[2] = {descriptorSetLayout_, boneDescriptorSetLayout_};
+        layoutInfo.setLayoutCount = 2;
+        layoutInfo.pSetLayouts = setLayouts;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushRange;
+        vkCreatePipelineLayout(device, &layoutInfo, nullptr, &shadowSkinnedPipelineLayout_);
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = stages;
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = shadowSkinnedPipelineLayout_;
+
+        VkPipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+        renderingInfo.colorAttachmentCount = 0;
+        renderingInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
+        pipelineInfo.pNext = &renderingInfo;
+
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSkinnedPipeline_);
+        vkDestroyShaderModule(device, vertModule, nullptr);
+        vkDestroyShaderModule(device, fragModule, nullptr);
     }
 
     void createGBufferResources() {
@@ -1771,22 +1967,26 @@ private:
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
-        // Set 1: GBuffer textures
-        VkDescriptorSetLayoutBinding gbufferBindings[4] = {};
+        // Set 1: GBuffer textures + Shadow Map
+        VkDescriptorSetLayoutBinding gbufferBindings[5] = {};
         for (int i = 0; i < 4; i++) {
             gbufferBindings[i].binding = i;
             gbufferBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             gbufferBindings[i].descriptorCount = 1;
             gbufferBindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
+        gbufferBindings[4].binding = 4;
+        gbufferBindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        gbufferBindings[4].descriptorCount = 1;
+        gbufferBindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo dslInfo{};
         dslInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        dslInfo.bindingCount = 4;
+        dslInfo.bindingCount = 5;
         dslInfo.pBindings = gbufferBindings;
         vkCreateDescriptorSetLayout(device, &dslInfo, nullptr, &deferredDescriptorSetLayout_);
 
-        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 * 2};
+        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * 2};
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.maxSets = 2;
@@ -1802,8 +2002,8 @@ private:
             allocInfo.pSetLayouts = &deferredDescriptorSetLayout_;
             vkAllocateDescriptorSets(device, &allocInfo, &deferredDescriptorSets_[f]);
 
-            VkWriteDescriptorSet writes[4] = {};
-            VkDescriptorImageInfo imageInfos[4] = {};
+            VkWriteDescriptorSet writes[5] = {};
+            VkDescriptorImageInfo imageInfos[5] = {};
             for (int a = 0; a < 4; a++) {
                 imageInfos[a].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 imageInfos[a].imageView = gbufferViews_[a][f];
@@ -1815,7 +2015,16 @@ private:
                 writes[a].descriptorCount = 1;
                 writes[a].pImageInfo = &imageInfos[a];
             }
-            vkUpdateDescriptorSets(device, 4, writes, 0, nullptr);
+            imageInfos[4].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfos[4].imageView = shadowMapView_;
+            imageInfos[4].sampler = shadowSampler_;
+            writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[4].dstSet = deferredDescriptorSets_[f];
+            writes[4].dstBinding = 4;
+            writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[4].descriptorCount = 1;
+            writes[4].pImageInfo = &imageInfos[4];
+            vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
         }
 
         VkPushConstantRange pushRange{};
@@ -1978,6 +2187,7 @@ private:
     float ambientStrength_ = 0.3f;
     float ambientColor_[3] = {1.0f, 1.0f, 1.0f};
     bool shadowsEnabled_ = false;
+    float dirShadowHalfSize_ = 100.0f;
     bool cleanedUp_ = false;
 
     LightData storedLights_[kMaxLights] = {};
@@ -1987,9 +2197,12 @@ private:
     VkImage shadowMapImage_ = VK_NULL_HANDLE;
     VkDeviceMemory shadowMapMemory_ = VK_NULL_HANDLE;
     VkImageView shadowMapView_ = VK_NULL_HANDLE;
+    std::vector<VkImageView> shadowMapLayerViews_;
     VkSampler shadowSampler_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout shadowPipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline shadowSkinnedPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout shadowSkinnedPipelineLayout_ = VK_NULL_HANDLE;
     VkImageLayout shadowMapLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
     // GBuffer
@@ -2050,6 +2263,7 @@ void Renderer::setLightDirection(float x, float y, float z, float ambient) { imp
 void Renderer::setLightDirection(const std::array<float, 4>& dir) { impl_->setLightDirection(dir); }
 void Renderer::setShadowsEnabled(bool enabled) { impl_->setShadowsEnabled(enabled); }
 bool Renderer::shadowsEnabled() const { return impl_->shadowsEnabled(); }
+void Renderer::configureDirectionalShadow(float halfSize) { impl_->setDirectionalShadowConfig(halfSize, false); }
 void Renderer::setLightColor(float r, float g, float b) { impl_->setLightColor(r, g, b); }
 void Renderer::setLightingEnabled(bool e) { impl_->setLightingEnabled(e); }
 bool Renderer::isLightingEnabled() const { return impl_->isLightingEnabled(); }
