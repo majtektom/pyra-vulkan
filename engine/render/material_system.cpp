@@ -34,4 +34,15 @@ void MaterialSystem::invalidatePipelinesForShader(const std::string& shaderName)
     materialCache_.clear();
 }
 
+void MaterialSystem::setWireframe(bool enabled) {
+    if (compiler_) {
+        compiler_->setWireframe(enabled);
+    }
+    materialCache_.clear();
+}
+
+bool MaterialSystem::isWireframe() const {
+    return compiler_ ? compiler_->isWireframe() : false;
+}
+
 } // namespace engine3d

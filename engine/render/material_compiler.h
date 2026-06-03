@@ -59,6 +59,9 @@ public:
      * Wymusza ponowną kompilację potoku przy kolejnym zapytaniu.
      */
     void invalidatePipelinesForShader(const std::string& shaderName);
+    void setWireframe(bool enabled);
+    bool isWireframe() const { return wireframe_; }
+    void invalidateAllPipelines();
 
 private:
     /**
@@ -113,6 +116,7 @@ private:
     // Układy deskryptorów (Descriptor Set Layouts) określające zasoby przekazywane do shaderów
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;     // Set 0: UBO + Bindless Samplers + Shadow Map
     VkDescriptorSetLayout boneDescriptorSetLayout_ = VK_NULL_HANDLE; // Set 1: Bone Matrices UBO (opcjonalny)
+    bool wireframe_ = false;
 };
 
 } // namespace engine3d

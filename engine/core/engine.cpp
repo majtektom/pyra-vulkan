@@ -276,19 +276,19 @@ void Engine::setTextLabel(const std::string& text, const std::string&, float x, 
 void Engine::reloadShader(const std::string&) {
     if (!materialSystem) return;
 
-    const auto* scene = activeScene();
-    if (!scene) return;
+    for (const auto& [name, scene] : sceneManager.scenes()) {
+        if (!scene) continue;
+        for (const auto& entity : scene->getEntities()) {
+            auto* mc = entity->getComponent<MeshComponent>();
+            if (!mc || !mc->materialInstance || !mc->materialHandle.isValid()) {
+                continue;
+            }
 
-    for (const auto& entity : scene->getEntities()) {
-        auto* mc = entity->getComponent<MeshComponent>();
-        if (!mc || !mc->materialInstance || !mc->materialHandle.isValid()) {
-            continue;
-        }
+            const Material* mat = materialManager.get(mc->materialHandle);
 
-        const Material* mat = materialManager.get(mc->materialHandle);
-
-        if (mat) {
-            mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
+            if (mat) {
+                mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
+            }
         }
     }
 }
@@ -340,6 +340,21 @@ void Engine::setShadowsEnabled(bool enabled) {
 
 bool Engine::shadowsEnabled() const {
     return renderer ? renderer->shadowsEnabled() : false;
+}
+
+void Engine::setWireframeEnabled(bool enabled) {
+    if (renderer) {
+        renderer->waitIdle();
+        renderer->setWireframeEnabled(enabled);
+    }
+    if (materialSystem) {
+        materialSystem->setWireframe(enabled);
+    }
+    reloadShader("");
+}
+
+bool Engine::isWireframeEnabled() const {
+    return materialSystem ? materialSystem->isWireframe() : false;
 }
 
 void Engine::configureDirectionalShadow(float halfSize) {

@@ -119,6 +119,9 @@ public:
     void setShadowsEnabled(bool enabled);
     bool shadowsEnabled() const;
 
+    void setWireframeEnabled(bool enabled);
+    bool isWireframeEnabled() const;
+
     void configureDirectionalShadow(float halfSize);
 
     void setLightingEnabled(bool enabled);

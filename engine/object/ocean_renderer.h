@@ -47,6 +47,7 @@ private:
     std::string shaderDir_;
     std::string descName_;
     float time_ = 0.0f;
+    bool lastWireframe_ = false;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;

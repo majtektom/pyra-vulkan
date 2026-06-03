@@ -45,6 +45,7 @@ public:
     
     Scene* activeScene() { return activeScene_; }
     const Scene* activeScene() const { return activeScene_; }
+    const std::unordered_map<std::string, std::unique_ptr<Scene>>& scenes() const { return scenes_; }
 
     /**
      * @brief Zapisuje (serializuje) wybraną scenę do pliku JSON.

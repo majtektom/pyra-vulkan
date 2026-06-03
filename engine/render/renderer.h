@@ -98,6 +98,8 @@ public:
     // Kontrola generowania cieni w silniku.
     void setShadowsEnabled(bool enabled);
     bool shadowsEnabled() const;
+    void setWireframeEnabled(bool enabled);
+    bool isWireframeEnabled() const;
 
     // Konfiguracja ortogonalnej przestrzeni cieniowania światła kierunkowego.
     void configureDirectionalShadow(float halfSize);

@@ -956,6 +956,24 @@ public:
 
     void setShadowsEnabled(bool enabled) { shadowsEnabled_ = enabled; }
     bool shadowsEnabled() const { return shadowsEnabled_; }
+    void setWireframeEnabled(bool enabled) {
+        if (wireframeEnabled_ != enabled) {
+            wireframeEnabled_ = enabled;
+            waitIdle();
+            VkDevice device = vulkanContext_->device();
+            if (gbufferPipeline_) {
+                vkDestroyPipeline(device, gbufferPipeline_, nullptr);
+                gbufferPipeline_ = VK_NULL_HANDLE;
+            }
+            if (gbufferSkinnedPipeline_) {
+                vkDestroyPipeline(device, gbufferSkinnedPipeline_, nullptr);
+                gbufferSkinnedPipeline_ = VK_NULL_HANDLE;
+            }
+            createGBufferPipeline();
+            createGBufferSkinnedPipeline();
+        }
+    }
+    bool isWireframeEnabled() const { return wireframeEnabled_; }
 
     void setLightingEnabled(bool enabled) { lightingEnabled_ = enabled; }
     bool isLightingEnabled() const { return lightingEnabled_; }
@@ -1830,7 +1848,7 @@ private:
 
         VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.polygonMode = wireframeEnabled_ ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.lineWidth = 1.0f;
@@ -1964,7 +1982,7 @@ private:
 
         VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.polygonMode = wireframeEnabled_ ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
         rasterizer.cullMode = VK_CULL_MODE_NONE;
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.lineWidth = 1.0f;
@@ -2344,6 +2362,7 @@ private:
     float ambientStrength_ = 0.3f;
     float ambientColor_[3] = {1.0f, 1.0f, 1.0f};
     bool shadowsEnabled_ = false;
+    bool wireframeEnabled_ = false;
     float dirShadowHalfSize_ = 100.0f;
     bool cleanedUp_ = false;
 
@@ -2421,6 +2440,8 @@ void Renderer::setPresentMode(PresentMode mode) { impl_->setPresentMode(mode); }
 PresentMode Renderer::presentMode() const { return impl_->presentMode(); }
 void Renderer::setShadowsEnabled(bool enabled) { impl_->setShadowsEnabled(enabled); }
 bool Renderer::shadowsEnabled() const { return impl_->shadowsEnabled(); }
+void Renderer::setWireframeEnabled(bool enabled) { impl_->setWireframeEnabled(enabled); }
+bool Renderer::isWireframeEnabled() const { return impl_->isWireframeEnabled(); }
 void Renderer::configureDirectionalShadow(float halfSize) { impl_->setDirectionalShadowConfig(halfSize, false); }
 void Renderer::setLightingEnabled(bool e) { impl_->setLightingEnabled(e); }
 bool Renderer::isLightingEnabled() const { return impl_->isLightingEnabled(); }

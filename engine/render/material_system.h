@@ -39,6 +39,8 @@ public:
      * @brief Unieważnia cache dla danego shadera (wymagane przy hot-reloadingu kodu shaderów w locie).
      */
     void invalidatePipelinesForShader(const std::string& shaderName);
+    void setWireframe(bool enabled);
+    bool isWireframe() const;
 
 private:
     std::unique_ptr<MaterialCompiler> compiler_;             // Kompilator potoków graficznych.

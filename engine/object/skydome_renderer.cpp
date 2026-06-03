@@ -213,7 +213,7 @@ void SkydomeRenderer::init(Renderer* renderer) {
 
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.polygonMode = (renderer_ && renderer_->isWireframeEnabled()) ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
@@ -318,7 +318,20 @@ void SkydomeRenderer::init(Renderer* renderer) {
 }
 
 void SkydomeRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
-    if (!ready_ || !enabled_ || !renderer_) return;
+    if (!enabled_ || !renderer_) return;
+
+    bool currentWireframe = renderer_->isWireframeEnabled();
+    if (currentWireframe != lastWireframe_) {
+        lastWireframe_ = currentWireframe;
+        if (ready_) {
+            renderer_->waitIdle();
+            cleanup(renderer_->device());
+        }
+        init(renderer_);
+    }
+
+    if (!ready_) return;
+
     VkDescriptorSet cloudDescSet = renderer_->getTextureDescriptorSet(descName_, frameIndex);
     recordDrawCommands(cmd, view.cameraPosition, time_, cloudDescSet, config_);
 }

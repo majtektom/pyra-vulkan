@@ -250,7 +250,7 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
     // Konfiguracja rasteryzatora (sposób rysowania wielokątów, culling)
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.polygonMode = wireframe_ ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // Standard w OpenGL/Vulkan w układzie prawoskrętnym
     
@@ -372,15 +372,34 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
 }
 
 void MaterialCompiler::invalidatePipelinesForShader(const std::string& shaderName) {
+    VkDevice device = context_->device();
     auto it = pipelineCache_.begin();
     while (it != pipelineCache_.end()) {
         // Jeśli nazwa shadera zgadza się ze zmienioną, usuwamy go z cache, zmuszając do rekompilacji przy następnym rysowaniu
         if (it->first.shaderName == shaderName || (shaderName.empty() && it->first.shaderName.empty())) {
+            vkDestroyPipeline(device, it->second.pipeline, nullptr);
+            vkDestroyPipelineLayout(device, it->second.layout, nullptr);
             it = pipelineCache_.erase(it);
         } else {
             ++it;
         }
     }
+}
+
+void MaterialCompiler::setWireframe(bool enabled) {
+    if (wireframe_ != enabled) {
+        wireframe_ = enabled;
+        invalidateAllPipelines();
+    }
+}
+
+void MaterialCompiler::invalidateAllPipelines() {
+    VkDevice device = context_->device();
+    for (auto& pair : pipelineCache_) {
+        vkDestroyPipeline(device, pair.second.pipeline, nullptr);
+        vkDestroyPipelineLayout(device, pair.second.layout, nullptr);
+    }
+    pipelineCache_.clear();
 }
 
 } // namespace engine3d

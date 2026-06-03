@@ -186,7 +186,7 @@ private:
         // Dodanie okien i widgetów
         menuMainWindow_ = guiMgr_->addWindow("Menu", 520, 180, 360, 300);
         menuPauseWindow_ = guiMgr_->addWindow("Pauza", 520, 180, 360, 300);
-        settingsWindow_ = guiMgr_->addWindow("Ustawienia", 480, 120, 440, 390);
+        settingsWindow_ = guiMgr_->addWindow("Ustawienia", 480, 120, 440, 430);
         if (!menuMainWindow_ || !menuPauseWindow_ || !settingsWindow_) {
             return false;
         }
@@ -252,7 +252,11 @@ private:
         checkFullscreen_->setText("Pelny ekran");
         checkFullscreen_->setChecked(engine_.isFullscreen());
 
-        btnSettingsBack_ = new GuiButton(settingsWindow_, "back", 10, 348, 180, 30);
+        checkWireframe_ = new GuiCheckBox(settingsWindow_, "wireframe", 10, 352);
+        checkWireframe_->setText("Wyswietlaj siatke (Wireframe)");
+        checkWireframe_->setChecked(engine_.isWireframeEnabled());
+
+        btnSettingsBack_ = new GuiButton(settingsWindow_, "back", 10, 384, 180, 30);
         btnSettingsBack_->setText("Wroc");
 
         wireGuiCallbacks();
@@ -326,6 +330,9 @@ private:
         });
         checkFullscreen_->setOnToggle([this](bool on) {
             engine_.setFullscreen(on);
+        });
+        checkWireframe_->setOnToggle([this](bool on) {
+            engine_.setWireframeEnabled(on);
         });
     }
 
@@ -950,6 +957,7 @@ private:
     GuiComboBox* comboSync_ = nullptr;
     GuiComboBox* comboPresent_ = nullptr;
     GuiCheckBox* checkFullscreen_ = nullptr;
+    GuiCheckBox* checkWireframe_ = nullptr;
 
     std::shared_ptr<Terrain> gameTerrain_;
     std::shared_ptr<SkydomeRenderer> skydome_;
