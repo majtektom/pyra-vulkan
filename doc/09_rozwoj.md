@@ -1,98 +1,57 @@
-# Możliwości rozbudowy i poprawy silnika
+# Kierunek Rozwoju Silnika
 
-## Renderowanie
-
-### 1. Compute shadery dla cząstek
-Przenieś fizykę cząstek na GPU. Zamiast aktualizować 75k cząstek na CPU,
-użyj compute shadera z SSBO. Eliminuje to upload wierzchołków co klatkę.
-
-
-### 3. Deferred rendering / wiele render passów
-Rozdziel geometrię od oświetlenia:
-- Pass 1 (G-buffer): pozycje, normalne, albedo
-- Pass 2 (lighting): oblicz oświetlenie per-piksel
-
-### 4. Cienie (shadow mapping)
-Renderuj scenę z perspektywy światła do tekstury głębi, potem porównuj
-w głównym shaderze. Prosty shadow mapping to ~200 linii kodu.
-
-### 5. Post-processing
-- Bloom (poświata) — rozmycie jasnych obszarów
-- SSAO (ambient occlusion) — cieniowanie w zagłębieniach
-- Tone mapping — HDR → LDR
-
-### 6. Mipmapy na GPU dla wszystkich formatów
-Obecnie tylko BMP/TGA dostają mipmapy. DDS ich nie potrzebują (są w pliku).
-Można ujednolicić: zawsze generuj mipmapy jeśli `mipLevels == 1`.
+Ten dokument opisuje ewolucję silnika `engine3d` oraz wyznacza cele na przyszłość. Silnik przeszedł transformację z prostego projektu edukacyjnego w modularną platformę opartą o nowoczesne standardy C++ i Vulkan.
 
 ---
 
-## System plików i zasobów
+## 1. Kamienie Milowe (Zakończone)
 
-### 7. Wirtualny system plików (VPK)
-Spakuj assety do jednego pliku (jak `.pak` w Quake'u). Łatwiejsza dystrybucja,
-szybsze ładowanie (jeden odczyt zamiast wielu).
+### Architektura i ECS
+- [x] **Wprowadzenie Sceny**: Przeniesienie zarządzania encjami z `Engine` do dedykowanej klasy `Scene`.
+- [x] **Systemy ECS**: Implementacja systemów masowo przetwarzających dane (`TransformSystem`, `LightSystem`, `RenderExtractionSystem`).
+- [x] **Hierarchia Obiektów**: Pełne wsparcie dla relacji parent-child z poprawną propagacją transformacji.
+- [x] **EntityId**: Stabilne identyfikatory dla encji, niezależne od ich adresu w pamięci.
 
-### 9. Asynchroniczne ładowanie
-Ładuj tekstury i modele w tle (osobny wątek). Pokazuj placeholder podczas ładowania.
+### Rendering
+- [x] **Vulkan 1.4**: Migracja na nowoczesne API (Dynamic Rendering, Timeline Semaphores).
+- [x] **Deferred Shading**: Implementacja potoku odroczonego z G-Bufferem.
+- [x] **Bindless Textures**: Przejście na `descriptorIndexing` — obsługa do 1024 tekstur bez przełączania setów.
+- [x] **Shadow Mapping**: Obsługa cieni dla wielu świateł (do 16) przy użyciu tablic tekstur.
+- [x] **Skinning**: Animacja szkieletowa glTF wykonywana w vertex shaderze.
 
----
-
-## Scena i architektura
-
-### 10. Pełny ECS (Entity-Component-System)
-Obecnie komponenty same się aktualizują. Wprowadź "Systemy", które iterują
-po encjach z określonymi komponentami:
-```cpp
-class PhysicsSystem { void update(vector<Entity*>& entities, float dt); };
-class RenderSystem  { void render(vector<Entity*>& entities); };
-```
-
-### 11. Sceny i serializacja
-Format `.scene` (JSON lub binary) do zapisu/odczytu całej sceny.
-Edycja w zewnętrznym edytorze lub własnym.
-
-### 12. Rodzicielstwo encji (transform hierarchy)
-Encje powinny móc mieć rodzica. Transformacja dziecka = rodzic * dziecko.
-Podstawa do szkieletów, broni przyczepionych do postaci itd.
+### Zasoby i Dane
+- [x] **Asset Registry**: System typowanych uchwytów (`Handle`) zamiast stringów w runtime.
+- [x] **Serializacja JSON**: Zapis i odczyt scen oraz prefabów do formatu tekstowego.
+- [x] **Modern Loaders**: Wsparcie dla glTF (przez tinygltf), 3DS i MD2.
+- [x] **Logger**: Centralny, bezpieczny wątkowo system logowania diagnostycznego.
 
 ---
 
-## Fizyka
+## 2. Cele Krótkoterminowe
 
-### 13. Prosty system kolizji
-- AABB (bounding box) — szybkie testy kolizji
-- Sphere collider dla pocisków
-- Ray casting dla strzałów
+### Asynchroniczne Ładowanie Zasobów
+- [ ] Implementacja `AsyncAssetLoader`, który ładuje tekstury i modele w tle, nie blokując głównej pętli gry.
+- [ ] System placeholderów (wyświetlanie domyślnego modelu/tekstury do czasu zakończenia ładowania).
 
-### 14. Detekcja kolizji z terenem
-Terrain heightmap + ray cast do chodzenia po terenie.
+### Rozbudowa Hot Reloadingu
+- [ ] Rozszerzenie systemu o automatyczne odświeżanie materiałów i definicji scen po zmianie plików JSON.
 
----
-
-## Audio
-
-### 15. OpenAL lub miniaudio
-Dodaj dźwięk 3D — strzały, eksplozje, ambient. Biblioteka `miniaudio` jest
-jednoplikowa i obsługuje wszystkie platformy.
+### Fizyka i Kolizje
+- [ ] Integracja prostej biblioteki fizycznej lub autorskie rozwiązanie dla kolizji brył sztywnych (AABB, Sphere).
 
 ---
 
-## Narzędzia
+## 3. Wizja Długoterminowa
 
-### 18. Własny edytor scen
-Użyj ImGui do zbudowania edytora w silniku: dodawanie/usuwanie obiektów,
-edycja materiałów, podgląd shaderów, profilowanie FPS.
+### Render Graph
+Przejście na pełny graf renderowania, co pozwoli na automatyczną optymalizację barier Vulkan i łatwiejsze dodawanie efektów Post-process (Bloom, SSAO, SSR).
 
-### 19. Profiler GPU
-Znaczniki czasowe (`vkCmdWriteTimestamp`) do mierzenia czasu GPU per-pass.
-Wyświetlaj w UI.
+### Editor Mode
+Stworzenie wbudowanego edytora opartego o system GUI silnika:
+- Hierarchia sceny (Tree View).
+- Inspektor właściwości komponentów.
+- Manipulatory transformacji (Gizmos).
+- Przeglądarka zasobów.
 
----
-
-## Stabilność i jakość kodu
-
-### 20. Testy jednostkowe
-- Testy loadera 3DS (znane pliki → oczekiwane wierzchołki)
-- Testy systemu cząstek
-- Testy matematyki (macierze, wektory)
+### Skryptowanie
+Integracja języka skryptowego (np. Lua lub autorski system "Visual Scripting") dla logiki wysokiego poziomu bez konieczności rekompilacji całego silnika.

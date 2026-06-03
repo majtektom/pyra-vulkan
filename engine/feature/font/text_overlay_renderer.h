@@ -15,7 +15,7 @@ namespace engine3d {
 class Renderer;
 
 struct TextVertex {
-    float pos[2];
+    float pos[3];
     float texCoord[2];
     float color[4];
 
@@ -30,7 +30,7 @@ struct TextVertex {
     static std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions() {
         std::array<VkVertexInputAttributeDescription, 3> attrs{};
         attrs[0].binding = 0; attrs[0].location = 0;
-        attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attrs[0].offset = offsetof(TextVertex, pos);
         attrs[1].binding = 0; attrs[1].location = 1;
         attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
@@ -51,6 +51,7 @@ public:
         float x, y, scale;
         std::array<float, 4> color;
         float screenWidth, screenHeight;
+        float depth = 0.0f;
     };
 
     TextOverlayRenderer();
@@ -66,7 +67,7 @@ public:
     void loadFont(const FontAsset& fontAsset);
 
     void addText(const std::string& text, float x, float y, float scale,
-                 const std::array<float, 4>& color, float screenWidth, float screenHeight);
+                 const std::array<float, 4>& color, float screenWidth, float screenHeight, float depth = 0.0f);
     void clearTexts();
     void buildTexts(uint32_t frameIndex);
     void recordDrawCommands(VkCommandBuffer commandBuffer, uint32_t frameIndex) const;

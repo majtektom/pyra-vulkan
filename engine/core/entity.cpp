@@ -2,7 +2,7 @@
 
 namespace engine3d {
 
-Entity::Entity(const std::string& entityName) : name_(entityName) {
+Entity::Entity(EntityId id, const std::string& entityName) : id_(id), name_(entityName) {
     transform_ = addComponent<TransformComponent>();
 }
 

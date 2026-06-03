@@ -20,7 +20,9 @@ public:
     const std::string& name() const { return name_; }
     int x() const { return x_; } int y() const { return y_; }
     int w() const { return w_; } int h() const { return 25; }
-    bool isOpen() const { return open_; }
+    bool isOpen() const override { return open_; }
+    void close() override { open_ = false; }
+    bool isInside(int mx, int my) const override;
     bool isHovered(int mx, int my) const;
     int itemCount() const { return (int)items_.size(); }
 
@@ -28,7 +30,7 @@ public:
     void update(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta) override;
     void draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const override;
 
-    std::array<float, 4> color_{0.5f, 0.5f, 0.5f, 0.9f};
+    std::array<float, 4> color_{0.3f, 0.3f, 0.38f, 0.9f};
 
 private:
     std::string name_;
@@ -36,6 +38,7 @@ private:
     std::vector<std::string> items_;
     int selected_ = 0;
     bool open_ = false, hovered_ = false;
+    int hoveredIdx_ = -1;
     std::function<void(const std::string&)> onSelect_;
 };
 

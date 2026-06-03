@@ -9,7 +9,7 @@
 namespace engine3d {
 
 struct GuiVertex {
-    float pos[2], texCoord[2], color[4];
+    float pos[3], texCoord[2], color[4];
     static VkVertexInputBindingDescription bindingDescription();
     static std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions();
 };
@@ -22,13 +22,13 @@ public:
     void init(VkDevice device, VkPhysicalDevice pd, VkFormat colorFormat, VkFormat depthFormat, VkCommandPool cp, VkQueue q, VkExtent2D ext);
     void cleanup();
 
-    void addRect(float x, float y, float w, float h, std::array<float,4> color);
-    void addRectPx(int x, int y, int w, int h, std::array<float,4> color, float sw, float sh) {
+    void addRect(float x, float y, float w, float h, std::array<float,4> color, float z = -999.0f);
+    void addRectPx(int x, int y, int w, int h, std::array<float,4> color, float sw, float sh, float z = -999.0f) {
         float nx0 = (float(x) / sw) * 2.0f - 1.0f;
         float ny0 = (float(y) / sh) * 2.0f - 1.0f;
         float nx1 = (float(x + w) / sw) * 2.0f - 1.0f;
         float ny1 = (float(y + h) / sh) * 2.0f - 1.0f;
-        addRect(nx0, ny0, nx1 - nx0, ny1 - ny0, color);
+        addRect(nx0, ny0, nx1 - nx0, ny1 - ny0, color, z);
     }
     void addText(const std::vector<GuiVertex>& verts);
 
@@ -38,7 +38,11 @@ public:
 
     [[nodiscard]] VkPipelineLayout pipelineLayout() const { return pipelineLayout_; }
 
+    void setDepth(float z) { currentDepth_ = z; }
+    [[nodiscard]] float getDepth() const { return currentDepth_; }
+
 private:
+    float currentDepth_ = 0.0f;
     bool ready_ = false;
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDevice pd_ = VK_NULL_HANDLE;

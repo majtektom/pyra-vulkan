@@ -24,7 +24,7 @@ public:
     void update(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta) override;
     void draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const override;
 
-    std::array<float, 4> color_{0.5f, 0.5f, 0.5f, 0.9f};
+    std::array<float, 4> color_{0.3f, 0.3f, 0.38f, 0.9f};
 
 private:
     std::string name_, text_;

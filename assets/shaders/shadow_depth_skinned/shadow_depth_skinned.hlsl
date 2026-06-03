@@ -1,5 +1,6 @@
 #define MAX_BONES 64
 
+// Push Constants dla cieniowania obiektu animowanego szkieletowo
 [[vk::push_constant]]
 cbuffer PushConstants
 {
@@ -10,6 +11,7 @@ cbuffer PushConstants
     float2 _pad;
 };
 
+// Bufor macierzy transformacji kości (Set 1 / space1)
 cbuffer BoneBuffer : register(b0, space1)
 {
     column_major float4x4 boneMatrices[MAX_BONES];
@@ -19,8 +21,8 @@ struct VertexInput
 {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(3)]] float2 texCoord : TEXCOORD0;
-    [[vk::location(4)]] uint4 joints : JOINTS;
-    [[vk::location(5)]] float4 weights : WEIGHTS;
+    [[vk::location(4)]] uint4 joints : JOINTS;       // Indeksy kości wpływających na ten wierzchołek
+    [[vk::location(5)]] float4 weights : WEIGHTS;     // Wagi (siła wpływu) poszczególnych kości
 };
 
 struct VertexOutput
@@ -32,12 +34,23 @@ struct VertexOutput
 SamplerState globalSampler : register(s1, space0);
 Texture2D textures[] : register(t1, space0);
 
+/**
+ * @brief Shader wierzchołków dla cieni obiektów animowanych szkieletowo (Skinned Shadow VS).
+ * 
+ * Transformuje wierzchołki na podstawie przypisanych kości (Skeletal Skinning) 
+ * przed ich projekcją do przestrzeni rzutowania światła. 
+ * Zapobiega to powstawaniu cieni w pozycji statycznej (tzw. T-pose), sprawiając, 
+ * że cienie poruszają się synchronicznie wraz z animowaną postacią.
+ */
 VertexOutput vertexMain(VertexInput input)
 {
+    // Zabezpieczenie przed wyjściem indeksu kości poza dopuszczalny zakres tablicy
     uint4 clampedJoints = min(input.joints, (uint4)(MAX_BONES - 1));
 
+    // W tym uproszczonym shaderze cieni używamy kości o największym wpływie (joints.x)
     float4x4 skinMat = boneMatrices[clampedJoints.x];
 
+    // Deformacja pozycji wierzchołka kośćmi (Skinning)
     float4 skinnedPos = mul(skinMat, float4(input.position, 1.0));
     float4 worldPos = mul(model, skinnedPos);
 
@@ -47,6 +60,9 @@ VertexOutput vertexMain(VertexInput input)
     return output;
 }
 
+/**
+ * @brief Shader pikseli (Shadow Pass Cutout PS).
+ */
 void fragmentMain(VertexOutput input)
 {
     if (alphaCutoff > 0.0)

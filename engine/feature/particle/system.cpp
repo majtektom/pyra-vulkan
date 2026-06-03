@@ -1,16 +1,20 @@
 #include "feature/particle/system.h"
 #include "feature/particle/particle_event.h"
 #include "feature/particle/particle.h"
-#include "core/engine.h"
+#include "core/asset_registry.h"
+#include "core/entity.h"
 #include "core/mesh_component.h"
 #include "core/mesh_manager.h"
+#include "render/material_manager.h"
+#include "render/material_system.h"
 #include "render/renderer.h"
+#include "scene/scene.h"
 #include "core/types.h"
+#include "core/logger.h"
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <sstream>
 #include <thread>
 
@@ -211,7 +215,7 @@ ParticleEmitter* ParticleSystem::getEmitter(int index) {
 bool ParticleSystem::load(const std::string& file) {
     std::ifstream f(file);
     if (!f.is_open()) {
-        std::cerr << "[ParticleSystem] Cannot open file: " << file << std::endl;
+        LOG_ERROR("[ParticleSystem] Cannot open file: {}", file);
         return false;
     }
 
@@ -233,7 +237,7 @@ bool ParticleSystem::load(const std::string& file) {
     std::string sysName;
     header >> magic >> version >> sysName;
     if (magic != "ParticleSystem") {
-        std::cerr << "[ParticleSystem] Not a particle system file" << std::endl;
+        LOG_ERROR("[ParticleSystem] Not a particle system file: {}", file);
         return false;
     }
 
@@ -254,7 +258,7 @@ bool ParticleSystem::load(const std::string& file) {
         }
 
         if (!nextLine(line) || line != "{") {
-            std::cerr << "[ParticleSystem] Expected '{' after particles name" << std::endl;
+            LOG_ERROR("[ParticleSystem] Expected '{' after particles name in {}", file);
             return false;
         }
 
@@ -316,7 +320,7 @@ bool ParticleSystem::load(const std::string& file) {
             else if (varName == "texture")    { std::string v = getVal();
                 v.erase(0, v.find_first_not_of(" \t\""));
                 v.erase(v.find_last_not_of(" \t\"") + 1);
-                emitter->textureName_ = v; }
+                emitter->texturePath_ = v; }
             else if (varName == "size")       { auto n = processRealNumber(getVal()); emitter->minSize_ = n.min; emitter->maxSize_ = n.max; }
             else if (varName == "position")   { auto n = processVector3(getVal()); emitter->minPos_ = n.min; emitter->maxPos_ = n.max; }
             else if (varName == "velocity")   { auto n = processVector3(getVal()); emitter->minVel_ = n.min; emitter->maxVel_ = n.max; }
@@ -326,7 +330,7 @@ bool ParticleSystem::load(const std::string& file) {
         }
 
         if (!emitter->createParticles()) {
-            std::cerr << "[ParticleSystem] Error creating particles" << std::endl;
+            LOG_ERROR("[ParticleSystem] Error creating particles for emitter {} in {}", name, file);
             delete emitter;
             return false;
         }
@@ -338,13 +342,24 @@ bool ParticleSystem::load(const std::string& file) {
     return true;
 }
 
-void ParticleSystem::initialize(Engine& engine) {
+void ParticleSystem::initialize(Scene& scene,
+                                MeshManager& meshManager,
+                                MaterialManager& materialManager,
+                                MaterialSystem& materialSystem,
+                                Renderer& renderer,
+                                AssetRegistry& assetRegistry) {
     if (initialized_) return;
+
+    scene_ = &scene;
+    meshManager_ = &meshManager;
+    materialManager_ = &materialManager;
+    materialSystem_ = &materialSystem;
+    renderer_ = &renderer;
+    assetRegistry_ = &assetRegistry;
 
     meshNames_.clear();
     numThreads_ = std::max(1u, std::thread::hardware_concurrency());
 
-    auto* renderer = engine.getRenderer();
     for (int ei = 0; ei < static_cast<int>(emitters_.size()); ei++) {
         auto* e = emitters_[ei];
         if (!e) continue;
@@ -355,21 +370,33 @@ void ParticleSystem::initialize(Engine& engine) {
         std::string meshName = "particles_" + std::to_string(ei);
         meshNames_.push_back(meshName);
 
-        std::string texPath = e->textureName();
-        if (texPath.empty()) texPath = "assets/textures/particles/particle.dds";
-        std::string texName = "particle_tex_" + std::to_string(ei);
-        renderer->loadTexture(texName, texPath);
+        auto textureHandle = e->textureHandle();
+        if (!textureHandle.isValid()) {
+            std::string texPath = e->texturePath();
+            if (texPath.empty()) texPath = "assets/textures/particles/particle.dds";
+            std::string texName = "particle_tex_" + std::to_string(ei);
+            textureHandle = renderer_->loadTexture(texName, texPath);
+            e->setTextureHandle(textureHandle);
+        }
+
+        std::string materialTextureName = "default";
+        if (textureHandle.isValid()) {
+            const auto textureName = assetRegistry_->textureName(textureHandle);
+            if (textureName.has_value()) {
+                materialTextureName = *textureName;
+            }
+        }
 
         Material mat;
         mat.name = "particleMat_" + std::to_string(ei);
-        mat.textureName = texName;
+        mat.textureName = materialTextureName;
         mat.shaderProgram = "particle";
         mat.blendMode = BlendMode::Additive;
         mat.renderPriority = 1;
         mat.depthWrite = false;
         mat.cullMode = CullMode::Disabled;
-        engine.getMaterialManager()->add(mat);
-        auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
+        const auto materialHandle = materialManager_->add(mat);
+        auto matInst = materialSystem_->getOrCreateMaterialInstance(mat);
 
         MeshData quadMesh;
         quadMesh.vertices = {
@@ -379,20 +406,21 @@ void ParticleSystem::initialize(Engine& engine) {
             {{{-0.5f,  0.5f, 0.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,1}}},
         };
         quadMesh.indices = {0, 1, 2, 2, 3, 0};
-        engine.getMeshManager()->loadMesh(meshName, quadMesh);
+        meshManager_->loadMesh(meshName, quadMesh);
 
         VkDeviceSize instBufSize = static_cast<VkDeviceSize>(numP) * sizeof(ParticleInstanceData);
-        engine.getMeshManager()->loadInstanceBuffer(meshName, instBufSize);
+        meshManager_->loadInstanceBuffer(meshName, instBufSize);
 
-        auto* entity = engine.createEntity("emitter_" + std::to_string(ei));
+        auto* entity = scene_->createEntity("emitter_" + std::to_string(ei));
         auto* mc = entity->addComponent<MeshComponent>(meshName);
+        mc->materialHandle = materialHandle;
         mc->materialInstance = matInst;
     }
 
     initialized_ = true;
 }
 
-void ParticleSystem::update(float dt, Engine& engine) {
+void ParticleSystem::update(float dt) {
     if (!initialized_) return;
 
     updateParallel(dt, numThreads_);
@@ -404,10 +432,10 @@ void ParticleSystem::update(float dt, Engine& engine) {
 
         uint32_t instanceCount = static_cast<uint32_t>(instData.size());
         if (instanceCount > 0) {
-            engine.getMeshManager()->updateInstanceBuffer(meshNames_[ei],
+            meshManager_->updateInstanceBuffer(meshNames_[ei],
                 instData.data(), instData.size() * sizeof(ParticleInstanceData), instanceCount);
         } else {
-            engine.getMeshManager()->updateInstanceBuffer(meshNames_[ei], nullptr, 0, 0);
+            meshManager_->updateInstanceBuffer(meshNames_[ei], nullptr, 0, 0);
         }
     }
 }

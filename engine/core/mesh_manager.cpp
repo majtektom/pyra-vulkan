@@ -27,6 +27,9 @@ void MeshManager::loadMesh(const std::string& name, const MeshData& meshData) {
     }
     
     meshes_[name] = gpuMesh;
+    if (assetRegistry_) {
+        assetRegistry_->registerMesh(name);
+    }
 }
 
 void MeshManager::updateMesh(const std::string& name, const MeshData& meshData) {
@@ -50,6 +53,13 @@ void MeshManager::updateMesh(const std::string& name, const MeshData& meshData) 
 std::shared_ptr<GpuMesh> MeshManager::getMesh(const std::string& name) {
     auto it = meshes_.find(name);
     return it != meshes_.end() ? it->second : nullptr;
+}
+
+std::optional<MeshHandle> MeshManager::handle(const std::string& name) const {
+    if (!assetRegistry_) {
+        return std::nullopt;
+    }
+    return assetRegistry_->meshHandle(name);
 }
 
 void MeshManager::loadInstanceBuffer(const std::string& name, VkDeviceSize size) {

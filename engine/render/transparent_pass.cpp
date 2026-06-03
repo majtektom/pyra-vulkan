@@ -9,28 +9,39 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
                               VkPipelineLayout pipelineLayout) {
     auto packets = scene.getTransparentPackets();
     
-    // Sort: lower priority first, then back-to-front within same priority
+    // Sortowanie obiektów przezroczystych:
+    // 1. Najpierw według priorytetu renderowania (renderPriority).
+    // 2. Następnie od tyłu do przodu (back-to-front / obiekty najdalsze rysowane jako pierwsze).
+    // Dlaczego sortujemy od tyłu do przodu?
+    // Prawidłowe renderowanie półprzezroczystych powierzchni (Alpha Blending) wymaga algorytmu malarza (Painters Algorithm).
+    // Aby poprawnie wymieszać kolor nowego piksela z tłem, obiekty leżące z tyłu muszą już być narysowane.
+    // Gdybyśmy narysowali najpierw obiekt bliższy z włączonym testem głębokości, zablokowałby on (zasłonił) obiekty za nim, 
+    // a wyłączenie testu głębokości spowodowałoby błędne nakładanie warstw.
     std::stable_sort(packets.begin(), packets.end(), [](const RenderPacket& a, const RenderPacket& b) {
         if (a.renderPriority != b.renderPriority) return a.renderPriority < b.renderPriority;
         return a.distanceToCamera > b.distanceToCamera;
     });
 
+    // Rysowanie każdej półprzezroczystej paczki geometrii:
     for (const auto& packet : packets) {
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
 
         VkPipelineLayout matLayout = packet.material->getPipeline().layout;
+        
+        // Krok 1: Bindowanie potoku graficznego (Pipeline) z włączonym blendingiem (Alpha Blend).
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, packet.material->getPipeline().pipeline);
 
-        // Global descriptor set (set 0) is already bound in Renderer::render
-        // We only need to bind bone descriptor set (set 1) if present
+        // Krok 2: Bindowanie descriptor setów kości dla animacji szkieletowej (set 1).
         if (packet.boneDescriptorSet != VK_NULL_HANDLE)
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     matLayout, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
 
+        // Krok 3: Bindowanie bufora wierzchołków (slot 0).
         VkBuffer vertexBuffers[] = {packet.vertexBuffer};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
+        // Krok 4: Bindowanie dodatkowych buforów (instancje lub animacja szkieletowa, slot 1).
         if (packet.instanceBuffer != VK_NULL_HANDLE) {
             VkBuffer instVBs[] = {packet.instanceBuffer};
             VkDeviceSize instOffs[] = {0};
@@ -41,10 +52,12 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
             vkCmdBindVertexBuffers(commandBuffer, 1, 1, skinVBs, skinOffs);
         }
         
+        // Krok 5: Bindowanie bufora indeksów.
         if (packet.indexBuffer != VK_NULL_HANDLE) {
             vkCmdBindIndexBuffer(commandBuffer, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         }
 
+        // Krok 6: Konfiguracja Push Constants dla shadera.
         struct PushConstants {
             Matrix4 model;
             std::array<float, 4> baseColorFactor;
@@ -57,7 +70,11 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
             uint32_t occlusionTextureSet;
             uint32_t emissiveTextureSet;
             float alphaMaskCutoff;
-            float _padding[3];
+            uint32_t layerBlendEnabled;
+            uint32_t layerCount;
+            float layerWorldSize;
+            uint32_t layerBaseTextureSets[3][4];
+            uint32_t layerMaskTextureSets[3][4];
         } push;
         push.model = packet.transform;
         push.baseColorFactor = packet.materialColor;
@@ -70,11 +87,23 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
         push.occlusionTextureSet = packet.occlusionTextureIndex;
         push.emissiveTextureSet = packet.emissiveTextureIndex;
         push.alphaMaskCutoff = 0.5f;
+        push.layerBlendEnabled = packet.layerBlendEnabled ? 1u : 0u;
+        push.layerCount = packet.layerCount;
+        push.layerWorldSize = packet.layerWorldSize;
+        for (uint32_t group = 0; group < 3; ++group) {
+            for (uint32_t lane = 0; lane < 4; ++lane) {
+                const uint32_t index = group * 4 + lane;
+                push.layerBaseTextureSets[group][lane] = packet.layerTextureIndices[index];
+                push.layerMaskTextureSets[group][lane] = packet.layerMaskIndices[index];
+            }
+        }
 
+        // Przesyłamy Push Constants do rejestrów GPU.
         vkCmdPushConstants(commandBuffer, matLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(PushConstants), &push);
 
+        // Krok 7: Wywołanie rysowania (Draw Call).
         if (packet.indexBuffer != VK_NULL_HANDLE) {
             uint32_t instCount = packet.instanceCount > 0 ? packet.instanceCount : 1;
             vkCmdDrawIndexed(commandBuffer, packet.indexCount, instCount, 0, 0, 0);

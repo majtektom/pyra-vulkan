@@ -6,11 +6,17 @@ namespace engine3d {
 CameraComponent::CameraComponent() : Component("Camera") {}
 
 Matrix4 CameraComponent::getViewMatrix() const {
+    // LookAt tworzy macierz widoku na podstawie pozycji kamery (pobranej z TransformComponent encji),
+    // celu patrzenia (target) oraz wektora pionu (up).
     return lookAt(owner->transform().position, target, up);
 }
 
 Matrix4 CameraComponent::getProjectionMatrix() const {
+    // Proporcje ekranu (aspect ratio) - na stałe ustawione na 4:3, w pełnym silniku
+    // pobierane byłyby dynamicznie z wymiarów okna swapchaina.
     float aspect = 4.0f / 3.0f;
+    
+    // Budujemy macierz rzutowania perspektywicznego, konwertując FOV ze stopni na radiany.
     return perspective(radians(fieldOfViewDegrees), aspect, nearPlane, farPlane);
 }
 

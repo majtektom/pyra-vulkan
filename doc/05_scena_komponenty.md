@@ -1,174 +1,67 @@
-# Scena, encje i komponenty
+# Zarządzanie Światem: Scena, Encje i Systemy
 
-## Filozofia: ECS light
+Silnik `engine3d` wykorzystuje architekturę **ECS-lite** (Entity-Component-System), która separuje dane od logiki i pozwala na efektywne zarządzanie tysiącami obiektów.
 
-Silnik używa uproszczonego wzorca **Entity-Component** (bez Systemów):
+## Kluczowe Pojęcia
 
-```
-Entity = kontener na komponenty
-Component = dane + zachowanie
-```
+### 1. Scena (`Scene`)
+Scena jest najwyższym poziomem kontenera świata. Przechowuje ona wszystkie aktywne encje, systemy oraz zarządza cyklem życia obiektów.
+- **Wieloscenowość**: `SceneManager` pozwala na trzymanie wielu scen w pamięci, ale tylko jedna jest aktualnie przetwarzana i renderowana.
+- **Ekstrakcja**: Scena dostarcza dane do renderera w formie zoptymalizowanych list świateł i paczek renderujących.
 
-Każda encja ma unikalną nazwę i może zawierać dowolne komponenty.
-Komponenty same się aktualizują — nie ma centralnego "systemu".
+### 2. Encja (`Entity`)
+Encja to lekki obiekt logiczny posiadający unikalny `EntityId`. Sama w sobie nie zawiera logiki — jest jedynie "haczykiem" na komponenty.
+- **Lifecycle**: `scene.createEntity("Name")` / `scene.destroyEntity(id)`.
 
----
+### 3. Komponenty (`Component`)
+Dane przypisane do encji. Główne typy:
+- **`TransformComponent`**: Pozycja, rotacja i skala. Zawiera flagę `dirty`, informującą system o konieczności przeliczenia macierzy światowej.
+- **`MeshComponent`**: Przechowuje uchwyty (`Handle`) do siatki geometrycznej i materiału.
+- **`LightComponent`**: Definiuje parametry światła (typ, kolor, zasięg).
+- **`CameraComponent`**: Parametry projekcji (FOV, Near/Far).
+- **`HierarchyComponent`**: Zarządza relacją rodzic-dziecko.
 
-## Encja (Entity)
-
-```cpp
-class Entity {
-    std::string name;
-    bool active = true;
-
-    // dodaj komponent (tworzony na miejscu)
-    template<typename T, typename... Args>
-    T* addComponent(Args&&... args);
-
-    // pobierz komponent po typie
-    template<typename T>
-    T* getComponent();
-
-    // aktualizuj wszystkie komponenty
-    void update(TimeDelta deltaTime);
-};
-```
-
-Encje są przechowywane w `Engine::entities` (vector unique_ptr) i
-indeksowane w `Engine::entityMap` (unordered_map nazwa → wskaźnik).
-
-### Tworzenie encji
-
-```cpp
-auto* entity = engine.createEntity("kostka");
-auto* mc = entity->addComponent<MeshComponent>("siatka_kostki");
-auto* tc = entity->addComponent<TransformComponent>();
-tc->translation = {0.0f, 0.0f, 0.0f};
-tc->scale = {2.0f, 2.0f, 2.0f};
-```
+### 4. Systemy (`Systems`)
+Logika działająca na zbiorach komponentów. Przykłady:
+- **`TransformSystem`**: Masowo przelicza macierze świata dla wszystkich encji w hierarchii.
+- **`LightSystem`**: Zbiera dane o aktywnych światłach do przesłania do GPU.
+- **`RenderExtractionSystem`**: Selekcjonuje obiekty widoczne dla kamery i przygotowuje dane dla renderera.
 
 ---
 
-## Komponenty
+## Hierarchia i Transformacje
 
-### MeshComponent
-Definiuje renderowalną siatkę:
+Relacje rodzic-dziecko są obsługiwane przez `HierarchyComponent`.
+- **Propagacja**: Zmiana pozycji rodzica automatycznie (przez system) wpływa na pozycję wszystkich dzieci w następnej klatce.
+- **Usuwanie**: Wsparcie dla polityk usuwania (np. usuwanie całego drzewa lub przepinanie dzieci do dziadka).
 
-```cpp
-class MeshComponent : public Component {
-    std::string meshName;                          // nazwa siatki w MeshManager
-    std::string materialName;                      // nazwa materiału w MaterialManager
-    std::shared_ptr<MaterialInstance> materialInstance; // instancja materiału (leniwa inicjalizacja)
+---
 
-    void collectRenderPackets(vector<RenderPacket>& packets, MeshManager& mm);
-    // zbiera dane do renderowania: bufor wierzchołków, indeksów, macierz modelu, materiał
-};
-```
+## Prefaby i Serializacja JSON
 
-`collectRenderPackets()` pobiera `GpuMesh` z `MeshManager` (bufory Vulkan), macierz modelu
-z `TransformComponent` (rodzica), i tworzy `RenderPacket`.
+Silnik wspiera zapis i odczyt stanu świata w formacie JSON.
+- **Sceny**: Można zapisać cały stan `Scene` do pliku `.json`, wliczając w to wszystkie encje, ich hierarchię i parametry komponentów.
+- **Prefaby**: Możliwość definiowania wzorców obiektów (np. "drzewo" z odpowiednim meshem i materiałem) i ich wielokrotnego instancjonowania na scenie.
 
-### TransformComponent
-Pozycja, rotacja, skala w przestrzeni świata:
-
-```cpp
-class TransformComponent : public Component {
-    Vec3 translation{0,0,0};
-    Vec3 rotation{0,0,0};    // kąty Eulera w radianach
-    Vec3 scale{1,1,1};
-
-    Matrix4 getModelMatrix(); // macierz TRS
-};
-```
-
-Macierz modelu: `Translation * RotationZ * RotationY * RotationX * Scale`.
-
-### CameraComponent
-Parametry kamery:
-
-```cpp
-class CameraComponent : public Component {
-    Vec3 position{0,0,4};
-    Vec3 target{0,0,0};
-    Vec3 up{0,1,0};
-    float fieldOfViewDegrees = 45.0f;
-    float nearPlane = 0.1f;
-    float farPlane = 10.0f;
-
-    Matrix4 getViewMatrix(); // lookAt(position, target, up)
-};
+```json
+{
+  "name": "example_entity",
+  "transform": {
+    "position": {"x": 10, "y": 0, "z": 5},
+    "scale": {"x": 1, "y": 1, "z": 1}
+  },
+  "light": {
+    "type": "point",
+    "color": {"x": 1, "y": 0.8, "z": 0.5},
+    "intensity": 10.0
+  }
+}
 ```
 
 ---
 
-## RenderPacket — jednostka rysowania
+## Zalety Architektury ECS-lite
 
-```cpp
-struct RenderPacket {
-    VkBuffer vertexBuffer;        // bufor wierzchołków GPU
-    VkBuffer indexBuffer;         // bufor indeksów GPU
-    uint32_t indexCount;          // liczba indeksów do narysowania
-    Matrix4 transform;            // macierz modelu
-    std::shared_ptr<MaterialInstance> material; // materiał
-    std::string textureName;      // nazwa tekstury (do deskryptora)
-    float distanceToCamera;       // do sortowania przezroczystości
-};
-```
-
----
-
-## Przepływ renderowania sceny
-
-```
-Engine::renderFrame()
-│
-├─ renderScene.clear()
-├─ Dla każdej aktywnej encji:
-│   ├─ Pobierz MeshComponent
-│   ├─ Jeśli materialInstance == null → rozwiąż z MaterialManager
-│   └─ collectRenderPackets() → dodaj do listy
-│
-├─ Dla każdego RenderPacket:
-│   ├─ Oblicz distanceToCamera (do sortowania przezroczystości)
-│   └─ renderScene.addPacket() → opaque / transparent
-│
-└─ renderer->render(renderScene, activeCamera)
-    ├─ OpaquePass (dowolna kolejność, depth test sortuje)
-    └─ TransparentPass (sortowane back-to-front)
-```
-
----
-
-## MeshManager — bufory GPU
-
-```cpp
-struct GpuMesh {
-    std::unique_ptr<VulkanBuffer> vertexBuffer;  // VkBuffer z wierzchołkami
-    std::unique_ptr<VulkanBuffer> indexBuffer;   // VkBuffer z indeksami
-    uint32_t indexCount;
-};
-
-class MeshManager {
-    void loadMesh(name, meshData);   // tworzy bufory GPU
-    void updateMesh(name, meshData); // aktualizuje bufory (dla dynamicznych meshów)
-    shared_ptr<GpuMesh> getMesh(name);
-};
-```
-
-Bufory są tworzone z `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT` — CPU może je
-aktualizować przez `memcpy`. Dla statycznych meshów używa się `loadMesh()`,
-dla dynamicznych (cząstki) — `updateMesh()` co klatkę.
-
----
-
-## MaterialManager — rejestr materiałów
-
-```cpp
-class MaterialManager {
-    void add(material);            // dodaj materiał
-    const Material* get(name);     // znajdź po nazwie
-};
-```
-
-To prosty słownik `nazwa → Material`. Materiały są rejestrowane przy starcie
-i wyszukiwane przy renderowaniu.
+1. **SOLID**: Każdy system ma jedną odpowiedzialność (Single Responsibility).
+2. **Łatwość Rozbudowy**: Dodanie nowej funkcjonalności (np. fizyki) polega na dodaniu nowego komponentu i systemu, bez modyfikacji istniejącego kodu encji.
+3. **Data-Oriented**: Przetwarzanie komponentów w systemach pozwala na lepsze wykorzystanie pamięci podręcznej CPU (Cache Friendliness).

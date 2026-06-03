@@ -1,51 +1,50 @@
 # Dokumentacja silnika engine3d
 
-## Pliki dokumentacji
+Witamy w dokumentacji technicznej silnika `engine3d`. Silnik jest nowoczesną, edukacyjną bazą do tworzenia aplikacji 3D, opartą na API Vulkan 1.4 oraz architekturze zorientowanej na dane (ECS light).
+
+## Struktura Dokumentacji
 
 | Plik | Temat |
 |------|-------|
-| [01_architektura.md](01_architektura.md) | Struktura katalogów, przepływ danych, warstwy abstrakcji |
-| [02_pipeline_vulkan.md](02_pipeline_vulkan.md) | Inicjalizacja Vulkan, swapchain, renderowanie klatki |
-| [03_system_materialow.md](03_system_materialow.md) | Material, pipeline cache, shadery HLSL |
-| [04_modele_3ds.md](04_modele_3ds.md) | Format 3DS, ładowanie, konwersja współrzędnych |
-| [05_scena_komponenty.md](05_scena_komponenty.md) | Encje, komponenty, MeshManager, MaterialManager |
-| [06_kamera_sterowanie.md](06_kamera_sterowanie.md) | Kamera, kontroler FPS, macierze |
-| [07_czastki.md](07_czastki.md) | System cząstek, RecyclingArray, optymalizacje |
-| [08_tekstury_fonty.md](08_tekstury_fonty.md) | Tekstury DDS/BMP/TGA, font atlas, TextOverlay |
-| [09_rozwoj.md](09_rozwoj.md) | Możliwości rozbudowy i poprawy |
+| [01_architektura.md](01_architektura.md) | Podział modułowy, przepływ danych i warstwy silnika. |
+| [02_pipeline_vulkan.md](02_pipeline_vulkan.md) | Detale backendu: Deferred Shading, Bindless Textures, Dynamic Rendering. |
+| [03_system_materialow.md](03_system_materialow.md) | Materiały PBR, kompilacja shaderów HLSL i system uchwytów. |
+| [04_modele_3ds.md](04_modele_3ds.md) | Obsługa formatu 3DS i specyfika importu geometrii. |
+| [05_scena_komponenty.md](05_scena_komponenty.md) | Zarządzanie światem: Encje (ECS), hierarchia, prefaby i serializacja JSON. |
+| [06_kamera_sterowanie.md](06_kamera_sterowanie.md) | System kamer, ekstrakcja widoku i mapowanie wejścia (Input Actions). |
+| [07_czastki.md](07_czastki.md) | System cząsteczek, emitery i wielowątkowa aktualizacja. |
+| [08_tekstury_fonty.md](08_tekstury_fonty.md) | Zarządzanie teksturami (DDS/BMP/TGA) oraz renderowanie tekstu (SDL3_ttf). |
+| [09_rozwoj.md](09_rozwoj.md) | Historia zmian i kierunki dalszej rozbudowy. |
+| [10_logger.md](10_logger.md) | **NOWOŚĆ:** System logowania diagnostycznego. |
 
-## Szybki start
+## Główne Funkcje Silnika
+
+- **Vulkan 1.4**: Wykorzystanie nowoczesnych funkcji jak Dynamic Rendering, Timeline Semaphores i Descriptor Indexing (Bindless).
+- **Deferred PBR Renderer**: Potok renderujący dzielący geometrię (G-Buffer) od oświetlenia.
+- **System ECS**: Encje i komponenty z jawnym podziałem na dane i systemy przetwarzające (`TransformSystem`, `LightSystem`, itp.).
+- **Data-Driven**: Sceny i prefaby definiowane w formacie JSON.
+- **Asset Registry**: Zarządzanie zasobami poprzez bezpieczne, typowane uchwyty (`Handle`).
+- **Skeletal Animation**: Wsparcie dla animacji szkieletowych w formacie glTF.
+- **Advanced Terrain**: System terenu z generacją proceduralną, wielowarstwowym teksturowaniem i LOD.
+
+## Szybki Start
 
 ### Kompilacja
+Wymagany kompilator wspierający C++20 (np. GCC 13+) oraz zainstalowane Vulkan SDK i biblioteki SDL3.
+
 ```bash
-mkdir build && cd build
-cmake .. -G Ninja
-ninja
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j11
 ```
 
-### Uruchamianie przykładów
+### Uruchamianie
+Przykłady znajdują się w katalogu `bin/`:
 ```bash
-./bin/flyaround_example        # latanie po scenie z modelami 3DS
-./bin/rotating_cube_example    # obracające się kostki
-./bin/rotating_triangle_example # obracający się trójkąt
-./bin/particles_example        # system cząstek (4 emitery)
+cd bin
+./08_game          # Pełne demo gry (wyspa, modele, oświetlenie)
+./06_terrain_demo  # Demonstracja generatorów terenu
+./04_particles     # System cząsteczek
 ```
 
-### Sterowanie (flyaround)
-| Klawisz | Akcja |
-|---------|-------|
-| W/S | Przód/tył |
-| A/D | Lewo/prawo |
-| Spacja/LCtrl | Góra/dół |
-| Mysz | Rozglądanie |
-| Escape | Wyjście |
-
-## Dla kogo jest ten silnik
-
-Dla osób, które:
-- Znają podstawy C++ i chcą zrozumieć jak działa silnik 3D od środka
-- Chcą nauczyć się Vulkan API na praktycznym przykładzie
-- Szukają bazy do własnego projektu 3D
-
-Silnik **nie jest** gotowym produktem komercyjnym — to baza edukacyjna
-z udokumentowanym kodem pod kątem nauki.
+---
+*Silnik engine3d ma charakter edukacyjny i architektoniczny. Skupia się na pokazaniu nowoczesnych wzorców projektowych w C++ i grafice czasu rzeczywistego.*

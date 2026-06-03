@@ -7,11 +7,9 @@
 #include <stdexcept>
 #include <stb_image.h>
 #include "core/math.h"
-#include "core/mesh_component.h"
-#include "core/engine.h"
+#include "core/entity.h"
 #include "core/mesh_manager.h"
-#include "render/renderer.h"
-#include "render/vulkan_util.h"
+#include "camera/camera_component.h"
 #include "object/terrain.h"
 
 namespace engine3d {
@@ -119,237 +117,13 @@ void Terrain::uploadTo(MeshManager& mgr) {
         static int id = 0;
         meshName_ = "terrain_" + std::to_string(++id);
     }
+    meshManager_ = &mgr;
     mgr.loadMesh(meshName_, mesh);
 }
 
-void Terrain::setupMultiTexture(Engine& engine) {
-    if (layers.empty() || !renderer_) return;
-    numLayers_ = std::min((int)layers.size(), 12);
-    engine_ = &engine;
-
-    VkDevice device = renderer_->device();
-
-    std::vector<VkDescriptorSetLayoutBinding> bindings;
-    VkDescriptorSetLayoutBinding uboBinding{};
-    uboBinding.binding = 0;
-    uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboBinding.descriptorCount = 1;
-    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    bindings.push_back(uboBinding);
-
-    for (int i = 0; i < numLayers_; i++) {
-        VkDescriptorSetLayoutBinding texBinding{};
-        texBinding.binding = 1 + i;
-        texBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        texBinding.descriptorCount = 1;
-        texBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings.push_back(texBinding);
-    }
-    for (int i = 0; i < numLayers_; i++) {
-        VkDescriptorSetLayoutBinding maskBinding{};
-        maskBinding.binding = 13 + i;
-        maskBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        maskBinding.descriptorCount = 1;
-        maskBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings.push_back(maskBinding);
-    }
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = (uint32_t)bindings.size();
-    layoutInfo.pBindings = bindings.data();
-    vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &setLayout_);
-
-    std::vector<VkDescriptorPoolSize> poolSizes;
-    VkDescriptorPoolSize ubPool{};
-    ubPool.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    ubPool.descriptorCount = 1;
-    poolSizes.push_back(ubPool);
-    VkDescriptorPoolSize texPool{};
-    texPool.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    texPool.descriptorCount = (uint32_t)(numLayers_ * 2);
-    poolSizes.push_back(texPool);
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = (uint32_t)poolSizes.size();
-    poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = 1;
-    vkCreateDescriptorPool(device, &poolInfo, nullptr, &pool_);
-
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = pool_;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &setLayout_;
-    vkAllocateDescriptorSets(device, &allocInfo, &set_);
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushRange.size = sizeof(Matrix4) + sizeof(float) * 4 + sizeof(float) * 4 + sizeof(float) + sizeof(int) + sizeof(float) * 3;
-
-    VkPipelineLayoutCreateInfo plInfo{};
-    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts = &setLayout_;
-    plInfo.pushConstantRangeCount = 1;
-    plInfo.pPushConstantRanges = &pushRange;
-    vkCreatePipelineLayout(device, &plInfo, nullptr, &pipelineLayout_);
-
-    std::string shaderDir = "bin/assets/shaders/terrain/";
-    auto vertCode = vk::readFile(shaderDir + "terrain.vert.spv");
-    auto fragCode = vk::readFile(shaderDir + "terrain.frag.spv");
-    VkShaderModule vertMod = vk::createShaderModule(device, vertCode);
-    VkShaderModule fragMod = vk::createShaderModule(device, fragCode);
-
-    VkPipelineShaderStageCreateInfo stages[2] = {};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertMod;
-    stages[0].pName = "vertexMain";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragMod;
-    stages[1].pName = "fragmentMain";
-
-    auto bindDesc = Vertex::bindingDescription();
-    auto attrDescs = Vertex::attributeDescriptions();
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindDesc;
-    vertexInput.vertexAttributeDescriptionCount = (uint32_t)attrDescs.size();
-    vertexInput.pVertexAttributeDescriptions = attrDescs.data();
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-
-    VkPipelineColorBlendAttachmentState blendAttach{};
-    blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &blendAttach;
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    std::vector<VkDynamicState> dynStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = (uint32_t)dynStates.size();
-    dynamicState.pDynamicStates = dynStates.data();
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = stages;
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = VK_NULL_HANDLE;
-    pipelineInfo.subpass = 0;
-
-    VkFormat colorFormat = renderer_->colorFormat();
-    VkFormat depthFormat = renderer_->depthFormat();
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &colorFormat;
-    renderingInfo.depthAttachmentFormat = depthFormat;
-    pipelineInfo.pNext = &renderingInfo;
-
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_);
-    vkDestroyShaderModule(device, fragMod, nullptr);
-    vkDestroyShaderModule(device, vertMod, nullptr);
-
-    auto* renderer = engine.getRenderer();
-    for (int i = 0; i < numLayers_; i++) {
-        layers[i].texName = "tl_t" + std::to_string(i);
-        layers[i].maskName = "tl_m" + std::to_string(i);
-        renderer->loadTexture(layers[i].texName, layers[i].texturePath);
-        if (i > 0) renderer->loadTexture(layers[i].maskName, layers[i].maskPath);
-    }
-
-    std::vector<VkWriteDescriptorSet> writes;
-    writes.reserve(1 + numLayers_ * 2);
-    VkBuffer uboBuf = renderer->getUniformBuffer(0);
-    VkDescriptorBufferInfo uboBufInfo{uboBuf, 0, sizeof(Matrix4)*2 + sizeof(float)*8};
-    VkWriteDescriptorSet uboWrite{};
-    uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    uboWrite.dstSet = set_;
-    uboWrite.dstBinding = 0;
-    uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboWrite.descriptorCount = 1;
-    uboWrite.pBufferInfo = &uboBufInfo;
-    writes.push_back(uboWrite);
-
-    std::vector<VkDescriptorImageInfo> imgInfos;
-    imgInfos.resize(numLayers_ * 2);
-    for (int i = 0; i < numLayers_; i++) {
-        VkDescriptorImageInfo& dimg = imgInfos[i];
-        dimg.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        renderer->getTextureInfo(layers[i].texName, dimg.imageView, dimg.sampler);
-
-        VkWriteDescriptorSet w{};
-        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w.dstSet = set_;
-        w.dstBinding = 1 + i;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.descriptorCount = 1;
-        w.pImageInfo = &imgInfos[i];
-        writes.push_back(w);
-    }
-    for (int i = 0; i < numLayers_; i++) {
-        VkDescriptorImageInfo& mimg = imgInfos[numLayers_ + i];
-        mimg.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        if (i > 0) {
-            renderer->getTextureInfo(layers[i].maskName, mimg.imageView, mimg.sampler);
-        } else {
-            mimg.imageView = imgInfos[0].imageView;
-            mimg.sampler = imgInfos[0].sampler;
-        }
-
-        VkWriteDescriptorSet w{};
-        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w.dstSet = set_;
-        w.dstBinding = 13 + i;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.descriptorCount = 1;
-        w.pImageInfo = &imgInfos[numLayers_ + i];
-        writes.push_back(w);
-    }
-    vkUpdateDescriptorSets(device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
-
-    ready_ = true;
+Vec3 Terrain::worldOffset() const {
+    const float halfWorld = (hmSize_ * 0.5f) * scaleXZ_;
+    return Vec3{-halfWorld, 0.0f, -halfWorld};
 }
 
 // --- QuadTree construction ---
@@ -547,72 +321,9 @@ void Terrain::uploadMeshes(MeshManager& mgr, const std::string& prefix) {
     mgr.loadMesh(prefix + "_full", mesh);
 }
 
-// --- IRenderFeature ---
-
-void Terrain::init(Renderer* renderer) {
-    renderer_ = renderer;
-}
-
-void Terrain::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) {
-    if (!ready_ || !renderer_ || !engine_) return;
-    VkDevice device = renderer_->device();
-
-    VkBuffer uboBuf = renderer_->getUniformBuffer(frameIndex);
-    if (uboBuf != VK_NULL_HANDLE) {
-        VkDescriptorBufferInfo bi{uboBuf, 0, sizeof(Matrix4)*2 + sizeof(float)*8};
-        VkWriteDescriptorSet uw{};
-        uw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        uw.dstSet = set_;
-        uw.dstBinding = 0;
-        uw.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uw.descriptorCount = 1;
-        uw.pBufferInfo = &bi;
-        vkUpdateDescriptorSets(device, 1, &uw, 0, nullptr);
-    }
-
-    VkExtent2D extent = renderer_->extent();
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &set_, 0, nullptr);
-
-    VkViewport vp{0, 0, (float)extent.width, (float)extent.height, 0, 1};
-    VkRect2D scissor{{0,0}, extent};
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-    struct Push { Matrix4 model; float color[4]; float lightDir[4]; float bump; int numLayers; float pad[3]; } push;
-    push.model = Matrix4::identity();
-    push.color[0] = 1; push.color[1] = 1; push.color[2] = 1; push.color[3] = 1;
-    push.lightDir[0] = 0.5f; push.lightDir[1] = 1.0f; push.lightDir[2] = 0.3f; push.lightDir[3] = 0.25f;
-    push.bump = 1.0f;
-    push.numLayers = numLayers_;
-    vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-
-    auto gpuMesh = engine_->getMeshManager()->getMesh(meshName_);
-    if (!gpuMesh) return;
-    VkBuffer vb = gpuMesh->vertexBuffer ? gpuMesh->vertexBuffer->handle() : VK_NULL_HANDLE;
-    VkBuffer ib = gpuMesh->indexBuffer ? gpuMesh->indexBuffer->handle() : VK_NULL_HANDLE;
-    if (vb == VK_NULL_HANDLE || ib == VK_NULL_HANDLE) return;
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
-    vkCmdBindIndexBuffer(cmd, ib, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexed(cmd, gpuMesh->indexCount, 1, 0, 0, 0);
-}
-
-void Terrain::cleanupPipeline() {
-    if (!renderer_) return;
-    VkDevice d = renderer_->device();
-    if (pipeline_) { vkDestroyPipeline(d, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
-    if (pipelineLayout_) { vkDestroyPipelineLayout(d, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
-    if (pool_) { vkDestroyDescriptorPool(d, pool_, nullptr); pool_ = VK_NULL_HANDLE; }
-    if (setLayout_) { vkDestroyDescriptorSetLayout(d, setLayout_, nullptr); setLayout_ = VK_NULL_HANDLE; }
-    ready_ = false;
-}
-
 // --- Cleanup ---
 
 Terrain::~Terrain() {
-    cleanupPipeline();
     deleteTree(root_);
     delete root_;
     root_ = nullptr;

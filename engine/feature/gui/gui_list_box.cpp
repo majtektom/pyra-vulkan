@@ -27,7 +27,7 @@ void GuiListBox::update(int mx, int my, bool leftClicked, bool, int) {
 void GuiListBox::draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const {
     int ax = winX + x_, ay = winY + y_;
     // Obramowanie
-    r.addRectPx(ax - 1, ay - 1, w_ + 2, h_ + 2, {0.2f, 0.2f, 0.2f, 0.95f}, sw, sh);
+    r.addRectPx(ax - 2, ay - 2, w_ + 4, h_ + 4, {0.7f, 0.7f, 0.7f, 1.0f}, sw, sh);
     // Wypełnienie
     r.addRectPx(ax, ay, w_, h_, color_, sw, sh);
 
@@ -38,7 +38,9 @@ void GuiListBox::draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, flo
     for (int i = 0; i < (int)items_.size(); i++) {
         float iy = float(ay + i * itemH);
         if (i == selected_) {
-            r.addRectPx(ax, (int)iy, w_, itemH, {0.3f, 0.3f, 0.5f, 0.6f}, sw, sh);
+            r.addRectPx(ax, (int)iy, w_, itemH, {0.15f, 0.15f, 0.2f, 0.95f}, sw, sh);
+        } else if (i == hoveredIdx_) {
+            r.addRectPx(ax, (int)iy, w_, itemH, {0.2f, 0.2f, 0.25f, 0.95f}, sw, sh);
         }
         textFn(items_[i], float(ax + 5), iy + baselineOffset, 0.5f, {1, 1, 1, 1});
     }

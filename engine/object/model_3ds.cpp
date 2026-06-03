@@ -1,5 +1,76 @@
 #include "render/material_system.h"
 #include "object/model_3ds.h"
+#include "core/logger.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <stdexcept>
+
+namespace {
+
+bool textureHasAlpha(const std::string& path) {
+    if (path.empty()) {
+        return false;
+    }
+
+    FILE* file = fopen(path.c_str(), "rb");
+    if (!file) {
+        return false;
+    }
+
+    const auto closeFile = [&]() {
+        fclose(file);
+    };
+
+    std::string extension = path.substr(path.find_last_of('.') + 1);
+    for (char& c : extension) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    if (extension == "dds") {
+        char magic[4] = {};
+        char header[124] = {};
+        fread(magic, 1, 4, file);
+        fread(header, 1, 124, file);
+        closeFile();
+
+        if (std::string(magic, 4) != "DDS ") {
+            return false;
+        }
+
+        auto read32 = [](const char* h, int off) -> uint32_t {
+            return uint32_t(uint8_t(h[off]))
+                 | (uint32_t(uint8_t(h[off + 1])) << 8)
+                 | (uint32_t(uint8_t(h[off + 2])) << 16)
+                 | (uint32_t(uint8_t(h[off + 3])) << 24);
+        };
+
+        uint32_t pfFlags = read32(header, 76);
+        if (pfFlags & 1u) {
+            return true;
+        }
+        if (pfFlags & 4u) {
+            uint32_t fourCC = read32(header, 80);
+            return fourCC == 0x33545844u || fourCC == 0x35545844u;
+        }
+        return false;
+    }
+
+    if (extension == "tga") {
+        char tga[18] = {};
+        fread(tga, 1, 18, file);
+        closeFile();
+        return (tga[1] == 0 && (tga[2] == 2 || tga[2] == 10)) && tga[16] == 32;
+    }
+
+    closeFile();
+    return false;
+}
+
+} // namespace
 
 namespace engine3d {
 
@@ -7,21 +78,19 @@ Material Convert3dsMaterialToEngineMaterial(const Model3ds::tMaterialInfo& mat3d
     Material mat;
     mat.name = mat3ds.name;
     mat.shaderProgram = "default";
-    mat.blendMode = BlendMode::Disabled;
     mat.depthTest = true;
-    mat.depthWrite = true;
-    mat.cullMode = mat3ds.twoSided ? CullMode::Disabled : CullMode::Back;
+
+    const bool usesAlpha = mat3ds.transparency < 0.99f
+        || !mat3ds.opacityMapPath.empty()
+        || textureHasAlpha(mat3ds.texturePath);
+
+    mat.blendMode = usesAlpha ? BlendMode::Alpha : BlendMode::Disabled;
+    mat.depthWrite = !usesAlpha;
+    mat.cullMode = (usesAlpha || mat3ds.twoSided) ? CullMode::Disabled : CullMode::Back;
     return mat;
 }
 
 } // namespace engine3d
-
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <iostream>
-#include <stdexcept>
 
 namespace engine3d {
 
@@ -289,7 +358,7 @@ bool Model3ds::load(const std::string& name) {
     ray = 1.0f;
     // this->name = name;
     if (name.empty()) {
-        std::cerr << "[Model3ds] No file name" << std::endl;
+        LOG_ERROR("[Model3ds] No file name provided");
         return false;
     }
     if (modelLoaded)
@@ -304,13 +373,13 @@ bool Model3ds::load(const std::string& name) {
 
     filePointer = fopen(name.c_str(), "rb");
     if (!filePointer) {
-        std::cerr << "[Model3ds] Cannot open file: " << name << std::endl;
+        LOG_ERROR("[Model3ds] Cannot open file: {}", name);
         return false;
     }
 
     readChunk(currentChunk);
     if (currentChunk->ID != M3DMAGIC) {
-        std::cerr << "[Model3ds] Not a valid 3DS file: " << name << std::endl;
+        LOG_ERROR("[Model3ds] Not a valid 3DS file: {}", name);
         return false;
     }
 
@@ -443,6 +512,25 @@ void Model3ds::readColorChunk(std::array<float, 4>& color, tChunk* chunk) {
     chunk->bytesRead += tempChunk->bytesRead;
 }
 
+void Model3ds::readPercentageChunk(float& value, tChunk* chunk) {
+    readChunk(tempChunk);
+    char buffer[64] = {};
+
+    if (tempChunk->ID == FLOAT_PERCENTAGE) {
+        float percent = 0.0f;
+        tempChunk->bytesRead += fread(&percent, 1, sizeof(float), filePointer);
+        value = 1.0f - percent;
+    } else if (tempChunk->ID == INT_PERCENTAGE) {
+        unsigned short percent = 0;
+        tempChunk->bytesRead += fread(&percent, 1, sizeof(unsigned short), filePointer);
+        value = 1.0f - (static_cast<float>(percent) / 100.0f);
+    } else {
+        tempChunk->bytesRead += fread(buffer, 1, tempChunk->length - tempChunk->bytesRead, filePointer);
+    }
+
+    chunk->bytesRead += tempChunk->bytesRead;
+}
+
 void Model3ds::processNextChunk(tChunk* previousChunk) {
     t3DObject* newObject = nullptr;
     tMaterialInfo* newTexture = nullptr;
@@ -457,7 +545,7 @@ void Model3ds::processNextChunk(tChunk* previousChunk) {
         case VERSION:
             currentChunk->bytesRead += fread(&version, 1, currentChunk->length - currentChunk->bytesRead, filePointer);
             if (version > 0x03)
-                std::cerr << "[Model3ds] Warning: file version > 3" << std::endl;
+                LOG_WARN("[Model3ds] Warning: file version > 3 (found version {})", version);
             break;
 
         case OBJECTINFO:
@@ -642,9 +730,11 @@ void Model3ds::processNextMaterialChunk(tChunk* previousChunk) {
             currentChunk->bytesRead += fread(buffer, 1, currentChunk->length - currentChunk->bytesRead, filePointer);
             break;
 
-        case MAT_TRANSPARENCY:
-            currentChunk->bytesRead += fread(buffer, 1, currentChunk->length - currentChunk->bytesRead, filePointer);
+        case MAT_TRANSPARENCY: {
+            auto* mat = materialList[numOfMaterials - 1];
+            readPercentageChunk(mat->transparency, currentChunk);
             break;
+        }
 
         default:
             currentChunk->bytesRead += fread(buffer, 1, currentChunk->length - currentChunk->bytesRead, filePointer);
@@ -1011,7 +1101,7 @@ void Model3ds::setCurrentObject(char* strObjectName) {
         }
     }
 
-    std::cerr << "[Model3ds] Unknown object: " << strObjectName << std::endl;
+    LOG_WARN("[Model3ds] Unknown object: {}", strObjectName);
     currentObject = nullptr;
 }
 

@@ -52,7 +52,7 @@ void GuiMemo::update(int mx, int my, bool, bool, int wheelDelta) {
 
 void GuiMemo::draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const {
     int ax = winX + x_, ay = winY + y_;
-    r.addRectPx(ax - 1, ay - 1, w_ + 2, h_ + 2, {0.2f, 0.2f, 0.2f, 0.95f}, sw, sh);
+    r.addRectPx(ax - 2, ay - 2, w_ + 4, h_ + 4, {0.7f, 0.7f, 0.7f, 1.0f}, sw, sh);
     r.addRectPx(ax, ay, w_, h_, color_, sw, sh);
 
     auto lines = wrappedLines();

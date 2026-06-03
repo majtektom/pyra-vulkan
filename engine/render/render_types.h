@@ -4,10 +4,13 @@
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
+#include "core/asset_registry.h"
 #include "core/math.h"
 #include "core/types.h"
 
 namespace engine3d {
+
+constexpr uint32_t kMaxTerrainLayers = 12;
 
 struct VulkanPipeline {
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -41,12 +44,24 @@ struct RenderPacket {
     uint32_t indexCount;
     Matrix4 transform;
     std::shared_ptr<MaterialInstance> material;
-    std::string textureName;
+    MaterialHandle materialHandle{};
+    TextureHandle diffuseTextureHandle{};
     uint32_t diffuseTextureIndex = 0;
+    TextureHandle normalTextureHandle{};
     uint32_t normalTextureIndex = 0;
+    TextureHandle metallicRoughnessTextureHandle{};
     uint32_t metallicRoughnessTextureIndex = 0;
+    TextureHandle occlusionTextureHandle{};
     uint32_t occlusionTextureIndex = 0;
+    TextureHandle emissiveTextureHandle{};
     uint32_t emissiveTextureIndex = 0;
+    bool layerBlendEnabled = false;
+    uint32_t layerCount = 0;
+    std::array<TextureHandle, kMaxTerrainLayers> layerTextureHandles{};
+    std::array<TextureHandle, kMaxTerrainLayers> layerMaskHandles{};
+    std::array<uint32_t, kMaxTerrainLayers> layerTextureIndices{};
+    std::array<uint32_t, kMaxTerrainLayers> layerMaskIndices{};
+    float layerWorldSize = 1.0f;
     float bumpIntensity = 1.0f;
     float metallicFactor = 0.0f;
     float roughnessFactor = 1.0f;
@@ -54,11 +69,8 @@ struct RenderPacket {
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
     int renderPriority = 0;
+    bool forwardOpaquePass = false;
     bool castShadows = true;
-    std::string pbrMetallicRoughnessTextureName;
-    std::string pbrOcclusionTextureName;
-    std::string pbrEmissiveTextureName;
-    std::string normalMapName;
 };
 
 struct RenderView {

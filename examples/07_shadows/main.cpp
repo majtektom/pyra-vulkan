@@ -3,29 +3,46 @@
 #include <sstream>
 #include <iomanip>
 #include "core/engine.h"
+#include "core/entity.h"
 #include "render/renderer.h"
 #include "core/mesh_component.h"
+#include "core/light_component.h"
 #include "camera/camera_component.h"
+#include "scene/scene.h"
 
 using namespace engine3d;
 
+/**
+ * @brief Proceduralnie tworzy siatkę prostopadłościanu (Box Mesh).
+ * 
+ * Generuje wierzchołki, normalne (potrzebne do wyliczenia kąta padania światła),
+ * współrzędne UV (dla teksturowania) oraz indeksy trójkątów (indiced rendering).
+ */
 static MeshData makeBox(float w, float h, float d) {
     float x = w/2, y = h/2, z = d/2;
     MeshData m;
     m.vertices = {
+        // Każda ściana kostki musi mieć osobne wierzchołki ze względu na unikalne wektory normalne (z-facing, x-facing itp.)
+        // Ściana przód
         {{{-x,-y, z}}, {{0,0,1}}, {{1,1,1}}, {{0,0}}}, {{{ x,-y, z}}, {{0,0,1}}, {{1,1,1}}, {{1,0}}},
         {{{ x, y, z}}, {{0,0,1}}, {{1,1,1}}, {{1,1}}}, {{{-x, y, z}}, {{0,0,1}}, {{1,1,1}}, {{0,1}}},
+        // Ściana tył
         {{{ x,-y,-z}}, {{0,0,-1}}, {{1,1,1}}, {{0,0}}}, {{{-x,-y,-z}}, {{0,0,-1}}, {{1,1,1}}, {{1,0}}},
         {{{-x, y,-z}}, {{0,0,-1}}, {{1,1,1}}, {{1,1}}}, {{{ x, y,-z}}, {{0,0,-1}}, {{1,1,1}}, {{0,1}}},
+        // Ściana góra
         {{{-x, y, z}}, {{0,1,0}}, {{1,1,1}}, {{0,0}}}, {{{ x, y, z}}, {{0,1,0}}, {{1,1,1}}, {{1,0}}},
         {{{ x, y,-z}}, {{0,1,0}}, {{1,1,1}}, {{1,1}}}, {{{-x, y,-z}}, {{0,1,0}}, {{1,1,1}}, {{0,1}}},
+        // Ściana dół
         {{{-x,-y,-z}}, {{0,-1,0}}, {{1,1,1}}, {{0,0}}}, {{{ x,-y,-z}}, {{0,-1,0}}, {{1,1,1}}, {{1,0}}},
         {{{ x,-y, z}}, {{0,-1,0}}, {{1,1,1}}, {{1,1}}}, {{{-x,-y, z}}, {{0,-1,0}}, {{1,1,1}}, {{0,1}}},
+        // Ściana prawa
         {{{ x,-y, z}}, {{1,0,0}}, {{1,1,1}}, {{0,0}}}, {{{ x,-y,-z}}, {{1,0,0}}, {{1,1,1}}, {{1,0}}},
         {{{ x, y,-z}}, {{1,0,0}}, {{1,1,1}}, {{1,1}}}, {{{ x, y, z}}, {{1,0,0}}, {{1,1,1}}, {{0,1}}},
+        // Ściana lewa
         {{{-x,-y,-z}}, {{-1,0,0}}, {{1,1,1}}, {{0,0}}}, {{{-x,-y, z}}, {{-1,0,0}}, {{1,1,1}}, {{1,0}}},
         {{{-x, y, z}}, {{-1,0,0}}, {{1,1,1}}, {{1,1}}}, {{{-x, y,-z}}, {{-1,0,0}}, {{1,1,1}}, {{0,1}}},
     };
+    // Zbudowanie indeksów trójkątów dla 6 ścian (2 trójkąty / 6 indeksów na ścianę)
     for (int i = 0; i < 6; i++) {
         uint32_t base = i * 4;
         m.indices.insert(m.indices.end(), {base, base+1, base+2, base, base+2, base+3});
@@ -33,12 +50,21 @@ static MeshData makeBox(float w, float h, float d) {
     return m;
 }
 
+/**
+ * @brief Tworzy prostopadłościan z nadanym kolorem wierzchołków.
+ */
 static MeshData makeColoredBox(float w, float h, float d, float r, float g, float b) {
     MeshData m = makeBox(w, h, d);
     for (auto& v : m.vertices) v.color = {r, g, b};
     return m;
 }
 
+/**
+ * @brief Proceduralnie generuje siatkę kuli (Sphere Mesh).
+ * 
+ * Wykorzystuje sferyczny układ współrzędnych do wyliczenia rozłożenia wierzchołków
+ * na siatce geograficznej (południki i równoleżniki).
+ */
 static MeshData makeSphere(int segments, float radius, float r, float g, float b) {
     MeshData m;
     int rings = segments / 2;
@@ -46,16 +72,22 @@ static MeshData makeSphere(int segments, float radius, float r, float g, float b
         float phi = 3.14159265f * float(i) / float(rings);
         float sinPhi = std::sin(phi);
         float cosPhi = std::cos(phi);
+        
         for (int j = 0; j <= segments; j++) {
             float theta = 2.0f * 3.14159265f * float(j) / float(segments);
             float sinTheta = std::sin(theta);
             float cosTheta = std::cos(theta);
+            
+            // Pozycja X, Y, Z na kuli
             float x = cosTheta * sinPhi * radius;
             float y = cosPhi * radius;
             float z = sinTheta * sinPhi * radius;
+            
+            // Wektor normalny dla kuli to po prostu znormalizowana pozycja (kierunek od środka kuli)
             m.vertices.push_back({{x, y, z}, {x/radius, y/radius, z/radius}, {r, g, b}, {0, 0}});
         }
     }
+    // Generowanie indeksów łączących punkty w trójkąty
     for (int i = 0; i < rings; i++) {
         for (int j = 0; j < segments; j++) {
             uint32_t a = i * (segments + 1) + j;
@@ -71,15 +103,20 @@ int main() {
     if (!engine.initialize("engine3d: directional + point + spot lights", 1280, 800)) return 1;
 
     auto* renderer = engine.getRenderer();
+    auto* activeScene = engine.getSceneManager()->activeScene();
+    if (!activeScene) return 1;
+    
+    // Konfiguracja renderera
     renderer->setClearColor(0.02f, 0.02f, 0.05f, 1.0f);
     renderer->setShadowsEnabled(true);
-    engine.configureDirectionalShadow(30.0f);
+    engine.configureDirectionalShadow(30.0f); // Ustawienie rzutu ortogonalnego kamery cieni (szerokość 30m)
     engine.setLightingEnabled(true);
-    engine.setAmbientStrength(0.12f);
+    engine.setAmbientStrength(0.12f); // Słabe światło otoczenia (dla zachowania klimatu ciemności)
     engine.setAmbientColor(0.25f, 0.25f, 0.35f);
 
     engine.loadFont("times", "assets/fonts/times.ttf", 48);
 
+    // KROK 1: GENEROWANIE I ŁADOWANIE SIATEK PROCEDURALNYCH DO BUFFERÓW GPU
     engine.getMeshManager()->loadMesh("floor", makeColoredBox(16, 0.2f, 16, 0.3f, 0.3f, 0.35f));
     engine.getMeshManager()->loadMesh("box1", makeColoredBox(2.0f, 3.0f, 2.0f, 0.6f, 0.5f, 0.3f));
     engine.getMeshManager()->loadMesh("box2", makeColoredBox(1.5f, 4.0f, 1.5f, 0.5f, 0.4f, 0.6f));
@@ -88,12 +125,18 @@ int main() {
     engine.getMeshManager()->loadMesh("box5", makeColoredBox(1.0f, 2.5f, 2.5f, 0.3f, 0.6f, 0.4f));
     engine.getMeshManager()->loadMesh("box6", makeColoredBox(0.8f, 5.0f, 0.8f, 0.55f, 0.55f, 0.6f));
 
+    // Siatki markerów reprezentujących fizyczne źródła światła
     engine.getMeshManager()->loadMesh("marker_dir", makeColoredBox(0.4f, 0.4f, 0.4f, 2.0f, 0.15f, 0.15f));
     engine.getMeshManager()->loadMesh("marker_point", makeSphere(16, 0.25f, 0.15f, 2.0f, 1.8f));
     engine.getMeshManager()->loadMesh("marker_spot", makeColoredBox(0.35f, 0.35f, 0.35f, 0.2f, 1.5f, 2.0f));
 
-    auto* floorE = engine.createEntity("floor");
-    floorE->addComponent<MeshComponent>("floor");
+    Material sceneMaterial;
+    sceneMaterial.name = "scene_default";
+    const auto sceneMaterialHandle = engine.getMaterialManager()->add(sceneMaterial);
+
+    // KROK 2: SPAWNOWANIE PRZESZKÓD RZUCAJĄCYCH CIENIE (Shadow casters)
+    auto* floorE = activeScene->createEntity("floor");
+    floorE->addComponent<MeshComponent>("floor")->materialHandle = sceneMaterialHandle;
     floorE->transform().position = {0, -0.1f, 0};
 
     struct { const char* mesh; float x, y, z; } obstacles[] = {
@@ -103,31 +146,79 @@ int main() {
         {"box4",  4, 1.0f, 5},   {"box6",  0, 2.5f, 0},
     };
     for (auto& obs : obstacles) {
-        auto* e = engine.createEntity(obs.mesh);
-        e->addComponent<MeshComponent>(obs.mesh);
+        auto* e = activeScene->createEntity(obs.mesh);
+        // Domyślnie MeshComponent ma włączoną flagę castShadows = true
+        e->addComponent<MeshComponent>(obs.mesh)->materialHandle = sceneMaterialHandle;
         e->transform().position = {obs.x, obs.y, obs.z};
     }
 
-    auto* markerDir = engine.createEntity("marker_dir");
-    markerDir->addComponent<MeshComponent>("marker_dir")->castShadows = false;
+    // KROK 3: UTWORZENIE ŹRÓDEŁ ŚWIATŁA W SYSTEMIE ECS
+    
+    // 1. Światło kierunkowe (Directional Light - Słońce/Księżyc).
+    // Światło to nie ma pozycji, a jedynie kierunek. Wszystkie promienie są równoległe.
+    // Jako jedyne rzuca cienie na mapę cieni w tej konfiguracji silnika.
+    auto* markerDir = activeScene->createDirectionalLight(
+        "marker_dir",
+        Vec3{0.0f, -1.0f, 0.0f}, // Kierunek
+        Vec3{0.95f, 0.3f, 0.25f}, // Kolor czerwony
+        1.6f);                   // Natężenie
+    auto* markerDirMesh = markerDir->addComponent<MeshComponent>("marker_dir");
+    markerDirMesh->materialHandle = sceneMaterialHandle;
+    markerDirMesh->castShadows = false; // Marker reprezentujący słońce nie może sam rzucać cienia!
+    auto* dirLight = markerDir->getComponent<LightComponent>();
 
-    auto* markerPoint = engine.createEntity("marker_point");
-    markerPoint->addComponent<MeshComponent>("marker_point")->castShadows = false;
+    // 2. Światło punktowe (Point Light - np. żarówka, ognisko).
+    // Świeci we wszystkich kierunkach ze swojej pozycji. Natężenie spada z odległością (tłumienie - attenuation).
+    auto* markerPoint = activeScene->createPointLight(
+        "marker_point",
+        Vec3{1.0f, 2.0f, 0.0f}, // Pozycja startowa
+        Vec3{0.2f, 0.9f, 1.0f},  // Kolor turkusowy
+        2.5f,                    // Natężenie
+        6.0f);                   // Zasięg tłumienia światła (Radius)
+    auto* markerPointMesh = markerPoint->addComponent<MeshComponent>("marker_point");
+    markerPointMesh->materialHandle = sceneMaterialHandle;
+    markerPointMesh->castShadows = false;
+    auto* pointLight = markerPoint->getComponent<LightComponent>();
 
-    auto* markerSpot = engine.createEntity("marker_spot");
-    markerSpot->addComponent<MeshComponent>("marker_spot")->castShadows = false;
+    // 3. Światło reflektora (Spot Light - np. latarka).
+    // Emituje stożek światła z danej pozycji w określonym kierunku.
+    // Posiada kąt wewnętrzny (pełne oświetlenie) oraz kąt zewnętrzny (płynne zanikanie na krawędzi stożka).
+    auto* markerSpot = activeScene->createSpotLight(
+        "marker_spot",
+        Vec3{0.0f, 7.0f, 6.0f},   // Pozycja
+        Vec3{0.0f, -1.0f, 0.0f},  // Kierunek świecenia (w dół)
+        Vec3{0.8f, 0.85f, 1.0f},  // Kolor jasnoniebieski
+        2.0f,                     // Natężenie
+        10.0f,                    // Zasięg (Radius)
+        20.0f,                    // Kąt wewnętrzny stożka (Inner Cutoff w stopniach)
+        35.0f);                   // Kąt zewnętrzny stożka (Outer Cutoff w stopniach)
+    auto* markerSpotMesh = markerSpot->addComponent<MeshComponent>("marker_spot");
+    markerSpotMesh->materialHandle = sceneMaterialHandle;
+    markerSpotMesh->castShadows = false;
+    auto* spotLight = markerSpot->getComponent<LightComponent>();
 
-    auto* cameraEntity = engine.createEntity("camera");
+    // Kamera sceny
+    auto* cameraEntity = activeScene->createEntity("camera");
     auto* camera = cameraEntity->addComponent<CameraComponent>();
     cameraEntity->transform().position = {0, 8, -15};
     camera->fieldOfViewDegrees = 55;
     camera->farPlane = 200;
-    engine.setActiveCamera(camera);
+    activeScene->setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(cameraEntity->transform().position, {0, 1, 0});
 
+    // PĘTLA UPDATE
     engine.onUpdate = [&](float dt, Engine& e) {
-        auto snap = e.getPlatform()->pollInput();
+        const auto& snap = e.input();
+        static bool escWasDown = false;
+        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
+        if (escDown && !escWasDown) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&event);
+        }
+        escWasDown = escDown;
 
+        // Kontrola przełączników oświetlenia i cieni za pomocą klawiszy L, K, 1, 2, 3
         static bool lWasDown = false;
         static bool kWasDown = false;
         static bool n1WasDown = false;
@@ -155,7 +246,8 @@ int main() {
         n3WasDown = n3Down;
 
         auto* cc = e.getCameraController();
-        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        auto* scene = e.getSceneManager()->activeScene();
+        auto* cam = scene ? scene->activeCamera() : nullptr;
         if (cc && cam) {
             float vel = cc->moveSpeed * dt;
             if (snap.keys[SDL_SCANCODE_W]) cc->moveForward(vel);
@@ -171,12 +263,10 @@ int main() {
         static float time = 0;
         time += dt;
 
-        // --- Setup lights each frame ---
-        e.clearLights();
-
+        // KROK 4: DYNAMICZNE AKTUALIZOWANIE PARAMETRÓW OŚWIETLENIA (Animacje)
         int activeCount = 0;
 
-        // 1. Directional light (red marker) — orbiting sun
+        // 1. Obracanie światła kierunkowego wokół centrum sceny (ruch słońca)
         float sunAngle = time * 0.6f;
         float sunRad = 10.0f;
         float sx = std::cos(sunAngle) * sunRad;
@@ -188,21 +278,20 @@ int main() {
 
         if (light1On) {
             float sdist = std::sqrt(sx*sx + sy*sy + sz*sz);
-            e.addDirectionalLight(sx/sdist, sy/sdist, sz/sdist,  0.95f, 0.3f, 0.25f, 1.6f);
+            dirLight->direction = {sx/sdist, sy/sdist, sz/sdist}; // Wektor kierunku oświetlenia (od słońca do środka)
             activeCount++;
         }
 
-        // 2. Point light (green marker) — bouncing up and down
+        // 2. Światło punktowe unoszące się w górę i w dół (sinusoida)
         float py = 2.0f + std::abs(std::sin(time * 0.8f)) * 4.0f;
         markerPoint->transform().position = {1.0f, py, 0.0f};
         markerPoint->setActive(light2On);
 
         if (light2On) {
-            e.addPointLight(1.0f, py, 0.0f,  0.2f, 0.9f, 1.0f,  2.5f, 6.0f);
             activeCount++;
         }
 
-        // 3. Spot light (blue marker) — circling and pointing at floor
+        // 3. Ruch światła reflektora po okręgu, zawsze skierowany w środek podłogi
         float spotAngle = -time * 0.45f;
         float spotH = 7.0f;
         float spotR = 6.0f;
@@ -218,12 +307,11 @@ int main() {
             float sdz = -spz;
             float sdy = -spy;
             float sdlen = std::sqrt(sdx*sdx + sdy*sdy + sdz*sdz);
-            e.addSpotLight(spx, spy, spz,  sdx/sdlen, sdy/sdlen, sdz/sdlen,
-                           0.8f, 0.85f, 1.0f,  2.0f, 10.0f,  20.0f, 35.0f);
+            spotLight->direction = {sdx/sdlen, sdy/sdlen, sdz/sdlen}; // Przeliczenie kierunku na wektor jednostkowy
             activeCount++;
         }
 
-        // --- HUD ---
+        // HUD i interfejs diagnostyczny
         float rw = (float)e.getRenderer()->width();
 
         std::ostringstream fps;

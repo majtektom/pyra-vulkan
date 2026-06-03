@@ -23,26 +23,29 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     packet.indexBuffer = gpuMesh->indexBuffer ? gpuMesh->indexBuffer->handle() : VK_NULL_HANDLE;
     packet.indexCount = gpuMesh->indexCount;
 
-    packet.transform = owner->transform().getLocalMatrix();
+    // Uzywamy world matrix wyliczonej przez TransformSystem,
+    // aby poprawnie wspierac hierarchie parent-child.
+    packet.transform = owner->transform().getWorldMatrix();
     packet.castShadows = castShadows;
+    packet.materialHandle = materialHandle;
 
     if (materialInstance) {
         packet.material = materialInstance;
-        packet.textureName = materialInstance->getTextureName();
         packet.bumpIntensity = materialInstance->getBumpIntensity();
         packet.materialColor = materialInstance->getColor();
         packet.renderPriority = materialInstance->getRenderPriority();
         packet.metallicFactor = materialInstance->getMetallicFactor();
         packet.roughnessFactor = materialInstance->getRoughnessFactor();
-        packet.pbrMetallicRoughnessTextureName = materialInstance->getMetallicRoughnessTextureName();
-        packet.pbrOcclusionTextureName = materialInstance->getOcclusionTextureName();
-        packet.pbrEmissiveTextureName = materialInstance->getEmissiveTextureName();
-        packet.normalMapName = materialInstance->getNormalMapName();
     }
     packet.skinVertexBuffer = skinVertexBuffer;
     packet.boneDescriptorSet = boneDescriptorSet;
     packet.instanceBuffer = gpuMesh->instanceBuffer ? gpuMesh->instanceBuffer->handle() : VK_NULL_HANDLE;
     packet.instanceCount = gpuMesh->instanceCount;
+    packet.layerBlendEnabled = layerBlendEnabled;
+    packet.layerCount = layerCount;
+    packet.layerTextureHandles = layerTextureHandles;
+    packet.layerMaskHandles = layerMaskHandles;
+    packet.layerWorldSize = layerWorldSize;
     
     packets.push_back(packet);
 }

@@ -1,52 +1,81 @@
 #pragma once
 
-#include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
-#include <vector>
+#include <unordered_map>
+
+#include "scene/scene.h"
 
 namespace engine3d {
 
-class Layer {
-public:
-    explicit Layer(std::string name);
-    virtual ~Layer() = default;
-
-    Layer(const Layer&) = delete;
-    Layer& operator=(const Layer&) = delete;
-    Layer(Layer&&) = delete;
-    Layer& operator=(Layer&&) = delete;
-
-    const std::string& name() const { return name_; }
-    bool isActive() const { return active_; }
-    void setActive(bool active);
-
-    virtual void onActivate() {}
-    virtual void onDeactivate() {}
-    virtual void update(float deltaTime) {}
-
-    std::function<void(float, uint32_t, uint32_t)> updateOverlay;
-
-private:
-    std::string name_;
-    bool active_ = false;
-};
-
+/**
+ * @brief Menedżer scen silnika (Scene Manager).
+ *
+ * SceneManager zarządza wieloma scenami (światami ECS) w grze (np. scena menu głównego, 
+ * scena poziomu 1, scena edytora). Odpowiada za:
+ * - Tworzenie, usuwanie i wyszukiwanie scen po ich nazwach.
+ * - Kontrolowanie, która scena jest w danej chwili aktywna (activeScene) – czyli aktualizowana i rysowana.
+ * - Integrację z systemem zapisu/odczytu (serializacji scen i prefabrykatów).
+ * - Aktualizację systemów ECS aktywnej sceny.
+ */
 class SceneManager {
 public:
     SceneManager() = default;
 
-    void addLayer(std::unique_ptr<Layer> layer);
-    void removeLayer(const std::string& name);
-    Layer* getLayer(const std::string& name);
-    void activateLayer(const std::string& name, bool singleActive = true);
-    void deactivateLayer(const std::string& name);
-    void toggleLayer(const std::string& name);
+    /**
+     * @brief Tworzy nową scenę o unikalnej nazwie lub zwraca wskaźnik do już istniejącej.
+     */
+    Scene* createScene(const std::string& name);
+    
+    /**
+     * @brief Usuwa scenę o podanej nazwie wraz ze wszystkimi jej encjami i systemami.
+     * @return Zwraca false, jeśli scena o tej nazwie nie istniała.
+     */
+    bool removeScene(const std::string& name);
+    
+    // Wyszukiwanie sceny po nazwie:
+    Scene* getScene(const std::string& name);
+    const Scene* getScene(const std::string& name) const;
+    
+    /**
+     * @brief Ustawia scenę o podanej nazwie jako aktywną.
+     * Silnik w każdej klatce pobiera encje i uruchamia systemy wyłącznie z aktywnej sceny.
+     */
+    bool setActiveScene(const std::string& name);
+    
+    Scene* activeScene() { return activeScene_; }
+    const Scene* activeScene() const { return activeScene_; }
+
+    /**
+     * @brief Zapisuje (serializuje) wybraną scenę do pliku JSON.
+     */
+    bool serializeScene(const std::string& name, const std::string& filePath) const;
+
+    /**
+     * @brief Wczytuje (deserializuje) scenę z pliku JSON. Tworzy nową scenę, jeśli jeszcze nie istnieje.
+     */
+    bool deserializeScene(const std::string& name, const std::string& filePath);
+
+    /**
+     * @brief Zapisuje wybraną encję ze wskazanej sceny do pliku prefabrykatu JSON.
+     */
+    bool serializePrefab(const std::string& sceneName, EntityId entityId,
+                         const std::string& filePath) const;
+
+    /**
+     * @brief Tworzy instancję prefabrykatu z pliku JSON i umieszcza go na wskazanej scenie.
+     */
+    Entity* instantiatePrefab(const std::string& sceneName, const std::string& filePath,
+                              const std::string& nameOverride = "");
+
+    /**
+     * @brief Aktualizuje czas w systemach ECS aktywnej sceny. Wywoływane co klatkę.
+     */
     void update(float deltaTime);
 
 private:
-    std::vector<std::unique_ptr<Layer>> layers_;
+    std::unordered_map<std::string, std::unique_ptr<Scene>> scenes_; // Rejestr wszystkich scen (własność menedżera).
+    Scene* activeScene_ = nullptr;                                    // Słaby wskaźnik do aktualnie aktywnej sceny.
 };
 
 } // namespace engine3d

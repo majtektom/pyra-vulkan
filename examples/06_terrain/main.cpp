@@ -1,8 +1,10 @@
+#include "core/logger.h"
 #include <SDL3/SDL.h>
-#include <iostream>
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include "core/engine.h"
+#include "core/entity.h"
 #include "render/renderer.h"
 #include "core/types.h"
 #include "core/mesh_component.h"
@@ -13,18 +15,71 @@
 
 using namespace engine3d;
 
+namespace {
+
+// Definicje akcji sterowania terenem
+constexpr const char* kActionMoveForward = "move.forward";
+constexpr const char* kActionMoveBackward = "move.backward";
+constexpr const char* kActionMoveLeft = "move.left";
+constexpr const char* kActionMoveRight = "move.right";
+constexpr const char* kActionMoveUp = "move.up";
+constexpr const char* kActionMoveDown = "move.down";
+constexpr const char* kActionSnapToGround = "terrain.snap_to_ground";
+constexpr const char* kActionTogglePointer = "ui.toggle_pointer";
+constexpr const char* kActionTerrainModePlasma = "terrain.mode_plasma";
+constexpr const char* kActionTerrainModeFault = "terrain.mode_fault";
+constexpr const char* kActionTerrainModeDeposition = "terrain.mode_deposition";
+
+/**
+ * @brief Pobiera nazwę tekstury z rejestru zasobów na podstawie jej uchwytu.
+ */
+std::string textureNameFromHandle(AssetRegistry* assets, TextureHandle textureHandle, const std::string& fallback = "") {
+    if (!assets || !textureHandle.isValid()) {
+        return fallback;
+    }
+    const auto name = assets->textureName(textureHandle);
+    return name.has_value() ? *name : fallback;
+}
+
+/**
+ * @brief Mapuje fizyczne klawisze na akcje systemu terenu.
+ */
+void configureTerrainBindings(Engine& engine) {
+    auto& map = engine.inputActions();
+    map.clearAll();
+    map.bindKey(kActionMoveForward, SDL_SCANCODE_W);
+    map.bindKey(kActionMoveBackward, SDL_SCANCODE_S);
+    map.bindKey(kActionMoveLeft, SDL_SCANCODE_A);
+    map.bindKey(kActionMoveRight, SDL_SCANCODE_D);
+    map.bindKey(kActionMoveUp, SDL_SCANCODE_SPACE);
+    map.bindKey(kActionMoveDown, SDL_SCANCODE_LCTRL);
+    map.bindKey(kActionSnapToGround, SDL_SCANCODE_G);
+    map.bindKey(kActionTogglePointer, SDL_SCANCODE_F1);
+    map.bindKey(kActionTerrainModePlasma, SDL_SCANCODE_1);
+    map.bindKey(kActionTerrainModeFault, SDL_SCANCODE_2);
+    map.bindKey(kActionTerrainModeDeposition, SDL_SCANCODE_3);
+}
+
+} // namespace
+
 int main() {
     Engine engine;
     if (!engine.initialize("engine3d: terrain LOD", 1280, 800)) return 1;
+
+    configureTerrainBindings(engine);
+
+    auto* scene = engine.getSceneManager()->activeScene();
+    if (!scene) return 1;
 
     auto* renderer = engine.getRenderer();
     renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     engine.loadFont("times", "assets/fonts/times.ttf", 28);
     auto* mats = engine.getMaterialManager();
+    auto* assets = engine.getAssetRegistry();
 
+    // KROK 1: DODANIE OCEANU
     auto ocean = std::make_shared<OceanRenderer>();
     OceanConfig oceanCfg;
-
     oceanCfg.enabled = true;
     oceanCfg.waterLevel = 60.0f;
     oceanCfg.waveAmplitude = 1.4f;
@@ -35,6 +90,7 @@ int main() {
     ocean->setEnabled(true);
     renderer->addFeature(ocean);
 
+    // KROK 2: DODANIE KOPUŁY NIEBA (Skydome)
     auto skydome = std::make_shared<SkydomeRenderer>();
     SkydomeConfig skydomeCfg;
     skydomeCfg.enabled = true;
@@ -50,104 +106,173 @@ int main() {
     skydome->setEnabled(true);
     renderer->addFeature(skydome);
 
-    float timeOfDay = 10.0f;
-    float cloudCov = 0.4f;
-    int cloudDir = 1;
-
-    const float dayNightSpeed = 0.21f;
-    const float weatherSpeed  = 0.02f;
-
+    // KROK 3: ŁADOWANIE LUB GENEROWANIE DANYCH TERENU
+    // Klasa Terrain reprezentuje siatkę wysokościową (Heightfield).
+    // Może zostać wczytana z konfiguracji JSON (wraz z warstwami tekstur) lub
+    // wygenerowana proceduralnie bezpośrednio w pamięci RAM.
     Terrain terrain;
     bool useJson = terrain.loadFromJson("assets/teren/demo/terrain.json");
+    
     if (useJson) {
+        // Parametry: rozmiar komórki siatki (10.0), maksymalna wysokość (2.0), podział LOD (20.0)
         terrain.buildMesh(10.0f, 2.0f, 20.0f);
         terrain.uploadTo(*engine.getMeshManager());
-        std::cout << "Terrain (JSON): " << terrain.sizeX << "x" << terrain.sizeZ
-              << " layers=" << terrain.layers.size() << " mesh=" << terrain.meshName() << "\n";
+        LOG_INFO("Terrain (JSON): {}x{} layers={} mesh={}", terrain.sizeX, terrain.sizeZ, terrain.layers.size(), terrain.meshName());
     } else {
+        // Proceduralny algorytm fraktalny Plasma (Midpoint Displacement).
+        // Parametry: rozmiar siatki (256x256), współczynnik chropowatości (1.2).
         terrain.generatePlasma(256, 1.2f);
-        terrain.smoothEdges();
+        terrain.smoothEdges(); // Wygładzenie krawędzi do poziomu 0, aby teren płynnie przechodził w wodę
         terrain.buildMesh(10.0f, 40.0f, 20.0f);
         terrain.uploadTo(*engine.getMeshManager());
-        std::cout << "Terrain (plasma): " << terrain.sizeX << "x" << terrain.sizeZ
-                  << " layers=" << terrain.layers.size() << " mesh=" << terrain.meshName() << "\n";
+        LOG_INFO("Terrain (plasma): {}x{} layers={} mesh={}", terrain.sizeX, terrain.sizeZ, terrain.layers.size(), terrain.meshName());
     }
 
-    renderer->addFeature(std::shared_ptr<Terrain>(&terrain, [](Terrain*){}));
-    terrain.setupMultiTexture(engine);
+    // KROK 4: REJESTROWANIE SPECJALNEGO MATERIAŁU TERENU
+    // Potok terenu (Shader "terrain") różni się od domyślnego. Wspiera tzw. Texture Splatting.
+    // Zamiast jednej tekstury, shader miesza ze sobą wiele tekstur (np. trawa, skała, piasek)
+    // na podstawie masek wagowych (Splat Maps) przesłanych jako kolejne warstwy.
+    Material terrainMaterial;
+    terrainMaterial.name = "terrain_scene_mat";
+    terrainMaterial.shaderProgram = "terrain";
+    terrainMaterial.cullMode = CullMode::Back;
+    terrainMaterial.depthWrite = true;
+    terrainMaterial.depthTest = true;
+    if (!terrain.layers.empty() && !terrain.layers[0].texturePath.empty()) {
+        TextureHandle texture = renderer->loadTexture("terrain_scene_mat_tex", terrain.layers[0].texturePath);
+        terrainMaterial.textureName = textureNameFromHandle(assets, texture, "");
+    }
+    const MaterialHandle terrainMaterialHandle = mats->add(terrainMaterial);
 
-    auto* camera = engine.createEntity("main_camera")->addComponent<CameraComponent>();
+    Entity* terrainEntity = scene->createEntity("terrain_mesh_entity");
+    terrainEntity->transform().position = terrain.worldOffset();
+    auto* terrainMesh = terrainEntity->addComponent<MeshComponent>(terrain.meshName());
+    terrainMesh->materialHandle = terrainMaterialHandle;
+    terrainMesh->castShadows = true;
+    
+    // Konfiguracja mieszania warstw (Texture Splatting) na komponencie siatki
+    terrainMesh->layerBlendEnabled = true;
+    terrainMesh->layerCount = std::min<uint32_t>(
+        static_cast<uint32_t>(terrain.layers.size()), kMaxTerrainLayers);
+    terrainMesh->layerWorldSize = terrain.worldSizeXZ();
+    
+    // Ładowanie tekstur warstwowych i opcjonalnych masek przejść
+    for (uint32_t i = 0; i < terrainMesh->layerCount; ++i) {
+        const std::string texName = "terrain_layer_06_tex_" + std::to_string(i);
+        terrainMesh->layerTextureHandles[i] = renderer->loadTexture(texName, terrain.layers[i].texturePath);
+        if (i > 0 && !terrain.layers[i].maskPath.empty()) {
+            const std::string maskName = "terrain_layer_06_mask_" + std::to_string(i);
+            terrainMesh->layerMaskHandles[i] = renderer->loadTexture(maskName, terrain.layers[i].maskPath);
+        }
+    }
+
+    // Kamera startująca nad terenem
+    auto* camera = scene->createEntity("main_camera")->addComponent<CameraComponent>();
     camera->getOwner()->transform().position = {0.0f, 120.0f, 0.0f};
     camera->target = {1.0f, 0.0f, 0.0f};
     camera->fieldOfViewDegrees = 60.0f;
     camera->nearPlane = 0.5f;
     camera->farPlane = 8000.0f;
-    engine.setActiveCamera(camera);
+    scene->setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
     engine.enableShaderHotReload(true);
 
     bool cursorGrabbed = true;
-    int generatorMode = 0;
+    int generatorMode = 0; // 0 = Plasma, 1 = Fault Formation, 2 = Particle Deposition
     static const char* modeNames[] = {"Plasma", "Fault", "Deposition"};
 
+    // PĘTLA UPDATE
     engine.onUpdate = [&](float dt, Engine& e) {
         static float animTime = 0.0f;
         animTime += dt;
         skydome->setTime(animTime);
         ocean->setTime(animTime);
+        
         auto* cc = e.getCameraController();
-        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        auto* activeScene = e.getSceneManager()->activeScene();
+        auto* cam = activeScene ? activeScene->activeCamera() : nullptr;
+        const auto& snap = e.input();
+        
+        static bool escWasDown = false;
+        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
+        if (escDown && !escWasDown) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&event);
+        }
+        escWasDown = escDown;
+
         if (cc && cam) {
             cc->moveSpeed = 50.0f;
-            auto snap = e.getPlatform()->pollInput();
             float ts = cc->mouseSensitivity;
             cc->rotateYaw(-static_cast<float>(snap.mouseDeltaX) * ts);
             cc->rotatePitch(-static_cast<float>(snap.mouseDeltaY) * ts);
             float vel = cc->moveSpeed * dt;
-            if (snap.keys[SDL_SCANCODE_W]) cc->moveForward(vel);
-            if (snap.keys[SDL_SCANCODE_S]) cc->moveForward(-vel);
-            if (snap.keys[SDL_SCANCODE_A]) cc->moveRight(-vel);
-            if (snap.keys[SDL_SCANCODE_D]) cc->moveRight(vel);
-            if (snap.keys[SDL_SCANCODE_SPACE]) cc->moveUp(vel);
-            if (snap.keys[SDL_SCANCODE_LCTRL]) cc->moveUp(-vel);
+            if (e.actionDown(kActionMoveForward)) cc->moveForward(vel);
+            if (e.actionDown(kActionMoveBackward)) cc->moveForward(-vel);
+            if (e.actionDown(kActionMoveLeft)) cc->moveRight(-vel);
+            if (e.actionDown(kActionMoveRight)) cc->moveRight(vel);
+            if (e.actionDown(kActionMoveUp)) cc->moveUp(vel);
+            if (e.actionDown(kActionMoveDown)) cc->moveUp(-vel);
             cc->update(dt, *cam);
-            if (snap.keys[SDL_SCANCODE_G])
+            
+            // Przyklejenie kamery do powierzchni terenu po kliknięciu klawisza 'G'.
+            // Funkcja terrain.getHeight(x, z) interpoluje biliniowo wysokość siatki
+            // pod współrzędnymi świata kamery i dodaje offset oczu gracza (+3.0f).
+            if (e.actionDown(kActionSnapToGround))
                 cam->getOwner()->transform().position.y = terrain.getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
         }
 
+        // KROK 5: AKTUALIZACJA DYNAMICZNEGO GEOMETRYCZNEGO LOD (LOD system update)
+        // Dzieli teren na kwadratowe węzły (Quadtree / Chunks). Węzły znajdujące się blisko
+        // kamery są renderowane z gęstym podziałem trójkątów, podczas gdy węzły odległe są
+        // upraszczane, drastycznie redukując liczbę trójkątów przesyłanych do potoku renderowania.
         terrain.update(cam, *engine.getMeshManager(), terrain.meshName());
 
-        static bool prev1 = false, prev2 = false, prev3 = false;
-        auto snap = e.getPlatform()->pollInput();
+        // KROK 6: PROCEDURALNE GENEROWANIE NOWEGO TERENU (Klawisze 1, 2, 3)
         bool regen = false;
-        if (snap.keys[SDL_SCANCODE_1] && !prev1) { generatorMode = 0; regen = true; }
-        if (snap.keys[SDL_SCANCODE_2] && !prev2) { generatorMode = 1; regen = true; }
-        if (snap.keys[SDL_SCANCODE_3] && !prev3) { generatorMode = 2; regen = true; }
-        prev1 = snap.keys[SDL_SCANCODE_1]; prev2 = snap.keys[SDL_SCANCODE_2]; prev3 = snap.keys[SDL_SCANCODE_3];
+        if (e.actionPressed(kActionTerrainModePlasma)) { generatorMode = 0; regen = true; }
+        if (e.actionPressed(kActionTerrainModeFault)) { generatorMode = 1; regen = true; }
+        if (e.actionPressed(kActionTerrainModeDeposition)) { generatorMode = 2; regen = true; }
+        
         if (regen) {
-            if (generatorMode == 0) terrain.generatePlasma(256, 1.2f);
-            else if (generatorMode == 1) terrain.generateFault(256, 160, 100, 1, 5, 0.5f);
-            else terrain.generateDeposition(256, 100, 30, 10, 20, 0.8f);
+            if (generatorMode == 0) {
+                // Algorytm 1: Osocze (Plasma/Midpoint displacement) – fraktalny szum tworzący naturalne góry.
+                terrain.generatePlasma(256, 1.2f);
+            }
+            else if (generatorMode == 1) {
+                // Algorytm 2: Uskoki tektoniczne (Fault Formation) – przecina teren losowymi liniami 
+                // i podnosi jedną ze stron uskoku, tworząc strome zbocza i doliny.
+                terrain.generateFault(256, 160, 100, 1, 5, 0.5f);
+            }
+            else {
+                // Algorytm 3: Erozja/Depozycja (Particle Deposition) – symuluje spływanie cząsteczek
+                // piasku/ziemi ze wzniesień, co naturalnie wygładza strome szczyty.
+                terrain.generateDeposition(256, 100, 30, 10, 20, 0.8f);
+            }
             terrain.smoothEdges();
             terrain.buildMesh(10.0f, 40.0f, 20.0f);
+            
+            // Aktualizacja dynamiczna siatki w buforach Vulkana bez niszczenia i tworzenia na nowo potoku
             engine.getMeshManager()->updateMesh(terrain.meshName(), terrain.mesh);
-            std::cout << "Regenerated: " << modeNames[generatorMode] << "\n";
+            LOG_INFO("Regenerated: {}", modeNames[generatorMode]);
         }
 
-        static bool prevF1 = false;
-        if (snap.keys[SDL_SCANCODE_F1] && !prevF1) {
+        if (e.actionPressed(kActionTogglePointer)) {
             cursorGrabbed = !cursorGrabbed;
             e.getPlatform()->grabPointer(cursorGrabbed);
         }
-        prevF1 = snap.keys[SDL_SCANCODE_F1];
 
+        // HUD i wyświetlanie danych diagnostycznych terenu
         std::ostringstream oss;
         oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
         e.setTextLabel(oss.str(), "times", 10, 20, 0.7f, {1, 1, 0.3f, 1});
+        
         std::ostringstream mode;
         mode << "[" << modeNames[generatorMode] << "]  nodes:" << terrain.visibleCount
              << "  1=Plasma 2=Fault 3=Deposition";
         e.setTextLabel(mode.str(), "times", 10, 50, 0.5f, {0.7f, 0.7f, 1.0f, 1.0f});
+        
         if (cam) {
             std::ostringstream pos;
             pos << "pos: " << std::fixed << std::setprecision(0)

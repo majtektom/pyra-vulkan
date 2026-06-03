@@ -1,4 +1,3 @@
-#include <iostream>
 #include <array>
 #include <unordered_map>
 #include <vector>
@@ -16,6 +15,10 @@
 #include "render/texture_asset_loader.h"
 #include "render/renderer.h"
 #include "render/render_feature.h"
+#include "render/render_orchestrator.h"
+#include "render/material_manager.h"
+#include "core/asset_registry.h"
+#include "core/logger.h"
 
 namespace engine3d {
 
@@ -57,13 +60,23 @@ constexpr int kMaxBindlessTextures = 1024;
 
 class Renderer::RendererImpl {
 public:
-    RendererImpl(Platform* platform, MaterialManager* materialManager, std::shared_ptr<VulkanContext> context)
-        : platform_(platform), materialManager_(materialManager), vulkanContext_(context) {}
+    RendererImpl(
+        Platform* platform,
+        MaterialManager* materialManager,
+        std::shared_ptr<VulkanContext> context,
+        AssetRegistry* assetRegistry)
+        : platform_(platform),
+          materialManager_(materialManager),
+          vulkanContext_(context),
+          assetRegistry_(assetRegistry) {}
 
     ~RendererImpl() { cleanup(); }
 
     bool initialize(const std::string& appName, bool enableValidationLayers) {
-        if (!vulkanContext_) return false;
+        if (!vulkanContext_) {
+            LOG_ERROR("Vulkan context is null during renderer initialization");
+            return false;
+        }
         try {
             swapchain_ = std::make_unique<VulkanSwapchain>(vulkanContext_, platform_->width(), platform_->height(),
                                                            presentMode_ == PresentMode::Immediate ? VK_PRESENT_MODE_IMMEDIATE_KHR :
@@ -92,10 +105,10 @@ public:
             createShadowPipeline();
             createShadowSkinnedPipeline();
             createGBufferResources();
-            std::cout << "Deferred PBR Renderer initialized." << std::endl;
+            LOG_INFO("Deferred PBR Renderer initialized.");
             return true;
         } catch (const std::exception& e) {
-            std::cerr << "Renderer Init Error: " << e.what() << std::endl;
+            LOG_CRITICAL("Renderer Init Error: {}", e.what());
             return false;
         }
     }
@@ -303,6 +316,7 @@ public:
 
         for (const auto& packet : opaquePackets) {
             if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
+            if (packet.forwardOpaquePass) continue;
 
             bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
 
@@ -327,18 +341,42 @@ public:
             if (packet.indexBuffer != VK_NULL_HANDLE)
                 vkCmdBindIndexBuffer(cmd, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-            struct { Matrix4 m; std::array<float,4> bc; float met; float rough; float bump; uint32_t bts; uint32_t pts; uint32_t nts; uint32_t ots; uint32_t ets; float amc; float _p[3]; } push;
+            struct {
+                Matrix4 m;
+                std::array<float,4> bc;
+                float met;
+                float rough;
+                float bump;
+                uint32_t bts;
+                uint32_t pts;
+                uint32_t nts;
+                uint32_t ots;
+                uint32_t ets;
+                float amc;
+                uint32_t layerBlendEnabled;
+                uint32_t layerCount;
+                float layerWorldSize;
+                uint32_t layerBaseTextureSets[kMaxTerrainLayers];
+                uint32_t layerMaskTextureSets[kMaxTerrainLayers];
+            } push{};
             push.m = packet.transform; push.bc = packet.materialColor;
             push.met = packet.metallicFactor; push.rough = packet.roughnessFactor;
             push.bump = packet.bumpIntensity; push.bts = packet.diffuseTextureIndex;
             push.pts = packet.metallicRoughnessTextureIndex; push.nts = packet.normalTextureIndex;
             push.ots = packet.occlusionTextureIndex; push.ets = packet.emissiveTextureIndex;
             push.amc = 0.5f;
+            push.layerBlendEnabled = packet.layerBlendEnabled ? 1u : 0u;
+            push.layerCount = packet.layerCount;
+            push.layerWorldSize = packet.layerWorldSize;
+            for (uint32_t i = 0; i < kMaxTerrainLayers; ++i) {
+                push.layerBaseTextureSets[i] = packet.layerTextureIndices[i];
+                push.layerMaskTextureSets[i] = packet.layerMaskIndices[i];
+            }
 
             VkPipelineLayout layout = isSkinned ? gbufferSkinnedPipelineLayout_ : gbufferPipelineLayout_;
             vkCmdPushConstants(cmd, layout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, 128, &push);
+                               0, sizeof(push), &push);
 
             if (packet.indexBuffer != VK_NULL_HANDLE)
                 vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
@@ -408,25 +446,42 @@ public:
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         // Skybox / BeforeOpaque features (render directly to swapchain)
-        executeFeatures(cmd, view, IRenderFeature::Stage::BeforeOpaque);
-        executeFeatures(cmd, view, IRenderFeature::Stage::AfterOpaque);
-
-        // Deferred lighting pass (fullscreen, reads GBuffer)
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline_);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 1, 1, &deferredDescriptorSets_[currentFrame_], 0, nullptr);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-
-        // AfterTransparent features + transparent pass + overlay
-        executeFeatures(cmd, view, IRenderFeature::Stage::AfterTransparent);
-
-        for (auto& pass : passes_) {
-            if (pass->getName() == "TransparentPass") {
-                pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+        RenderOrchestrator::Callbacks callbacks;
+        callbacks.onFeaturesBeforeOpaque = [&]() {
+            executeFeatures(cmd, view, IRenderFeature::Stage::BeforeOpaque);
+        };
+        callbacks.onFeaturesAfterOpaque = [&]() {
+            executeFeatures(cmd, view, IRenderFeature::Stage::AfterOpaque);
+        };
+        callbacks.onDeferredLighting = [&]() {
+            // Deferred lighting pass (fullscreen, reads GBuffer)
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 1, 1, &deferredDescriptorSets_[currentFrame_], 0, nullptr);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+        };
+        callbacks.onOpaquePass = [&]() {
+            for (auto& pass : passes_) {
+                if (pass->getName() == "OpaquePass") {
+                    pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+                }
             }
-        }
+        };
+        callbacks.onFeaturesAfterTransparent = [&]() {
+            executeFeatures(cmd, view, IRenderFeature::Stage::AfterTransparent);
+        };
+        callbacks.onTransparentPass = [&]() {
+            for (auto& pass : passes_) {
+                if (pass->getName() == "TransparentPass") {
+                    pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+                }
+            }
+        };
+        callbacks.onFeaturesOverlay = [&]() {
+            executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
+        };
 
-        executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
+        orchestrator_.execute(renderPlan_, callbacks);
 
         vkCmdEndRendering(cmd);
 
@@ -487,7 +542,7 @@ public:
         currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
     }
 
-    void loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat) {
+    TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat) {
         VkDevice device = vulkanContext_->device();
         VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
         TextureUploadData uploadData = TextureAssetLoader::load(path);
@@ -608,11 +663,12 @@ public:
         textures_[name] = tex;
         
         registerTextureInBindless(name, tex.imageView, tex.sampler);
-        std::cout << "Loaded texture: " << name << " at index " << textureNameToIndex_[name] << std::endl;
-    }
+        LOG_INFO("Loaded texture: {} at index {}", name, textureNameToIndex_[name]);
 
-    void linkNormalMap(const std::string& diffuseName, const std::string& normalName) {
-        normalMapLinks_[diffuseName] = normalName;
+        if (assetRegistry_) {
+            return assetRegistry_->registerTexture(name);
+        }
+        return {};
     }
 
     void registerTextureInBindless(const std::string& name, VkImageView imageView, VkSampler sampler) {
@@ -624,6 +680,13 @@ public:
             textureNameToIndex_[name] = index;
         } else {
             index = it->second;
+        }
+
+        if (assetRegistry_) {
+            const auto handle = assetRegistry_->registerTexture(name);
+            if (handle.isValid()) {
+                textureHandleToIndex_[handle.value] = index;
+            }
         }
 
         VkDescriptorImageInfo imageInfo{};
@@ -665,23 +728,77 @@ public:
         return 0;
     }
 
-    uint32_t getNormalIndex(const std::string& diffuseName) const {
-        auto it = normalMapLinks_.find(diffuseName);
-        if (it != normalMapLinks_.end()) return getTextureIndex(it->second);
-        return getTextureIndex("default_normal");
+    uint32_t getTextureIndex(TextureHandle handle) const {
+        if (!handle.isValid()) {
+            return 0;
+        }
+
+        auto it = textureHandleToIndex_.find(handle.value);
+        if (it != textureHandleToIndex_.end()) {
+            return it->second;
+        }
+        return 0;
     }
 
     void prepareRenderPacket(RenderPacket& packet) {
-        packet.diffuseTextureIndex = packet.textureName.empty() ? getTextureIndex("default") : getTextureIndex(packet.textureName);
-        packet.normalTextureIndex = packet.normalMapName.empty()
-            ? getNormalIndex(packet.textureName)
-            : getTextureIndex(packet.normalMapName);
-        packet.metallicRoughnessTextureIndex = packet.pbrMetallicRoughnessTextureName.empty()
-            ? getTextureIndex("default_orm") : getTextureIndex(packet.pbrMetallicRoughnessTextureName);
-        packet.occlusionTextureIndex = packet.pbrOcclusionTextureName.empty()
-            ? getTextureIndex("default") : getTextureIndex(packet.pbrOcclusionTextureName);
-        packet.emissiveTextureIndex = packet.pbrEmissiveTextureName.empty()
-            ? getTextureIndex("default_black") : getTextureIndex(packet.pbrEmissiveTextureName);
+        const uint32_t defaultDiffuse = getTextureIndex("default");
+        const uint32_t defaultNormal = getTextureIndex("default_normal");
+        const uint32_t defaultOrm = getTextureIndex("default_orm");
+        const uint32_t defaultEmissive = getTextureIndex("default_black");
+        const uint32_t defaultMask = getTextureIndex("default_black");
+
+        packet.forwardOpaquePass = false;
+        const bool wantsLayeredForward = packet.layerBlendEnabled;
+        if (materialManager_) {
+            if (const Material* materialData = materialManager_->get(packet.materialHandle)) {
+                const std::string& shaderProgram = materialData->shaderProgram;
+                const bool usesCustomOpaqueShader =
+                    !shaderProgram.empty() &&
+                    shaderProgram != "default" &&
+                    shaderProgram != "gbuffer" &&
+                    shaderProgram != "gbuffer_skinned";
+                if ((usesCustomOpaqueShader || wantsLayeredForward) && materialData->blendMode == BlendMode::Disabled) {
+                    packet.forwardOpaquePass = true;
+                }
+            }
+        }
+
+        packet.diffuseTextureIndex = packet.diffuseTextureHandle.isValid()
+            ? getTextureIndex(packet.diffuseTextureHandle)
+            : defaultDiffuse;
+
+        packet.normalTextureIndex = packet.normalTextureHandle.isValid()
+            ? getTextureIndex(packet.normalTextureHandle)
+            : defaultNormal;
+
+        packet.metallicRoughnessTextureIndex = packet.metallicRoughnessTextureHandle.isValid()
+            ? getTextureIndex(packet.metallicRoughnessTextureHandle)
+            : defaultOrm;
+
+        packet.occlusionTextureIndex = packet.occlusionTextureHandle.isValid()
+            ? getTextureIndex(packet.occlusionTextureHandle)
+            : defaultDiffuse;
+
+        packet.emissiveTextureIndex = packet.emissiveTextureHandle.isValid()
+            ? getTextureIndex(packet.emissiveTextureHandle)
+            : defaultEmissive;
+
+        packet.layerCount = std::min(packet.layerCount, kMaxTerrainLayers);
+        for (uint32_t i = 0; i < kMaxTerrainLayers; ++i) {
+            packet.layerTextureIndices[i] = defaultDiffuse;
+            packet.layerMaskIndices[i] = defaultMask;
+        }
+
+        if (packet.layerBlendEnabled && packet.layerCount > 0) {
+            for (uint32_t i = 0; i < packet.layerCount; ++i) {
+                packet.layerTextureIndices[i] = packet.layerTextureHandles[i].isValid()
+                    ? getTextureIndex(packet.layerTextureHandles[i])
+                    : defaultDiffuse;
+                if (i > 0 && packet.layerMaskHandles[i].isValid()) {
+                    packet.layerMaskIndices[i] = getTextureIndex(packet.layerMaskHandles[i]);
+                }
+            }
+        }
     }
 
     VkDescriptorSet getDescriptorSet(uint32_t frame) const {
@@ -694,6 +811,19 @@ public:
         v = it->second.imageView;
         s = it->second.sampler;
         return v != VK_NULL_HANDLE && s != VK_NULL_HANDLE;
+    }
+
+    bool getTextureInfo(TextureHandle handle, VkImageView& v, VkSampler& s) const {
+        if (!handle.isValid() || !assetRegistry_) {
+            return false;
+        }
+
+        const auto name = assetRegistry_->textureName(handle);
+        if (!name.has_value()) {
+            return false;
+        }
+
+        return getTextureInfo(*name, v, s);
     }
 
     VkBuffer getUniformBuffer(uint32_t frame) const {
@@ -824,28 +954,8 @@ public:
 
     PresentMode presentMode() const { return presentMode_; }
 
-    void setLightDirection(float x, float y, float z, float ambient) {
-        lightAmbient_ = ambient;
-        storedLights_[0].direction[0] = x;
-        storedLights_[0].direction[1] = y;
-        storedLights_[0].direction[2] = z;
-        storedLights_[0].direction[3] = 1.0f; // directional
-        if (storedLightCount_ == 0) storedLightCount_ = 1;
-    }
-
-    void setLightDirection(const std::array<float, 4>& dir) {
-        setLightDirection(dir[0], dir[1], dir[2], dir[3]);
-    }
-
     void setShadowsEnabled(bool enabled) { shadowsEnabled_ = enabled; }
     bool shadowsEnabled() const { return shadowsEnabled_; }
-
-    void setLightColor(float r, float g, float b) {
-        storedLights_[0].color[0] = r;
-        storedLights_[0].color[1] = g;
-        storedLights_[0].color[2] = b;
-        storedLights_[0].color[3] = 1.0f;
-    }
 
     void setLightingEnabled(bool enabled) { lightingEnabled_ = enabled; }
     bool isLightingEnabled() const { return lightingEnabled_; }
@@ -860,48 +970,50 @@ public:
         ambientColor_[0] = r; ambientColor_[1] = g; ambientColor_[2] = b;
     }
 
-    void clearLights() {
+    void setLights(const std::vector<SceneLight>& lights) {
+        // Renderer otrzymuje gotowy batch swiatel z ECS i konwertuje go
+        // do formatu UBO wykorzystywanego przez deferred/PBR pass.
         storedLightCount_ = 0;
         memset(storedLights_, 0, sizeof(storedLights_));
-    }
 
-    uint32_t addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity) {
-        if (storedLightCount_ >= kMaxLights) return storedLightCount_;
-        auto& l = storedLights_[storedLightCount_];
-        float len = std::sqrt(dx*dx + dy*dy + dz*dz);
-        l.direction[0] = dx / len; l.direction[1] = dy / len; l.direction[2] = dz / len;
-        l.direction[3] = 1.0f; // directional
-        l.color[0] = r; l.color[1] = g; l.color[2] = b; l.color[3] = intensity;
-        storedLightCount_++;
-        return storedLightCount_;
-    }
+        for (const auto& src : lights) {
+            if (storedLightCount_ >= kMaxLights) {
+                break;
+            }
 
-    uint32_t addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range) {
-        if (storedLightCount_ >= kMaxLights) return storedLightCount_;
-        auto& l = storedLights_[storedLightCount_];
-        l.position[0] = px; l.position[1] = py; l.position[2] = pz;
-        l.direction[3] = 2.0f; // point
-        l.color[0] = r; l.color[1] = g; l.color[2] = b; l.color[3] = intensity;
-        l.params[2] = range;
-        storedLightCount_++;
-        return storedLightCount_;
-    }
+            auto& dst = storedLights_[storedLightCount_];
+            dst.position[0] = src.position.x;
+            dst.position[1] = src.position.y;
+            dst.position[2] = src.position.z;
 
-    uint32_t addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
-                          float r, float g, float b, float intensity, float range,
-                          float innerAngleDeg, float outerAngleDeg) {
-        if (storedLightCount_ >= kMaxLights) return storedLightCount_;
-        auto& l = storedLights_[storedLightCount_];
-        l.position[0] = px; l.position[1] = py; l.position[2] = pz;
-        float dlen = std::sqrt(dx*dx + dy*dy + dz*dz);
-        l.direction[0] = dx / dlen; l.direction[1] = dy / dlen; l.direction[2] = dz / dlen;
-        l.direction[3] = 3.0f; // spot
-        l.color[0] = r; l.color[1] = g; l.color[2] = b; l.color[3] = intensity;
-        l.params[0] = std::cos(innerAngleDeg * 3.14159265f / 180.0f);
-        l.params[1] = std::cos(outerAngleDeg * 3.14159265f / 180.0f);
-        l.params[2] = range;
-        storedLightCount_++;
-        return storedLightCount_;
+            Vec3 dir = normalize(src.direction);
+            dst.direction[0] = dir.x;
+            dst.direction[1] = dir.y;
+            dst.direction[2] = dir.z;
+
+            dst.color[0] = src.color.x;
+            dst.color[1] = src.color.y;
+            dst.color[2] = src.color.z;
+            dst.color[3] = src.intensity;
+
+            switch (src.type) {
+            case SceneLightType::Directional:
+                dst.direction[3] = 1.0f;
+                break;
+            case SceneLightType::Point:
+                dst.direction[3] = 2.0f;
+                dst.params[2] = src.range;
+                break;
+            case SceneLightType::Spot:
+                dst.direction[3] = 3.0f;
+                dst.params[0] = std::cos(src.innerAngleDeg * 3.14159265f / 180.0f);
+                dst.params[1] = std::cos(src.outerAngleDeg * 3.14159265f / 180.0f);
+                dst.params[2] = src.range;
+                break;
+            }
+
+            storedLightCount_++;
+        }
     }
 
     uint32_t getLightCount() const { return storedLightCount_; }
@@ -1141,7 +1253,7 @@ private:
         
         VkDescriptorPoolSize poolSizes[] = {
             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxFrames},
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(kMaxBindlessTextures * kMaxFrames)}
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(kMaxBindlessTextures * kMaxFrames + kMaxFrames)}
         };
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1153,7 +1265,7 @@ private:
             throw std::runtime_error("failed to create descriptor pool");
         }
 
-        VkDescriptorSetLayoutBinding bindings[2] = {};
+        VkDescriptorSetLayoutBinding bindings[3] = {};
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         bindings[0].descriptorCount = 1;
@@ -1164,17 +1276,22 @@ private:
         bindings[1].descriptorCount = kMaxBindlessTextures;
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorBindingFlags bindingFlags[2] = {0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT};
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[2].descriptorCount = 1;
+        bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorBindingFlags bindingFlags[3] = {0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, 0};
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
         flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-        flagsInfo.bindingCount = 2;
+        flagsInfo.bindingCount = 3;
         flagsInfo.pBindingFlags = bindingFlags;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.pNext = &flagsInfo;
         layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-        layoutInfo.bindingCount = 2;
+        layoutInfo.bindingCount = 3;
         layoutInfo.pBindings = bindings;
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout_) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor set layout");
@@ -1320,6 +1437,23 @@ private:
         vkCreateSampler(device, &samplerInfo, nullptr, &shadowSampler_);
 
         registerTextureInBindless("shadow_map", shadowMapView_, shadowSampler_);
+
+        for (int i = 0; i < kMaxFrames; i++) {
+            VkDescriptorImageInfo shadowInfo{};
+            shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            shadowInfo.imageView = shadowMapView_;
+            shadowInfo.sampler = shadowSampler_;
+
+            VkWriteDescriptorSet shadowWrite{};
+            shadowWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            shadowWrite.dstSet = descriptorSets_[i];
+            shadowWrite.dstBinding = 2;
+            shadowWrite.dstArrayElement = 0;
+            shadowWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            shadowWrite.descriptorCount = 1;
+            shadowWrite.pImageInfo = &shadowInfo;
+            vkUpdateDescriptorSets(device, 1, &shadowWrite, 0, nullptr);
+        }
 
         transitionShadowMapLayout(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
         shadowMapLayout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1731,7 +1865,7 @@ private:
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;
-        pushRange.size = 128;
+        pushRange.size = 256;
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1863,7 +1997,7 @@ private:
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;
-        pushRange.size = 128;
+        pushRange.size = 256;
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2109,6 +2243,18 @@ private:
 private:
     void executeFeatures(VkCommandBuffer cmd, const RenderView& view, IRenderFeature::Stage stage) {
         if (stage == IRenderFeature::Stage::Overlay) {
+            VkClearAttachment clearAttachment{};
+            clearAttachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            clearAttachment.clearValue.depthStencil = {1.0f, 0};
+
+            VkClearRect clearRect{};
+            clearRect.rect.offset = {0, 0};
+            clearRect.rect.extent = swapchain_->extent();
+            clearRect.baseArrayLayer = 0;
+            clearRect.layerCount = 1;
+
+            vkCmdClearAttachments(cmd, 1, &clearAttachment, 1, &clearRect);
+
             auto rit = features_.rbegin();
             auto rend = features_.rend();
             for (; rit != rend; ++rit) {
@@ -2128,10 +2274,21 @@ private:
     Platform* platform_;
     MaterialManager* materialManager_;
     std::shared_ptr<VulkanContext> vulkanContext_;
+    AssetRegistry* assetRegistry_ = nullptr;
     std::unique_ptr<VulkanSwapchain> swapchain_;
 
     std::vector<std::shared_ptr<IRenderFeature>> features_;
     std::vector<std::unique_ptr<IRenderPass>> passes_;
+    RenderOrchestrator orchestrator_;
+    const std::vector<RenderOrchestrator::Step> renderPlan_ = {
+        RenderOrchestrator::Step::FeaturesBeforeOpaque,
+        RenderOrchestrator::Step::DeferredLighting,
+        RenderOrchestrator::Step::OpaquePass,
+        RenderOrchestrator::Step::FeaturesAfterOpaque,
+        RenderOrchestrator::Step::FeaturesAfterTransparent,
+        RenderOrchestrator::Step::TransparentPass,
+        RenderOrchestrator::Step::FeaturesOverlay,
+    };
 
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
@@ -2166,8 +2323,8 @@ private:
 
     std::unordered_map<std::string, TextureResources> textures_;
     std::unordered_map<std::string, uint32_t> textureNameToIndex_;
+    std::unordered_map<uint32_t, uint32_t> textureHandleToIndex_;
     uint32_t nextTextureIndex_ = 0;
-    std::unordered_map<std::string, std::string> normalMapLinks_;
 
     std::array<VkSemaphore, 2> imageAvailableSemaphores_;
     std::array<VkSemaphore, 2> renderFinishedSemaphores_;
@@ -2229,8 +2386,12 @@ private:
 };
 
 // Facade
-Renderer::Renderer(Platform* platform, MaterialManager* materialManager, std::shared_ptr<VulkanContext> context)
-    : impl_(std::make_unique<RendererImpl>(platform, materialManager, context)) {}
+Renderer::Renderer(
+    Platform* platform,
+    MaterialManager* materialManager,
+    std::shared_ptr<VulkanContext> context,
+    AssetRegistry* assetRegistry)
+    : impl_(std::make_unique<RendererImpl>(platform, materialManager, context, assetRegistry)) {}
 Renderer::~Renderer() = default;
 bool Renderer::initialize(const std::string& appName, bool enableValidationLayers) {
     return impl_->initialize(appName, enableValidationLayers);
@@ -2252,37 +2413,22 @@ uint32_t Renderer::width() const { return impl_->extent().width; }
 uint32_t Renderer::height() const { return impl_->extent().height; }
 VkFormat Renderer::colorFormat() const { return impl_->colorFormat(); }
 VkFormat Renderer::depthFormat() const { return impl_->depthFormat(); }
-void Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { impl_->loadTexture(n, p, m); }
-void Renderer::linkNormalMap(const std::string& d, const std::string& n) { impl_->linkNormalMap(d, n); }
+TextureHandle Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { return impl_->loadTexture(n, p, m); }
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
 void Renderer::setSynchronizationMode(SynchronizationMode mode) { impl_->setSynchronizationMode(mode); }
 SynchronizationMode Renderer::synchronizationMode() const { return impl_->synchronizationMode(); }
 void Renderer::setPresentMode(PresentMode mode) { impl_->setPresentMode(mode); }
 PresentMode Renderer::presentMode() const { return impl_->presentMode(); }
-void Renderer::setLightDirection(float x, float y, float z, float ambient) { impl_->setLightDirection(x, y, z, ambient); }
-void Renderer::setLightDirection(const std::array<float, 4>& dir) { impl_->setLightDirection(dir); }
 void Renderer::setShadowsEnabled(bool enabled) { impl_->setShadowsEnabled(enabled); }
 bool Renderer::shadowsEnabled() const { return impl_->shadowsEnabled(); }
 void Renderer::configureDirectionalShadow(float halfSize) { impl_->setDirectionalShadowConfig(halfSize, false); }
-void Renderer::setLightColor(float r, float g, float b) { impl_->setLightColor(r, g, b); }
 void Renderer::setLightingEnabled(bool e) { impl_->setLightingEnabled(e); }
 bool Renderer::isLightingEnabled() const { return impl_->isLightingEnabled(); }
 void Renderer::setAmbientStrength(float s) { impl_->setAmbientStrength(s); }
 void Renderer::setAmbientColor(float r, float g, float b) { impl_->setAmbientColor(r, g, b); }
-void Renderer::clearLights() { impl_->clearLights(); }
-uint32_t Renderer::addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity) {
-    return impl_->addDirectionalLight(dx, dy, dz, r, g, b, intensity);
-}
-uint32_t Renderer::addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range) {
-    return impl_->addPointLight(px, py, pz, r, g, b, intensity, range);
-}
-uint32_t Renderer::addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
-                                float r, float g, float b, float intensity, float range,
-                                float innerAngle, float outerAngle) {
-    return impl_->addSpotLight(px, py, pz, dx, dy, dz, r, g, b, intensity, range, innerAngle, outerAngle);
-}
+void Renderer::setLights(const std::vector<SceneLight>& lights) { impl_->setLights(lights); }
 
-uint32_t Renderer::getTextureIndex(const std::string& name) const { return impl_->getTextureIndex(name); }
+uint32_t Renderer::getTextureIndex(TextureHandle handle) const { return impl_->getTextureIndex(handle); }
 void Renderer::prepareRenderPacket(RenderPacket& packet) const {
     impl_->prepareRenderPacket(packet);
 }
@@ -2302,6 +2448,10 @@ VkBuffer Renderer::getUniformBuffer(uint32_t f) const {
 }
 bool Renderer::getTextureInfo(const std::string& n, VkImageView& v, VkSampler& s) const {
     return impl_->getTextureInfo(n, v, s);
+}
+
+bool Renderer::getTextureInfo(TextureHandle handle, VkImageView& v, VkSampler& s) const {
+    return impl_->getTextureInfo(handle, v, s);
 }
 
 } // namespace engine3d

@@ -6,23 +6,53 @@
 #include <vulkan/vulkan.h>
 
 namespace engine3d {
+
+/**
+ * @brief Moduł narzędziowy Vulkan (Vulkan Utilities).
+ * 
+ * Zbiór pomocniczych funkcji owijających powtarzalne, niskopoziomowe operacje API Vulkan.
+ * Pomaga w zarządzaniu pamięcią GPU, ładowaniu shaderów, tworzeniu buforów oraz
+ * manipulacji układem tekstur (transitions) i próbkowaniu (samplers).
+ */
 namespace vk {
 
-// Laduje caly plik binarny do pamieci, np. skompilowany shader SPIR-V.
-// Zwraca wektor bajtow lub rzuca std::runtime_error jesli plik nie istnieje.
+/**
+ * @brief Wczytuje cały plik binarny (np. skompilowany shader SPIR-V) z dysku.
+ * @param path Ścieżka do pliku.
+ * @return Wektor bajtów zawierający zawartość pliku.
+ */
 [[nodiscard]] std::vector<char> readFile(const std::string& path);
 
-// Zamienia skompilowany SPIR-V na obiekt VkShaderModule rozumiany przez Vulkan.
+/**
+ * @brief Konwertuje surowe dane SPIR-V na obiekt modułu shadera Vulkan (VkShaderModule).
+ * @param device Logiczne urządzenie Vulkan.
+ * @param code Dane binarne shadera SPIR-V.
+ * @return Uchwyt VkShaderModule.
+ */
 [[nodiscard]] VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code);
 
-// Wyszukuje indeks typu pamieci GPU/CPU zgodny z wymaganiami (typeFilter + properties).
+/**
+ * @brief Wyszukuje indeks typu pamięci fizycznej karty graficznej, który spełnia wymagania sprzętowe i logiczne.
+ * 
+ * GPU posiada różne rodzaje pamięci (np. Device Local - szybka pamięć VRAM, Host Visible - pamięć dostępna dla CPU).
+ * Funkcja ta dopasowuje typ pamięci zgłoszony przez bufor/obraz (typeFilter) z żądanymi flagami właściwości (properties).
+ */
 [[nodiscard]] uint32_t findMemoryType(
     VkPhysicalDevice physicalDevice,
     uint32_t typeFilter,
     VkMemoryPropertyFlags properties
 );
 
-// Tworzy bufor Vulkan oraz przydziela pamiec o odpowiednich wlasciwosciach.
+/**
+ * @brief Tworzy zasób bufora Vulkan (VkBuffer) i alokuje dla niego pamięć GPU.
+ * @param device Urządzenie logiczne.
+ * @param physicalDevice Urządzenie fizyczne (karta graficzna).
+ * @param size Rozmiar bufora w bajtach.
+ * @param usage Przeznaczenie bufora (np. bufor wierzchołków, indeksów, uniform itp.).
+ * @param properties Flagi właściwości pamięci (np. HOST_VISIBLE_BIT dla buforów modyfikowalnych przez CPU).
+ * @param buffer Referencja na uchwyt tworzonego bufora.
+ * @param bufferMemory Referencja na uchwyt zaalokowanej pamięci powiązanej z buforem.
+ */
 void createBuffer(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
@@ -33,7 +63,16 @@ void createBuffer(
     VkDeviceMemory& bufferMemory
 );
 
-// Tworzy szybki bufor device-local i wypelnia go danymi przez staging buffer widoczny dla CPU.
+/**
+ * @brief Tworzy optymalny bufor w pamięci lokalnej karty (Device Local) i przesyła do niego dane z CPU.
+ * 
+ * Najszybsza pamięć GPU (DEVICE_LOCAL_BIT) nie jest bezpośrednio mapowalna (widoczna) dla procesora CPU.
+ * Aby wgrać do niej dane (np. geometrię modelu):
+ * 1. Tworzy się tymczasowy bufor stagingowy (widoczny dla CPU i spójny).
+ * 2. Kopiuje się do niego dane za pomocą memcpy.
+ * 3. Tworzy się docelowy bufor oznaczony jako DEVICE_LOCAL_BIT.
+ * 4. Zleca się karcie graficznej szybkie skopiowanie danych z bufora staging do bufora lokalnego (Transfer).
+ */
 void createDeviceLocalBufferWithStaging(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
@@ -46,7 +85,11 @@ void createDeviceLocalBufferWithStaging(
     VkDeviceMemory& bufferMemory
 );
 
-// Tworzy VkImage z pamiecia. Uzywane do tekstur, bufora glebokosci itp.
+/**
+ * @brief Tworzy obiekt obrazu Vulkan (VkImage) i przydziela mu pamięć GPU.
+ * 
+ * Używane do tworzenia tekstur, map cieni, buforów głębokości czy buforów ramki G-Buffer.
+ */
 void createImage(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
@@ -62,7 +105,13 @@ void createImage(
     VkImageCreateFlags flags = 0
 );
 
-// Tworzy widok obrazu: laczy VkImage z VkFormat i VkImageAspectFlags w obiekt VkImageView.
+/**
+ * @brief Tworzy widok obrazu (VkImageView).
+ * 
+ * W Vulkanie shader nie może czytać bezpośrednio z obiektu VkImage. Musi korzystać z 
+ * widoku obrazu (VkImageView), który definiuje jak interpretować dany obraz (np. jako 
+ * teksturę 2D, teksturę warstwową, czy kostkę 3D Skyboxa) oraz jakie kanały i poziomy mipmap udostępnić.
+ */
 [[nodiscard]] VkImageView createImageView(
     VkDevice device,
     VkImage image,
@@ -73,7 +122,14 @@ void createImage(
     VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D
 );
 
-// Zmienia uklad obrazu np. z UNDEFINED -> TRANSFER_DST -> SHADER_READ_ONLY.
+/**
+ * @brief Zmienia układ pamięci obrazu (Transition Image Layout) za pomocą barier potoku (Pipeline Barriers).
+ * 
+ * Obrazy w GPU mogą mieć różne układy zoptymalizowane pod konkretne operacje (np. 
+ * TRANSFER_DST_OPTIMAL do szybkiego zapisywania danych, SHADER_READ_ONLY_OPTIMAL do 
+ * wydajnego próbkowania w shaderach). Przejście (transition) informuje GPU o zmianie 
+ * przeznaczenia zasobu, aby mogło ono przeorganizować dane w pamięci podręcznej (cache).
+ */
 void transitionImageLayout(
     VkDevice device,
     VkCommandPool commandPool,
@@ -85,14 +141,19 @@ void transitionImageLayout(
     uint32_t mipLevels
 );
 
-// Tworzy prosty sampler tekstury (liniowe filtrowanie, wrap mode = REPEAT).
+/**
+ * @brief Tworzy standardowy sampler tekstur z liniowym filtrowaniem i trybem powtarzania (REPEAT).
+ */
 [[nodiscard]] VkSampler createTextureSampler(VkDevice device, uint32_t mipLevels);
 
-// Tworzy sampler z CLAMP_TO_EDGE (dla atlasow fontow i skyboxa).
+/**
+ * @brief Tworzy sampler z ucinaniem krawędzi (CLAMP_TO_EDGE) - przydatny przy fontach i skyboxach.
+ */
 [[nodiscard]] VkSampler createClampSampler(VkDevice device);
 
-// Tworzy sampler z MIRRORED_REPEAT – kazde powielenie jest odbiciem poprzedniego,
-// dzieki czemu krawedzie kafelkow lacza sie bez widocznych szwow.
+/**
+ * @brief Tworzy sampler z odbiciem lustrzanym (MIRRORED_REPEAT) – łączenie krawędzi bez szwów.
+ */
 [[nodiscard]] VkSampler createMirrorRepeatSampler(VkDevice device, uint32_t mipLevels);
 
 }  // namespace vk

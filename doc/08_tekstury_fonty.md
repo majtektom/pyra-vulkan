@@ -1,151 +1,45 @@
-# Tekstury, czcionki i tekst
+# Tekstury i Fonty
 
-## Ładowanie tekstur
+Zarządzanie zasobami 2D w `engine3d` opiera się na wydajnym ładowaniu formatów binarnych oraz integracji z nowoczesnym systemem **Bindless** w Vulkanie.
 
-### Obsługiwane formaty
+## System Tekstur
 
-| Format | Rozszerzenie | Mipmapy | Kompresja |
-|--------|-------------|---------|-----------|
-| DDS DXT1 | `.dds` | Tak (z pliku) | BC1 (RGBA, 8 bajtów/blok) |
-| DDS DXT3 | `.dds` | Tak (z pliku) | BC2 (RGBA, 16 bajtów/blok) |
-| DDS DXT5 | `.dds` | Tak (z pliku) | BC3 (RGBA, 16 bajtów/blok) |
-| BMP 24-bit | `.bmp` | Generowane na GPU | Brak (RGBA8) |
-| TGA 24/32-bit | `.tga` | Generowane na GPU | Brak (RGBA8) |
+### Obsługiwane Formaty
+- **DDS (DirectDraw Surface)**: Rekomendowany format. Wspiera kompresję blokową (DXT1, DXT3, DXT5), którą GPU dekompresuje sprzętowo. Pozwala na ładowanie gotowych mipmap bezpośrednio do pamięci VRAM.
+- **BMP / TGA**: Formaty nieskompresowane, używane głównie do prostych assetów lub podczas tworzenia prototypów. Są one konwertowane do formatu RGBA8 podczas ładowania.
 
-### Generowanie mipmap
+### Ładowanie i Rejestracja
+Za ładowanie odpowiada `TextureAssetLoader`. Proces wygląda następująco:
+1. Odczyt pliku z dysku.
+2. Utworzenie obrazu Vulkan przy użyciu VMA.
+3. Rejestracja w `AssetRegistry` i przypisanie unikalnego `TextureHandle`.
+4. Przesłanie danych do GPU.
 
-Dla formatów BMP i TGA (które nie mają wbudowanych mipmap), silnik automatycznie
-generuje mipmapy na GPU po uploadzie:
-
-```cpp
-// Oblicz liczbę poziomów
-while (maxDim > 1) { maxDim /= 2; mipLevels++; }
-
-// Dla każdego poziomu (oprócz 0):
-vkCmdBlitImage(cmd, image, SRC_OPTIMAL, image, DST_OPTIMAL, 1, &blit, LINEAR);
-```
-
-`vkCmdBlitImage` z `VK_FILTER_LINEAR` tworzy pomniejszone wersje tekstury z
-wygładzaniem. Każdy poziom jest 2x mniejszy od poprzedniego.
+### Rendering Bindless
+Dzięki wykorzystaniu `descriptorIndexing`, silnik nie musi przełączać deskryptorów dla każdej tekstury. Wszystkie załadowane tekstury trafiają do jednej dużej tablicy na GPU, a shadery odwołują się do nich poprzez indeks przekazywany w **Push Constants**.
 
 ---
 
-## Samplery (VkSampler)
+## System Czcionek i Tekstu
 
-Silnik tworzy 3 typy samplerów:
+Silnik wspiera renderowanie tekstu 2D oraz tekstowych nakładek (Overlays) przy użyciu czcionek TrueType (.ttf).
 
-| Typ | Filtrowanie | Wrap mode | Użycie |
-|-----|------------|-----------|--------|
-| `createTextureSampler` | Linear + mipmap linear | REPEAT | Zwykłe tekstury |
-| `createClampSampler` | Linear | CLAMP_TO_EDGE | Atlasy fontów, skybox |
-| `createMirrorRepeatSampler` | Linear + mipmap linear | MIRRORED_REPEAT | Tekstury z odbiciem |
+### FontAtlas
+Silnik nie renderuje glifów bezpośrednio z pliku TTF w każdej klatce. Zamiast tego:
+1. Używa biblioteki **SDL3_ttf** do wygenerowania bitmap dla potrzebnych znaków.
+2. Składa te bitmapy w jeden duży **Font Atlas** (tekstura z glifami).
+3. Generuje dane UV dla każdego znaku.
 
-`createTextureSampler` używa `VK_SAMPLER_MIPMAP_MODE_LINEAR` — to kluczowe dla
-uniknięcia aliasingu na oddalonych powierzchniach.
-
----
-
-## Font Atlas
-
-Czcionki TTF są rasteryzowane przez **SDL3_ttf** do atlasu — jednej dużej tekstury
-zawierającej wszystkie glify:
-
-```
-FontAtlasLoader::load(fontAsset, codepoints)
-│
-├─ TTF_OpenFont() — otwórz plik .ttf z zadanym rozmiarem w pikselach
-├─ Dla każdego codepoint (domyślnie ASCII 32-126):
-│   ├─ Konwertuj na UTF-8
-│   ├─ TTF_RenderText_Blended() — renderuj glif do SDL_Surface (RGBA)
-│   ├─ TTF_GetGlyphMetrics() — pobierz metryki (minX, maxX, minY, maxY, advance)
-│   │   ├─ bearingX = minX  (odległość od kursora do lewej krawędzi)
-│   │   ├─ bearingY = maxY  (odległość od baseline do góry glifu, dodatnia = ponad)
-│   │   └─ advanceX = advance (szerokość przesunięcia kursora)
-│   ├─ Wyodrębnij kanał alfa z powierzchni RGBA → R8
-│   └─ Spakuj w atlas (rząd poziomych glifów, zawijanie gdy pełny wiersz)
-├─ Oblicz lineHeight = TTF_GetFontHeight()
-└─ Zwróć FontAtlasData: piksele R8 + metryki glifów + UV
-```
-
-Format atlasu: `VK_FORMAT_R8_UNORM` — jeden bajt na piksel, wartość 0-255 = krycie.
-W shaderze fragmentu, coverage = `texture(fontAtlas, uv).r`.
-
-### Metryki glifów
-
-Kluczowe metryki z `TTF_GetGlyphMetrics()`:
-
-| Metryka | Znaczenie | Użycie w silniku |
-|---------|-----------|-----------------|
-| `minX` | lewy bearing (odległość kursora od lewej krawędzi glifu) | `bearingX` |
-| `maxX` | prawa krawędź glifu względem kursora | `width ≈ maxX - minX` (przybliżone) |
-| `minY` | dolna krawędź względem baseline (zwykle ≤ 0) | — |
-| `maxY` | górna krawędź względem baseline (zwykle > 0) | `bearingY` |
-| `advance` | przesunięcie kursora po glifie | `advanceX` |
-
-**Uwaga**: `width` i `height` quada glifu pochodzą z wymiarów powierzchni SDL
-(`glyphSurf->w`, `glyphSurf->h`), a nie z metryk. Metryki są używane tylko
-do pozycjonowania (`bearingX`, `bearingY`) i przesuwania kursora (`advanceX`).
+### TextOverlay
+Moduł odpowiedzialny za rysowanie tekstu na ekranie.
+- **Wydajność**: Cały tekst w danej klatce jest zbierany w jeden bufor wierzchołków i rysowany jednym wywołaniem (Draw Call).
+- **UTF-8**: Pełne wsparcie dla kodowania UTF-8, co pozwala na wyświetlanie polskich znaków i symboli specjalnych.
+- **Dynamiczność**: Tekst może być zmieniany co klatkę (np. licznik FPS, debug info).
 
 ---
 
-## TextOverlayRenderer
+## Zarządzanie Zasobami (AssetRegistry)
 
-Klasa odpowiedzialna za renderowanie tekstu na ekranie (UI, FPS).
-
-### Pipeline tekstu
-
-| Stan | Wartość |
-|------|---------|
-| Topologia | `VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST` |
-| Depth test | `VK_FALSE` (tekst zawsze na wierzchu) |
-| Blend mode | Alpha (`SRC_ALPHA`, `ONE_MINUS_SRC_ALPHA`) |
-| Cull mode | `VK_CULL_MODE_NONE` |
-| Descriptor set | Binding 0: Combined Image Sampler (atlas fontu) |
-
-Vertex shader przepuszcza pozycje bezpośrednio (są już w NDC):
-
-```hlsl
-VertexOutput vertexMain(VertexInput input) {
-    output.position = float4(input.position, 0.0, 1.0);
-    // input.position jest już w NDC [-1, 1]
-    return output;
-}
-```
-
-### Vertex format tekstu
-
-```cpp
-struct TextVertex {
-    float pos[2];       // pozycja w NDC
-    float texCoord[2];  // UV w atlasie fontu
-    float color[4];     // kolor RGBA
-};
-```
-
-Pozycje są wstępnie obliczone na CPU — funkcja `setText()` przelicza
-współrzędne pikselowe na NDC i pakuje je w bufor wierzchołków.
-
-### Przepływ
-
-```
-setText("FPS: 60", x, y, scale, color, screenW, screenH)
-│
-├─ Dla każdego znaku:
-│   ├─ Pobierz FontAtlasGlyph z fontAtlas_
-│   ├─ Oblicz pozycję quada w pikselach:
-│   │   gx = cursorX + bearingX * scale
-│   │   gy = baselineY - bearingY * scale
-│   ├─ Przelicz na NDC:
-│   │   ndcX = (px / screenW) * 2 - 1
-│   │   ndcY = 1 - (py / screenH) * 2    // uwaga: Y odwrócone dla Vulkan
-│   ├─ Generuj 6 wierzchołków (2 trójkąty na glif)
-│   └─ cursorX += advanceX * scale
-│
-├─ Zapisz do bufora HOST_VISIBLE przez memcpy
-└─ recordDrawCommands() → vkCmdDraw(vertexCount)
-```
-
-### Bufor wierzchołków
-
-Bufor jest typu `HOST_VISIBLE | HOST_COHERENT`, aktualizowany przez `memcpy`
-co klatkę (bez stagingu). Re-alokowany tylko gdy tekst się wydłuży.
+Zarówno tekstury, jak i fonty są częścią systemu `AssetRegistry`.
+- **Cache**: Ponowne żądanie tego samego pliku zwraca ten sam `Handle`.
+- **Domyślne Zasoby**: Silnik zapewnia tekstury fallback (np. różowy checkerboard dla brakujących tekstur), aby uniknąć błędów renderowania i crashy.

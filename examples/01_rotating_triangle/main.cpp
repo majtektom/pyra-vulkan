@@ -1,4 +1,7 @@
+#include <SDL3/SDL.h>
+
 #include "core/engine.h"
+#include "core/entity.h"
 #include "render/renderer.h"
 #include "core/mesh_component.h"
 #include "camera/camera_component.h"
@@ -6,48 +9,107 @@
 using namespace engine3d;
 
 int main() {
+    // 1. Tworzymy główny obiekt silnika. Odpowiada on za zarządzanie cyklem życia aplikacji.
     Engine engine;
 
+    // Inicjalizujemy silnik z tytułem okna oraz rozdzielczością 800x600.
     if (!engine.initialize("engine3d: rotating triangle", 800, 600)) {
         return 1;
     }
 
+    // 2. Pobieramy aktywną scenę z menedżera scen.
+    // Scena działa jako kontener (World) dla obiektów (Entity) i systemów (System).
+    auto* scene = engine.getSceneManager()->activeScene();
+    if (!scene) {
+        return 1;
+    }
+
+    // 3. Ręczne definiowanie wierzchołków trójkąta (MeshData).
+    // Każdy wierzchołek (Vertex) w naszym silniku posiada:
+    // - pozycję (position - x, y, z)
+    // - normalną (normal - używaną do obliczeń oświetlenia)
+    // - kolor (color - podstawowy kolor wierzchołka)
+    // - współrzędne tekstury UV (texCoords)
     MeshData triangleMesh;
     triangleMesh.vertices = {
-        {{{0.0f, -0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 0.0f, 0.0f}}, {{0.5f, 0.0f}}},
-        {{{0.5f, 0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 1.0f, 0.0f}}, {{1.0f, 1.0f}}},
-        {{{-0.5f, 0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 1.0f}}},
+        // Pozycja               Normalna            Kolor (RGB)         UV
+        {{{0.0f, -0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{1.0f, 0.0f, 0.0f}}, {{0.5f, 0.0f}}}, // Czerwony wierzchołek na górze
+        {{{0.5f, 0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 1.0f, 0.0f}}, {{1.0f, 1.0f}}},  // Zielony wierzchołek na dole po prawej
+        {{{-0.5f, 0.5f, 0.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 0.0f, 1.0f}}, {{0.0f, 1.0f}}}, // Niebieski wierzchołek na dole po lewej
     };
+    // Indeksy definiują kolejność łączenia wierzchołków w trójkąty.
+    // W tym przypadku łączymy wierzchołki 0, 1 i 2 w jeden trójkąt.
     triangleMesh.indices = {0, 1, 2};
+    
+    // Rejestrujemy siatkę w MeshManagerze pod unikalną nazwą "triangle".
     engine.getMeshManager()->loadMesh("triangle", triangleMesh);
 
+    // 4. Tworzenie materiału dla trójkąta.
+    // Materiał określa, jak światło reaguje z powierzchnią obiektu.
     Material mat;
     mat.name = "default";
-    engine.getMaterialManager()->add(mat);
-    auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
+    const auto matHandle = engine.getMaterialManager()->add(mat);
 
-    auto* entity = engine.createEntity("triangle");
+    // 5. Tworzenie encji trójkąta w ECS.
+    // Encja to pusty pojemnik na komponenty.
+    auto* entity = scene->createEntity("triangle");
+    
+    // Dodajemy MeshComponent, który informuje silnik, że ta encja ma być renderowana
+    // jako model o nazwie "triangle" przy użyciu wskazanego materiału.
     auto* mc = entity->addComponent<MeshComponent>("triangle");
-    mc->materialInstance = matInst;
+    mc->materialHandle = matHandle;
 
-    auto* camEntity = engine.createEntity("camera");
+    // 6. Tworzenie encji kamery.
+    // Bez kamery renderer nie wiedziałby, z jakiej perspektywy rysować świat 3D.
+    auto* camEntity = scene->createEntity("camera");
+    
+    // Dodajemy komponent kamery (CameraComponent).
     auto* camera = camEntity->addComponent<CameraComponent>();
+    
+    // Przesuwamy kamerę wzdłuż osi Z o 2 jednostki w tył, aby widzieć środek sceny.
     camEntity->transform().position = {0.0f, 0.0f, 2.0f};
+    
+    // Kąt widzenia kamery (Field of View) w stopniach.
     camera->fieldOfViewDegrees = 45.0f;
-    engine.setActiveCamera(camera);
+    
+    // Ustawiamy tę kamerę jako aktywną kamerę sceny.
+    scene->setActiveCamera(camera);
 
+    // 7. Definiowanie zachowania w każdej klatce (Update Loop).
+    // Przekazujemy lambdę, która wywoła się w każdym cyklu głównej pętli.
     engine.onUpdate = [](float dt, Engine& e) {
-        auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
+        const auto& snap = e.input();
+        
+        // Obsługa klawisza Escape w celu zamknięcia aplikacji.
+        static bool escWasDown = false;
+        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
+        if (escDown && !escWasDown) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&event);
+        }
+        escWasDown = escDown;
+
+        // Pobieramy aktywną kamerę i upewniamy się, że patrzy na środek układu współrzędnych {0,0,0}.
+        auto* activeScene = e.getSceneManager()->activeScene();
+        auto* cam = activeScene ? activeScene->activeCamera() : nullptr;
         if (cam) {
             cam->getOwner()->transform().position = {0.0f, 0.0f, 2.0f};
             cam->target = {0.0f, 0.0f, 0.0f};
             cam->up = {0.0f, 1.0f, 0.0f};
         }
-        if (auto* tri = e.getEntity("triangle")) {
-            tri->transform().rotation.z += dt * 0.5f;
+        
+        // Obracamy trójkąt wokół osi Z.
+        // Wykorzystujemy Delta Time (dt), aby prędkość obrotu była stała (0.5 radiana na sekundę)
+        // niezależnie od wydajności komputera (kolejnych klatek na sekundę).
+        if (activeScene) {
+            if (auto* tri = activeScene->getEntity("triangle")) {
+                tri->transform().rotation.z += dt * 0.5f;
+            }
         }
     };
 
+    // 8. Uruchomienie głównej pętli gry.
     engine.run();
     return 0;
 }

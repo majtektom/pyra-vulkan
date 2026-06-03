@@ -10,7 +10,13 @@ endif()
 
 include(cmake/ProjectSettings.cmake)
 
+enable_testing()
+
 add_custom_target(compile_shaders ALL)
 
 add_subdirectory(engine)
 add_subdirectory(examples)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+    add_subdirectory(tests)
+endif()

@@ -1,8 +1,12 @@
-#include <iostream>
-
-#include "core/engine.h"
+#include "core/logger.h"
+#include "core/asset_registry.h"
+#include "core/entity.h"
 #include "core/mesh_component.h"
+#include "core/mesh_manager.h"
 #include "feature/sprite/sprite.h"
+#include "render/material_manager.h"
+#include "render/material_system.h"
+#include "scene/scene.h"
 
 namespace engine3d {
 
@@ -37,6 +41,20 @@ SpriteInstanceData buildInstanceData(const SpriteSystem::Sprite& s) {
     return inst;
 }
 
+std::string requireTextureName(AssetRegistry& assetRegistry, TextureHandle handle, const std::string& context) {
+    if (!handle.isValid()) {
+        LOG_WARN("[SpriteSystem] Invalid TextureHandle for: {}", context);
+        return "default";
+    }
+
+    const auto textureName = assetRegistry.textureName(handle);
+    if (!textureName.has_value()) {
+        LOG_WARN("[SpriteSystem] Missing texture name for handle ({}) in: {}", handle.value, context);
+        return "default";
+    }
+    return *textureName;
+}
+
 }  // namespace
 
 SpriteSystem::SpriteSystem() = default;
@@ -44,7 +62,7 @@ SpriteSystem::~SpriteSystem() { clear(); }
 
 int SpriteSystem::addSprite(const Sprite& sprite) {
     if (spriteCount_ >= MAX_SPRITES) {
-        std::cerr << "[SpriteSystem] Max sprites reached\n";
+        LOG_ERROR("[SpriteSystem] Max sprites reached ({})", MAX_SPRITES);
         return -1;
     }
     int id = spriteCount_++;
@@ -104,9 +122,7 @@ void SpriteSystem::setAnim(int id, int framesX, int framesY, float timePerFrame,
     s.elapsed = 0.0f;
     s.playing = true;
     s.loop = loop;
-    if (s.isSequence) {
-        s.textureName = s.frameTextures[static_cast<size_t>(s.currentFrame)];
-    } else {
+    if (!s.isSequence) {
         applyFrameUV(id);
     }
 }
@@ -125,9 +141,7 @@ void SpriteSystem::stopAnim(int id) {
         s.playing = false;
         s.currentFrame = s.startFrame;
         s.elapsed = 0.0f;
-        if (s.isSequence) {
-            s.textureName = s.frameTextures[static_cast<size_t>(s.currentFrame)];
-        } else {
+        if (!s.isSequence) {
             applyFrameUV(id);
         }
     }
@@ -145,9 +159,9 @@ void SpriteSystem::advanceAnimation(int id, float dt) {
     auto& s = sprites_[id];
     if (!s.playing) return;
     if (!s.isSequence && s.framesX <= 1 && s.framesY <= 1) return;
-    if (s.isSequence && s.frameTextures.size() <= 1) return;
+    if (s.isSequence && s.frameTextureHandles.size() <= 1) return;
 
-    int totalFrames = s.isSequence ? static_cast<int>(s.frameTextures.size())
+    int totalFrames = s.isSequence ? static_cast<int>(s.frameTextureHandles.size())
                                    : s.framesX * s.framesY;
     int maxFrame = (s.endFrame >= 0) ? s.endFrame : totalFrames - 1;
 
@@ -163,78 +177,79 @@ void SpriteSystem::advanceAnimation(int id, float dt) {
                 s.playing = false;
             }
         }
-        if (s.isSequence) {
-            s.textureName = s.frameTextures[static_cast<size_t>(s.currentFrame)];
-        } else {
+        if (!s.isSequence) {
             applyFrameUV(id);
         }
     }
 }
 
-void SpriteSystem::createSheetGroup(Engine& engine, const std::string& texName,
+void SpriteSystem::createSheetGroup(TextureHandle texHandle,
                                     const std::vector<int>& indices, int groupIdx) {
     int count = static_cast<int>(indices.size());
 
     TextureGroup group;
-    group.textureName = texName;
+    group.textureHandle = texHandle;
     group.capacity = count;
     group.meshName = "spriteSheetMesh_" + std::to_string(groupIdx);
 
     Material mat;
     mat.name = "spriteSheetMat_" + std::to_string(groupIdx);
-    mat.textureName = texName;
+    mat.textureName = requireTextureName(*assetRegistry_, texHandle, mat.name);
     mat.shaderProgram = "sprite";
     mat.blendMode = BlendMode::Alpha;
     mat.renderPriority = 1;
     mat.depthWrite = true;
     mat.cullMode = CullMode::Disabled;
-    group.materialName = mat.name;
-    engine.getMaterialManager()->add(mat);
+    const auto materialHandle = materialManager_->add(mat);
 
-    auto matInst = engine.getMaterialSystem()->getOrCreateMaterialInstance(mat);
+    auto matInst = materialSystem_->getOrCreateMaterialInstance(mat);
 
     auto quadMesh = createQuadMesh();
-    engine.getMeshManager()->loadMesh(group.meshName, quadMesh);
+    meshManager_->loadMesh(group.meshName, quadMesh);
 
     VkDeviceSize instBufSize = static_cast<VkDeviceSize>(count) * sizeof(SpriteInstanceData);
-    engine.getMeshManager()->loadInstanceBuffer(group.meshName, instBufSize);
+    meshManager_->loadInstanceBuffer(group.meshName, instBufSize);
 
-    auto* entity = engine.createEntity("spriteSheetGroup_" + std::to_string(groupIdx));
+    auto* entity = scene_->createEntity("spriteSheetGroup_" + std::to_string(groupIdx));
     auto* mc = entity->addComponent<MeshComponent>(group.meshName);
+    mc->materialHandle = materialHandle;
     mc->materialInstance = matInst;
 
     groups_.push_back(group);
 }
 
-void SpriteSystem::createSequenceEntity(Engine& engine, int spriteId) {
+void SpriteSystem::createSequenceEntity(int spriteId) {
     auto& s = sprites_[spriteId];
     std::string meshName = "spriteSeqMesh_" + std::to_string(spriteId);
     s.meshName = meshName;
     s.entityName = "spriteSeqEntity_" + std::to_string(spriteId);
 
     s.frameMaterials.clear();
-    for (const auto& texName : s.frameTextures) {
+    for (const auto texHandle : s.frameTextureHandles) {
         Material mat;
-        mat.name = "spriteSeqMat_" + texName;
-        mat.textureName = texName;
+        mat.name = "spriteSeqMat_" + std::to_string(texHandle.value);
+        mat.textureName = requireTextureName(*assetRegistry_, texHandle, mat.name);
         mat.shaderProgram = "sprite";
         mat.blendMode = BlendMode::Additive;
         // mat.blendMode = BlendMode::Alpha;
         mat.renderPriority = 1;
         mat.depthWrite = false;
         mat.cullMode = CullMode::Disabled;
-        engine.getMaterialManager()->add(mat);
+        const auto materialHandle = materialManager_->add(mat);
         s.frameMaterials.push_back(
-            engine.getMaterialSystem()->getOrCreateMaterialInstance(mat));
+            materialSystem_->getOrCreateMaterialInstance(mat));
+        // Każdy frame sequence ma oddzielny materiał, dlatego handle nie jest
+        // przechowywany globalnie - aktywny frame ustawia materialInstance.
+        (void)materialHandle;
     }
 
     auto quadMesh = createQuadMesh();
-    engine.getMeshManager()->loadMesh(meshName, quadMesh);
+    meshManager_->loadMesh(meshName, quadMesh);
 
     VkDeviceSize instBufSize = sizeof(SpriteInstanceData);
-    engine.getMeshManager()->loadInstanceBuffer(meshName, instBufSize);
+    meshManager_->loadInstanceBuffer(meshName, instBufSize);
 
-    auto* entity = engine.createEntity(s.entityName);
+    auto* entity = scene_->createEntity(s.entityName);
     auto* mc = entity->addComponent<MeshComponent>(meshName);
 
     s.currentFrame = s.startFrame;
@@ -244,27 +259,38 @@ void SpriteSystem::createSequenceEntity(Engine& engine, int spriteId) {
     }
 
     SpriteInstanceData inst = buildInstanceData(s);
-    engine.getMeshManager()->updateInstanceBuffer(
+    meshManager_->updateInstanceBuffer(
         meshName, &inst, sizeof(SpriteInstanceData), 1);
 }
 
-void SpriteSystem::initialize(Engine& engine) {
+void SpriteSystem::initialize(Scene& scene,
+                              MeshManager& meshManager,
+                              MaterialManager& materialManager,
+                              MaterialSystem& materialSystem,
+                              AssetRegistry& assetRegistry) {
     if (initialized_) return;
-    engine_ = &engine;
+    scene_ = &scene;
+    meshManager_ = &meshManager;
+    materialManager_ = &materialManager;
+    materialSystem_ = &materialSystem;
+    assetRegistry_ = &assetRegistry;
 
-    std::vector<std::string> uniqueTextures;
+    std::vector<TextureHandle> uniqueTextures;
     std::vector<std::vector<int>> sheetIndices;
 
     for (int i = 0; i < spriteCount_; ++i) {
         if (!sprites_[i].active) continue;
         if (sprites_[i].isSequence) {
-            createSequenceEntity(engine, i);
+            createSequenceEntity(i);
             continue;
         }
-        const auto& tex = sprites_[i].textureName;
+        const auto tex = sprites_[i].textureHandle;
+        if (!tex.isValid()) {
+            continue;
+        }
         bool found = false;
         for (size_t t = 0; t < uniqueTextures.size(); ++t) {
-            if (uniqueTextures[t] == tex) {
+            if (uniqueTextures[t].value == tex.value) {
                 sheetIndices[t].push_back(i);
                 found = true;
                 break;
@@ -277,14 +303,14 @@ void SpriteSystem::initialize(Engine& engine) {
     }
 
     for (size_t gi = 0; gi < uniqueTextures.size(); ++gi) {
-        createSheetGroup(engine, uniqueTextures[gi], sheetIndices[gi],
+        createSheetGroup(uniqueTextures[gi], sheetIndices[gi],
                          static_cast<int>(gi));
     }
 
     initialized_ = true;
 }
 
-void SpriteSystem::updateSheetInstances(Engine& engine) {
+void SpriteSystem::updateSheetInstances() {
     for (size_t gi = 0; gi < groups_.size(); ++gi) {
         const auto& group = groups_[gi];
         std::vector<SpriteInstanceData> instData;
@@ -292,29 +318,29 @@ void SpriteSystem::updateSheetInstances(Engine& engine) {
         for (int i = 0; i < spriteCount_; ++i) {
             if (!sprites_[i].active) continue;
             if (sprites_[i].isSequence) continue;
-            if (sprites_[i].textureName != group.textureName) continue;
+            if (sprites_[i].textureHandle.value != group.textureHandle.value) continue;
 
             instData.push_back(buildInstanceData(sprites_[i]));
         }
 
         uint32_t count = static_cast<uint32_t>(instData.size());
         if (count > 0) {
-            engine.getMeshManager()->updateInstanceBuffer(
+            meshManager_->updateInstanceBuffer(
                 group.meshName, instData.data(),
                 instData.size() * sizeof(SpriteInstanceData), count);
         } else {
-            engine.getMeshManager()->updateInstanceBuffer(
+            meshManager_->updateInstanceBuffer(
                 group.meshName, nullptr, 0, 0);
         }
     }
 }
 
-void SpriteSystem::updateSequenceEntities(Engine& engine) {
+void SpriteSystem::updateSequenceEntities() {
     for (int i = 0; i < spriteCount_; ++i) {
         auto& s = sprites_[i];
         if (!s.active || !s.isSequence) continue;
 
-        auto* entity = engine.getEntity(s.entityName);
+        auto* entity = scene_->getEntity(s.entityName);
         if (!entity) continue;
 
         if (auto* mc = entity->getComponent<MeshComponent>()) {
@@ -325,20 +351,20 @@ void SpriteSystem::updateSequenceEntities(Engine& engine) {
         }
 
         SpriteInstanceData inst = buildInstanceData(s);
-        engine.getMeshManager()->updateInstanceBuffer(
+        meshManager_->updateInstanceBuffer(
             s.meshName, &inst, sizeof(SpriteInstanceData), 1);
     }
 }
 
-void SpriteSystem::update(float dt, Engine& engine) {
+    void SpriteSystem::update(float dt) {
     if (!initialized_) return;
 
     for (int i = 0; i < spriteCount_; ++i) {
         if (sprites_[i].active) advanceAnimation(i, dt);
     }
 
-    updateSheetInstances(engine);
-    updateSequenceEntities(engine);
+    updateSheetInstances();
+    updateSequenceEntities();
 }
 
 }  // namespace engine3d

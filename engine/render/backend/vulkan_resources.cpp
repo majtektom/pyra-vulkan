@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "render/backend/vulkan_resources.h"
+#include "core/logger.h"
 #include <cstring>
 #include <stdexcept>
 
@@ -24,11 +25,14 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanContext> context,
 
     VkResult res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
     if (res != VK_SUCCESS) {
+        LOG_WARN("[VulkanBuffer] First attempt to create buffer failed, retrying without MAPPED flag");
         allocInfo.flags = 0;
         res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
     }
-    if (res != VK_SUCCESS)
+    if (res != VK_SUCCESS) {
+        LOG_ERROR("[VulkanBuffer] Failed to create VMA buffer of size {}", size);
         throw std::runtime_error("failed to create VMA buffer");
+    }
 }
 
 VulkanBuffer::~VulkanBuffer() {
@@ -40,7 +44,11 @@ void* VulkanBuffer::map() {
     vmaGetAllocationInfo(context_->allocator(), allocation_, &info);
     if (info.pMappedData) return info.pMappedData;
     void* data;
-    vmaMapMemory(context_->allocator(), allocation_, &data);
+    VkResult res = vmaMapMemory(context_->allocator(), allocation_, &data);
+    if (res != VK_SUCCESS) {
+        LOG_ERROR("[VulkanBuffer] Failed to map memory");
+        return nullptr;
+    }
     return data;
 }
 
@@ -49,20 +57,28 @@ void VulkanBuffer::unmap() {
 }
 
 void VulkanBuffer::upload(const void* data, VkDeviceSize size) {
+    if (size > size_) {
+        LOG_ERROR("[VulkanBuffer] Upload size ({}) exceeds buffer size ({})", size, size_);
+        return;
+    }
     VmaAllocationInfo info;
     vmaGetAllocationInfo(context_->allocator(), allocation_, &info);
     if (info.pMappedData) {
         std::memcpy(info.pMappedData, data, static_cast<size_t>(size));
     } else {
         void* mapped = map();
-        std::memcpy(mapped, data, static_cast<size_t>(size));
-        unmap();
+        if (mapped) {
+            std::memcpy(mapped, data, static_cast<size_t>(size));
+            unmap();
+        }
     }
 }
 
 VulkanImage::VulkanImage(std::shared_ptr<VulkanContext> context,
             uint32_t width, uint32_t height,
-            VkFormat format, VkImageUsageFlags usage) : context_(context) {}
+            VkFormat format, VkImageUsageFlags usage) : context_(context) {
+    LOG_WARN("[VulkanImage] Constructor not fully implemented yet");
+}
 VulkanImage::~VulkanImage() {}
 
 } // namespace engine3d

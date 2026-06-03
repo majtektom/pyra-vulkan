@@ -13,10 +13,11 @@
 namespace engine3d {
 
 class Platform;
-class Engine;
 class Renderer;
+struct InputSnapshot;
 
 using TextDrawFn = std::function<void(const std::string& text, float x, float y, float scale, std::array<float,4> color)>;
+using EngineTextDrawFn = std::function<void(const std::string& text, float x, float y, float scale, std::array<float,4> color, float z)>;
 
 static constexpr int kTitleBarH = 25;
 
@@ -36,6 +37,9 @@ public:
     virtual ~GuiWidget();
     virtual void update(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta);
     virtual void draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const = 0;
+    virtual bool isInside(int mx, int my) const { return false; }
+    virtual bool isOpen() const { return false; }
+    virtual void close() {}
 
 protected:
     GuiWindow* parent_;
@@ -54,7 +58,7 @@ public:
     const std::string& getName() const override { static std::string name = "GuiMgr"; return name; }
     Stage getStage() const override { return Stage::Overlay; }
 
-    void setTextDrawFn(TextDrawFn textFn) { textFn_ = std::move(textFn); }
+    void setTextDrawFn(EngineTextDrawFn textFn) { textFn_ = std::move(textFn); }
 
     GuiWindow* addWindow(const std::string& name, int x, int y, int w, int h);
     bool removeWindow(const std::string& name);
@@ -62,7 +66,7 @@ public:
     void forEachWindow(std::function<void(GuiWindow&)> fn);
 
     void setActive(const std::string& name);
-    void update(Platform& platform, float screenW, float screenH);
+    void update(const InputSnapshot& input, Platform& platform, float screenW, float screenH);
 
     void enableCursor(bool enabled) { cursorEnabled_ = enabled; }
     [[nodiscard]] bool isCursorEnabled() const { return cursorEnabled_; }
@@ -80,13 +84,14 @@ private:
     void drawCursor();
 
     std::map<std::string, std::unique_ptr<GuiWindow>> windows_;
+    std::vector<GuiWindow*> windowOrder_;
     GuiWindow* activeWindow_ = nullptr;
     int mouseX_ = 0, mouseY_ = 0;
     bool cursorEnabled_ = true;
     CursorMode cursorMode_ = CursorMode::Custom;
 
     GuiRenderer guiRenderer_;
-    TextDrawFn textFn_;
+    EngineTextDrawFn textFn_;
     float screenW_ = 1024.0f, screenH_ = 768.0f;
     Renderer* renderer_ = nullptr;
 };
@@ -113,6 +118,9 @@ public:
     void removeWidget(GuiWidget* w);
     void render(GuiRenderer& r, TextDrawFn textFn, float sw, float sh) const;
     void updateWidgets(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta);
+    bool isPointOccluded(float gx, float gy, const GuiWidget* drawingWidget = nullptr) const;
+    bool isPointInOpenWidget(int gx, int gy) const;
+    void closeWidgets();
 
      // Callback dla kliknięć w przycisk zamknięcia itp
     std::function<void(GuiMsg)> onMessage;

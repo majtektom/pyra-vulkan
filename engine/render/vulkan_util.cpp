@@ -4,15 +4,16 @@
 #include <stdexcept>
 
 #include "render/vulkan_util.h"
+
 namespace engine3d {
 namespace vk {
 
 // ---------------------------------------------------------------
-// LADOWANIE PLIKOW I SHADEROW
+// ŁADOWANIE PLIKOW I SHADEROW
 // ---------------------------------------------------------------
 
 std::vector<char> readFile(const std::string& path) {
-    // Otwieramy plik w trybie ate (od razu na koncu), zeby poznac rozmiar.
+    // std::ios::ate ustawia kursor na końcu pliku (At The End), dzięki czemu tellg() od razu podaje rozmiar pliku.
     std::ifstream file(path, std::ios::ate | std::ios::binary);
     if (!file.is_open()) {
         throw std::runtime_error("failed to open file: " + path);
@@ -20,6 +21,8 @@ std::vector<char> readFile(const std::string& path) {
 
     const auto fileSize = static_cast<std::size_t>(file.tellg());
     std::vector<char> buffer(fileSize);
+    
+    // Przesuwamy wskaźnik czytania z powrotem na początek pliku przed odczytem danych.
     file.seekg(0);
     file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
     return buffer;
@@ -29,6 +32,8 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
     VkShaderModuleCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = code.size();
+    
+    // Kod shaderów SPIR-V w Vulkanie musi być przekazany jako wskaźnik na typ uint32_t (kod maszynowy SPIR-V składa się z 32-bitowych słów).
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
     VkShaderModule shaderModule = VK_NULL_HANDLE;
@@ -39,7 +44,7 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
 }
 
 // ---------------------------------------------------------------
-// ZARZADZANIE PAMECIA GPU
+// ZARZĄDZANIE PAMIĘCIĄ GPU
 // ---------------------------------------------------------------
 
 uint32_t findMemoryType(
@@ -48,14 +53,19 @@ uint32_t findMemoryType(
     VkMemoryPropertyFlags properties
 ) {
     VkPhysicalDeviceMemoryProperties memoryProperties{};
+    // Pobranie informacji o pamięciach dostępnych w fizycznej karcie graficznej
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
+    // Iterujemy po wszystkich typach pamięci zgłoszonych przez kartę
     for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
+        // Sprawdzamy czy dany typ jest zgodny z bitmaską wymagań zasobu (typeFilter)
         const bool typeMatches = (typeFilter & (1u << index)) != 0;
+        // Sprawdzamy czy dany typ posiada wszystkie wymagane flagi (np. HOST_VISIBLE | HOST_COHERENT)
         const bool propertiesMatch =
             (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties;
+        
         if (typeMatches && propertiesMatch) {
-            return index;
+            return index; // Zwracamy pasujący indeks pamięci
         }
     }
 
@@ -71,19 +81,22 @@ void createBuffer(
     VkBuffer& buffer,
     VkDeviceMemory& bufferMemory
 ) {
+    // 1. Tworzenie logicznego obiektu bufora (VkBuffer) określającego rozmiar i sposób użycia
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
     bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // Dostępny tylko z jednej kolejki (np. graficznej)
 
     if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to create buffer");
     }
 
+    // 2. Pobranie wymagań pamięciowych dla nowo utworzonego bufora (wielkość wyrównania, obsługiwane typy pamięci)
     VkMemoryRequirements memoryRequirements{};
     vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
 
+    // 3. Alokacja fizycznej pamięci na GPU dopasowanej do wymagań bufora
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memoryRequirements.size;
@@ -96,6 +109,7 @@ void createBuffer(
         throw std::runtime_error("failed to allocate buffer memory");
     }
 
+    // 4. Powiązanie przydzielonej pamięci z logicznym buforem (od offsetu 0)
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
@@ -116,31 +130,32 @@ void createDeviceLocalBufferWithStaging(
         return;
     }
 
-    // Najpierw tworzymy staging buffer widoczny dla CPU, zeby zapisac dane.
+    // KROK 1: Tworzenie bufora stagingowego (pośredniczącego) widocznego dla CPU (HOST_VISIBLE).
+    // HOST_COHERENT_BIT gwarantuje automatyczne synchronizowanie pamięci podręcznej CPU i GPU bez jawnego wywoływania flush.
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
     createBuffer(
         device, physicalDevice, bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // Bufor będzie źródłem transferu kopiowania
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer, stagingBufferMemory
     );
 
-    // Mapujemy pamiec staging buffer i kopiujemy dane z CPU na GPU.
+    // KROK 2: Mapowanie pamięci staging bufora i zapisanie danych z procesora CPU.
     void* data = nullptr;
     vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
     std::memcpy(data, sourceData, static_cast<std::size_t>(bufferSize));
     vkUnmapMemory(device, stagingBufferMemory);
 
-    // Tworzymy docelowy bufor device-local (szybki dla GPU).
+    // KROK 3: Tworzenie docelowego bufora w szybkiej pamięci lokalnej karty (DEVICE_LOCAL_BIT).
     createBuffer(
         device, physicalDevice, bufferSize,
-        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // Bufor będzie celem transferu kopiowania
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         buffer, bufferMemory
     );
 
-    // Kopiujemy ze staging do docelowego bufora na GPU.
+    // KROK 4: Uruchomienie jednorazowego bufora komend (Command Buffer) do wykonania kopiowania buforów na GPU.
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -152,30 +167,33 @@ void createDeviceLocalBufferWithStaging(
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // Bufor będzie nagrany i wysłany tylko raz
     vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
+    // Dodanie komendy kopiowania pamięci na kolejce GPU
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;
     vkCmdCopyBuffer(commandBuffer, stagingBuffer, buffer, 1, &copyRegion);
 
     vkEndCommandBuffer(commandBuffer);
 
+    // Złożenie zlecenia (Submit) do wykonania przez GPU
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
     vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
+    vkQueueWaitIdle(graphicsQueue); // Czekamy na zakończenie transferu przez GPU (prosta synchronizacja CPU-GPU)
 
+    // KROK 5: Posprzątanie bufora tymczasowego
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
 
 // ---------------------------------------------------------------
-// ZARZADZANIE OBRAZAMI (TEXTURY, DEPTH)
+// ZARZĄDZANIE OBRAZAMI (TEKSTURY, DEPTH)
 // ---------------------------------------------------------------
 
 void createImage(
@@ -192,9 +210,10 @@ void createImage(
     uint32_t arrayLayers,
     VkImageCreateFlags flags
 ) {
+    // 1. Definiowanie struktury tworzenia obrazu 2D
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.flags = flags;
+    imageInfo.flags = flags; // Np. VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT dla Skyboxa (6 warstw)
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
@@ -202,8 +221,8 @@ void createImage(
     imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = arrayLayers;
     imageInfo.format = format;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL; // Układ pamięci optymalny dla GPU (tekstura jest przechowywana kafelkowo, a nie wierszami)
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // Początkowy układ nieokreślony (dane mogą być zniszczone)
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -212,9 +231,11 @@ void createImage(
         throw std::runtime_error("failed to create image");
     }
 
+    // 2. Pobranie wymagań alokacji pamięci dla obrazu
     VkMemoryRequirements memoryRequirements{};
     vkGetImageMemoryRequirements(device, image, &memoryRequirements);
 
+    // 3. Alokacja pamięci fizycznej GPU
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memoryRequirements.size;
@@ -227,6 +248,7 @@ void createImage(
         throw std::runtime_error("failed to allocate image memory");
     }
 
+    // 4. Powiązanie pamięci z obrazem
     vkBindImageMemory(device, image, imageMemory, 0);
 }
 
@@ -242,9 +264,11 @@ VkImageView createImageView(
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = image;
-    viewInfo.viewType = viewType;
+    viewInfo.viewType = viewType; // Np. VK_IMAGE_VIEW_TYPE_2D lub VK_IMAGE_VIEW_TYPE_CUBE
     viewInfo.format = format;
-    viewInfo.subresourceRange.aspectMask = aspectFlags;
+    
+    // Zdefiniowanie podzasobów obrazu, do których widok ma dostęp
+    viewInfo.subresourceRange.aspectMask = aspectFlags; // Zwykle VK_IMAGE_ASPECT_COLOR_BIT lub VK_IMAGE_ASPECT_DEPTH_BIT
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -267,6 +291,7 @@ void transitionImageLayout(
     VkImageLayout newLayout,
     uint32_t mipLevels
 ) {
+    // Alokacja i start jednorazowego bufora komend do przeprowadzenia tranzycji
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -281,11 +306,12 @@ void transitionImageLayout(
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
+    // Tworzenie bariery pamięciowej obrazu (Image Memory Barrier)
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout = oldLayout;
     barrier.newLayout = newLayout;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; // Nie zmieniamy rodziny kolejek
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -297,16 +323,20 @@ void transitionImageLayout(
     VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
+    // Definiowanie masek dostępu (Access Masks) i etapów potoku (Pipeline Stages) w zależności od typu zmiany układu:
     if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        // Z nieokreślonego układu do celu zapisu transferu (np. przed wgraniem pikseli)
+        barrier.srcAccessMask = 0; // Brak zależności zapisu/odczytu przed barierą
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; // Czekamy na zakończenie operacji zapisu transferu
     } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        // Z układu zapisu transferu do układu odczytu przez shader (próbkowanie tekstury)
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; // Czekamy na zapis transferu
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;     // Blokujemy odczyt shadera, dopóki zapis się nie skończy
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; // Odczyt następuje w shaderze pikseli (Fragment Shader)
     }
 
+    // Wstawienie bariery do bufora poleceń
     vkCmdPipelineBarrier(
         commandBuffer,
         sourceStage, destinationStage,
@@ -315,6 +345,7 @@ void transitionImageLayout(
 
     vkEndCommandBuffer(commandBuffer);
 
+    // Wysłanie komend do wykonania
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
@@ -333,18 +364,23 @@ void transitionImageLayout(
 VkSampler createTextureSampler(VkDevice device, uint32_t mipLevels) {
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.magFilter = VK_FILTER_LINEAR; // Filtrowanie powiększające: interpolacja liniowa
+    samplerInfo.minFilter = VK_FILTER_LINEAR; // Filtrowanie pomniejszające: interpolacja liniowa
+    
+    // Obsługa współrzędnych UV poza zakresem [0, 1] – tryb powtarzania (standardowy kaflowy podział)
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.anisotropyEnable = VK_FALSE;
+    
+    samplerInfo.anisotropyEnable = VK_FALSE; // Brak filtrowania anizotropowego dla uproszczenia
     samplerInfo.maxAnisotropy = 1.0f;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE; // Używamy znormalizowanych współrzędnych [0.0, 1.0]
     samplerInfo.compareEnable = VK_FALSE;
+    
+    // Próbkowanie mipmap (wybór pomiędzy poziomami szczegółowości) – interpolacja liniowa między poziomami
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.maxLod = static_cast<float>(mipLevels);
+    samplerInfo.maxLod = static_cast<float>(mipLevels); // Maksymalny dopuszczalny poziom mipmapy
 
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
@@ -358,9 +394,13 @@ VkSampler createClampSampler(VkDevice device) {
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
+    
+    // Tryb CLAMP_TO_EDGE: współrzędne UV poza [0, 1] są przycinane do krawędzi tekstury.
+    // Zapobiega to prześwitom sąsiednich znaków w atlasach czcionek oraz czarnym liniom na łączeniach skyboxa.
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    
     samplerInfo.anisotropyEnable = VK_FALSE;
     samplerInfo.maxAnisotropy = 1.0f;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
@@ -381,9 +421,13 @@ VkSampler createMirrorRepeatSampler(VkDevice device, uint32_t mipLevels) {
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
+    
+    // Tryb MIRRORED_REPEAT: tekstura jest powtarzana, ale co drugie powtórzenie jest odbiciem lustrzanym.
+    // Pomaga to w płynnym łączeniu krawędzi bez widocznych szwów tekstury.
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    
     samplerInfo.anisotropyEnable = VK_FALSE;
     samplerInfo.maxAnisotropy = 1.0f;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;

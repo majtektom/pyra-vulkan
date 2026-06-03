@@ -16,7 +16,7 @@ void GuiButton::update(int mx, int my, bool leftClicked, bool, int) {
     bool h = isHovered(mx, my);
     if (h != hovered_) {
         hovered_ = h;
-        color_ = h ? std::array<float,4>{0.8f,0.8f,0.8f,0.9f} : std::array<float,4>{0.5f,0.5f,0.5f,0.9f};
+        color_ = h ? std::array<float,4>{0.2f,0.2f,0.28f,0.9f} : std::array<float,4>{0.3f,0.3f,0.38f,0.9f};
     }
     if (hovered_ && leftClicked && onClick_) onClick_();
 }
@@ -24,7 +24,7 @@ void GuiButton::update(int mx, int my, bool leftClicked, bool, int) {
 void GuiButton::draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const {
     int ax = winX + x_, ay = winY + y_;
     // Obramowanie
-    r.addRectPx(ax - 1, ay - 1, w_ + 2, h_ + 2, {0.2f, 0.2f, 0.2f, 0.95f}, sw, sh);
+    r.addRectPx(ax - 2, ay - 2, w_ + 4, h_ + 4, {0.7f, 0.7f, 0.7f, 1.0f}, sw, sh);
     // Wypełnienie
     r.addRectPx(ax, ay, w_, h_, color_, sw, sh);
 

@@ -78,9 +78,6 @@ void Platform::processEvents() {
             if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
                 input_.keys[static_cast<int>(sc)] = true;
             }
-            if (event.key.key == SDLK_ESCAPE) {
-                shouldClose_ = true;
-            }
             break;
         }
         case SDL_EVENT_KEY_UP: {

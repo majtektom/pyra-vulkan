@@ -1,13 +1,7 @@
-#include "shared/pbr.hlsl"
+#include "shared/light_eval.hlsl"
+#include "shared/shadow_pcf.hlsl"
 
-struct LightData {
-    column_major float4x4 lightViewProj;
-    float4 position;    // xyz = world position, w = shadow map layer index
-    float4 direction;   // xyz = light direction, w = type: 1=dir, 2=point, 3=spot
-    float4 color;       // rgb = color, w = intensity
-    float4 params;      // x=innerCos, y=outerCos, z=range, w=unused
-};
-
+// Globalny bufor jednolity (UBO) - dane widoku i światła
 cbuffer GlobalUniformBufferObject : register(b0, space0)
 {
     column_major float4x4 view;
@@ -23,12 +17,13 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     LightData lights[16];
 };
 
-[[vk::binding(0, 1)]] Texture2D<float4> gbufferAlbedo;
+// Powiązanie tekstur G-Buffera (Set 1 / space1)
+[[vk::binding(0, 1)]] Texture2D<float4> gbufferAlbedo;             // Albedo + metalness
 [[vk::binding(0, 1)]] SamplerState gbufferSampler;
-[[vk::binding(1, 1)]] Texture2D<float4> gbufferNormal;
-[[vk::binding(2, 1)]] Texture2D<float4> gbufferOcclusion;
-[[vk::binding(3, 1)]] Texture2D<float4> gbufferWorldPos;
-[[vk::binding(4, 1)]] Texture2DArray<float> shadowMapArray;
+[[vk::binding(1, 1)]] Texture2D<float4> gbufferNormal;             // Normal + roughness
+[[vk::binding(2, 1)]] Texture2D<float4> gbufferOcclusion;          // AO + emissive strength
+[[vk::binding(3, 1)]] Texture2D<float4> gbufferWorldPos;           // World Position + depth mask
+[[vk::binding(4, 1)]] Texture2DArray<float> shadowMapArray;        // Tablica map cieni słońca
 [[vk::binding(4, 1)]] SamplerComparisonState shadowSampler;
 
 struct VertexOutput
@@ -37,6 +32,17 @@ struct VertexOutput
     [[vk::location(0)]] float2 uv : TEXCOORD0;
 };
 
+/**
+ * @brief Vertex Shader dla drugiego kroku (Lighting Pass) - Fullscreen Triangle.
+ * 
+ * Zamiast przesyłać bufor wierzchołków dla prostokąta, używamy sztuczki 
+ * generowania jednego wielkiego trójkąta zasłaniającego cały ekran 
+ * na podstawie indeksu wierzchołka (SV_VertexID):
+ * - Wierzchołek 0: UV (0, 0), Pos (-1, -1)
+ * - Wierzchołek 1: UV (2, 0), Pos (3, -1)
+ * - Wierzchołek 2: UV (0, 2), Pos (-1, 3)
+ * Karta graficzna automatycznie przycina trójkąt do obszaru ekranu.
+ */
 VertexOutput vertexMain(uint vid : SV_VertexID)
 {
     VertexOutput o;
@@ -45,41 +51,15 @@ VertexOutput vertexMain(uint vid : SV_VertexID)
     return o;
 }
 
-float sampleShadow(uint lightIndex, float3 worldPos, float3 N)
-{
-    float3 L = (lights[lightIndex].direction.w == 1.0) ? 
-               normalize(lights[lightIndex].direction.xyz) : 
-               normalize(lights[lightIndex].position.xyz - worldPos);
-
-    // Dynamic bias based on normal and light direction
-    float bias = max(0.01 * (1.0 - dot(N, L)), 0.002);
-    float4 shadowPos = mul(lights[lightIndex].lightViewProj, float4(worldPos + N * bias, 1.0));
-    float3 projCoords = shadowPos.xyz / shadowPos.w;
-    
-    // Transform to [0,1] range
-    projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
-    if (projCoords.z > 1.0) return 1.0;
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 1.0;
-
-    float shadow = 0.0;
-    float2 texelSize = 1.0 / 2048.0;
-    float layer = lights[lightIndex].position.w;
-
-    // PCF 3x3
-    for(int x = -1; x <= 1; ++x)
-    {
-        for(int y = -1; y <= 1; ++y)
-        {
-            shadow += shadowMapArray.SampleCmpLevelZero(shadowSampler, float3(projCoords.xy + float2(x, y) * texelSize, layer), projCoords.z);
-        }
-    }
-    
-    return shadow / 9.0;
-}
-
+/**
+ * @brief Fragment Shader dla drugiego kroku (Lighting Pass).
+ * 
+ * Odczytuje parametry fizyczne pikseli z tekstur G-Buffera i wykonuje
+ * obliczenia oświetlenia PBR oraz próbkowania cieni.
+ */
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
+    // KROK 1: ODCZYT PARAMETRÓW GEOMETRII Z G-BUFFERA
     float4 albedoMetallic = gbufferAlbedo.Sample(gbufferSampler, input.uv);
     float4 normalRoughness = gbufferNormal.Sample(gbufferSampler, input.uv);
     float4 occlusionEmissive = gbufferOcclusion.Sample(gbufferSampler, input.uv);
@@ -88,13 +68,20 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     float3 baseColor = albedoMetallic.rgb;
     float metallic = albedoMetallic.a;
     float roughness = max(normalRoughness.a, 0.04);
+    
+    // Przywrócenie wektora normalnego z zakresu [0.0, 1.0] z powrotem na [-1.0, 1.0]
     float3 N = normalize(normalRoughness.rgb * 2.0 - 1.0);
+    
     float ao = occlusionEmissive.r;
     float emissiveStrength = occlusionEmissive.g;
-
     float3 worldPos = worldPosData.xyz;
+
+    // Jeżeli kanał W pozycji świata jest mniejszy niż 0.5, oznacza to, 
+    // że w tym pikselu nie ma żadnego obiektu (tło/skybox). Odrzucamy ten fragment,
+    // ponieważ nie wymaga on kalkulacji oświetlenia.
     if (worldPosData.w < 0.5) discard;
 
+    // Jeżeli oświetlenie jest wyłączone, zwracamy samo albedo
     if (lightingEnabled == 0) return float4(baseColor, 1.0);
 
     float3 V = normalize(cameraPos.xyz - worldPos);
@@ -104,44 +91,26 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     float3 Lo = float3(0.0, 0.0, 0.0);
     uint count = min(lightCount, 16u);
 
+    // KROK 2: OBLICZANIE WPŁYWU DLA WSZYSTKICH ŹRÓDEŁ ŚWIATŁA (w jednym shaderze!)
+    // W odróżnieniu od forward renderingu, nie ma tu problemu z overdrawem (wielokrotnym
+    // uruchamianiem cieniowania pikseli dla nakładającej się geometrii).
     for (uint i = 0; i < count; i++)
     {
-        float3 pos = lights[i].position.xyz;
-        float3 dir = lights[i].direction.xyz;
-        float3 col = lights[i].color.rgb;
-        float intensity = lights[i].color.w;
-        float4 par = lights[i].params;
-        uint ltype = uint(lights[i].direction.w);
-
         float3 L;
         float3 radiance;
+        uint valid;
         
-        if (ltype == 1) // directional
-        {
-            L = normalize(dir);
-            radiance = col * intensity;
-        }
-        else if (ltype == 2 || ltype == 3) // point or spot
-        {
-            float3 Lvec = pos - worldPos;
-            float dist = length(Lvec);
-            float range = max(par.z, 0.001);
-            float attenuation = 1.0 / (1.0 + (dist * dist) / (range * range));
-            L = Lvec / dist;
-            radiance = col * intensity * attenuation;
-            
-            if (ltype == 3) // spot
-            {
-                float theta = dot(-L, normalize(dir));
-                radiance *= smoothstep(par.y, par.x, theta);
-            }
-        }
-        else continue;
+        unpackDirectLight(lights[i], worldPos, L, radiance, valid);
+        if (valid == 0u) continue;
 
-        float shadow = (shadowsEnabled != 0) ? sampleShadow(i, worldPos, N) : 1.0;
+        // Próbkowanie mapy cieni z PCF
+        float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], worldPos, N) : 1.0;
+        
+        // Sumowanie oświetlenia Cook-Torrance
         Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance) * shadow;
     }
 
+    // KROK 3: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
     float3 ambientContrib = baseColor * ambientStrength * ambientColor.rgb * ao;
     float3 color = ambientContrib + Lo + baseColor * emissiveStrength;
     color = saturate(color);

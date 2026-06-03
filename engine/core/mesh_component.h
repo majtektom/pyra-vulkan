@@ -20,9 +20,13 @@ public:
 
     std::string meshName;
     MeshData meshData;
-    std::string textureName;
-    std::string materialName;
+    MaterialHandle materialHandle{};
     bool castShadows = true;
+    bool layerBlendEnabled = false;
+    uint32_t layerCount = 0;
+    std::array<TextureHandle, kMaxTerrainLayers> layerTextureHandles{};
+    std::array<TextureHandle, kMaxTerrainLayers> layerMaskHandles{};
+    float layerWorldSize = 1.0f;
 
     std::shared_ptr<MaterialInstance> materialInstance;
     VkBuffer skinVertexBuffer = VK_NULL_HANDLE;

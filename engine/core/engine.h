@@ -3,16 +3,15 @@
 #include <chrono>
 #include <functional>
 #include <memory>
-#include <mutex>
-#include <shared_mutex>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <vector>
 
 #include "camera/camera_component.h"
 #include "camera/camera_controller.h"
 #include "render/material_manager.h"
 #include "platform/platform.h"
+#include "scene/layer_manager.h"
 #include "scene/scene_manager.h"
 #include "render/shader_manager.h"
 #include "render/texture_manager.h"
@@ -20,9 +19,10 @@
 #include "render/material_system.h"
 #include "render/render_pass.h"
 #include "core/mesh_manager.h"
+#include "core/asset_registry.h"
+#include "core/input_actions.h"
 #include "feature/font/text_overlay_renderer.h"
 #include "core/types.h"
-#include "core/entity.h"
 
 namespace engine3d {
 
@@ -30,6 +30,19 @@ class Renderer;
 class FontManager;
 class ShaderHotReload;
 
+/**
+ * @brief Główna klasa silnika (Orkiestrator).
+ * 
+ * Klasa Engine spina wszystkie podsystemy silnika (renderowanie, zasoby, sceny, wejście).
+ * Jej głównym zadaniem jest zarządzanie cyklem życia aplikacji oraz sterowanie 
+ * główną pętlą (Game Loop).
+ * 
+ * Wzorzec Orkiestratora:
+ * Engine nie wykonuje całej pracy sam, ale deleguje ją do wyspecjalizowanych menedżerów:
+ * - Renderer: odpowiada za komunikację z GPU.
+ * - SceneManager: zarządza obiektami w świecie gry.
+ * - AssetRegistry: kontroluje ładowanie tekstur i modeli.
+ */
 class Engine {
 public:
     Engine();
@@ -42,60 +55,71 @@ public:
 
     using TimeDelta = std::chrono::milliseconds;
 
+    /**
+     * @brief Inicjalizuje okno, kontekst graficzny i menedżery zasobów.
+     */
     bool initialize(const std::string& appName, int width, int height, bool enableValidationLayers = true);
+
+    /**
+     * @brief Uruchamia główną pętlę silnika.
+     * Pętla działa do momentu zamknięcia okna lub wywołania sygnału wyjścia.
+     */
     void run();
+
+    /**
+     * @brief Zwalnia zasoby GPU i niszczy podsystemy w odpowiedniej kolejności.
+     */
     void cleanup();
-
-    Entity* createEntity(const std::string& name);
-    Entity* getEntity(const std::string& name);
-    const std::vector<std::unique_ptr<Entity>>& getEntities() const { return entities; }
-    bool removeEntity(Entity* entity);
-    bool removeEntity(const std::string& name);
-
-    void setActiveCamera(CameraComponent* cameraComponent);
-    const CameraComponent* getActiveCamera() const;
 
     Renderer* getRenderer() { return renderer.get(); }
     Platform* getPlatform() { return platform.get(); }
     MaterialManager* getMaterialManager() { return &materialManager; }
+    AssetRegistry* getAssetRegistry() { return assetRegistry.get(); }
     ShaderManager* getShaderManager() { return shaderManager.get(); }
     TextureManager* getTextureManager() { return textureManager.get(); }
     FontManager* getFontManager() { return fontManager.get(); }
     SceneManager* getSceneManager() { return &sceneManager; }
+    LayerManager* getLayerManager() { return &layerManager; }
     MaterialSystem* getMaterialSystem() { return materialSystem.get(); }
     MeshManager* getMeshManager() { return meshManager.get(); }
     CameraController* getCameraController() { return &cameraController; }
 
     float getCurrentFPS() const { return currentFPS; }
+    const InputSnapshot& input() const { return currentInput_; }
+    void bindActionKey(std::string_view action, int scancode);
+    bool actionDown(std::string_view action) const;
+    bool actionPressed(std::string_view action) const;
+    bool actionReleased(std::string_view action) const;
+    InputActionMap& inputActions() { return inputActions_; }
+    const InputActionMap& inputActions() const { return inputActions_; }
 
     void loadFont(const std::string& name, const std::string& path, uint32_t pixelHeight = 48);
     void setTextLabel(const std::string& text, const std::string& fontName,
                       float x, float y, float scale = 1.0f,
-                      const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f});
+                      const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f},
+                      float depth = 0.0f);
 
     void enableShaderHotReload(bool enable);
     void reloadShader(const std::string& shaderName);
 
     void setShaderManifest(const ShaderManifest& manifest);
     void addShader(const std::string& name, const ShaderProgram& program);
+    void configureScene(Scene& scene);
 
     void setSynchronizationMode(SynchronizationMode mode);
     SynchronizationMode synchronizationMode() const;
+    void setFrameRateLimit(int fps);
+    int frameRateLimit() const { return frameRateLimit_; }
     void setPresentMode(PresentMode mode);
     PresentMode presentMode() const;
 
     void setFullscreen(bool fullscreen);
     bool isFullscreen() const;
 
-    void setLightDirection(float x, float y, float z, float ambient = 0.25f);
-    void setLightDirection(const std::array<float, 4>& dir);
-
     void setShadowsEnabled(bool enabled);
     bool shadowsEnabled() const;
 
     void configureDirectionalShadow(float halfSize);
-
-    void setLightColor(float r, float g, float b);
 
     void setLightingEnabled(bool enabled);
     bool isLightingEnabled() const;
@@ -103,19 +127,13 @@ public:
     void setAmbientStrength(float strength);
     void setAmbientColor(float r, float g, float b);
 
-    void clearLights();
-    uint32_t addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity);
-    uint32_t addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range);
-    uint32_t addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
-                          float r, float g, float b, float intensity, float range,
-                          float innerAngleDeg, float outerAngleDeg);
-
     std::function<void(float, Engine&)> onUpdate;
 
 private:
     std::unique_ptr<Platform> platform;
     std::shared_ptr<VulkanContext> vulkanContext;
     std::unique_ptr<MaterialSystem> materialSystem;
+    std::unique_ptr<AssetRegistry> assetRegistry;
     std::unique_ptr<MeshManager> meshManager;
     std::unique_ptr<Renderer> renderer;
     std::unique_ptr<ShaderManager> shaderManager;
@@ -123,13 +141,8 @@ private:
     std::unique_ptr<FontManager> fontManager;
     MaterialManager materialManager;
     SceneManager sceneManager;
+    LayerManager layerManager;
     RenderScene renderScene;
-
-    mutable std::shared_mutex entitiesMutex;
-    std::vector<std::unique_ptr<Entity>> entities;
-    std::unordered_map<std::string, Entity*> entityMap;
-
-    CameraComponent* activeCamera = nullptr;
 
     bool initialized = false;
     bool running = false;
@@ -142,11 +155,18 @@ private:
     float currentFPS = 0.0f;
     uint64_t lastFPSUpdateFrame = 0;
 
+    Scene* activeScene();
+    const Scene* activeScene() const;
+
     void update(TimeDelta deltaTime);
     void renderFrame();
     TimeDelta calculateDeltaTimeMs();
 
     CameraController cameraController;
+    InputSnapshot currentInput_{};
+    InputSnapshot previousInput_{};
+    InputActionMap inputActions_;
+    int frameRateLimit_ = 0;
 
     std::shared_ptr<TextOverlayRenderer> textOverlayRenderer_;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;

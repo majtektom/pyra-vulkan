@@ -1,119 +1,55 @@
-# Kamera i sterowanie
+# Kamera i Sterowanie
 
-## CameraComponent
+System wizji i interakcji w `engine3d` został zaprojektowany tak, aby oddzielić dane kamery od logiki jej poruszania oraz wejścia sprzętowego.
 
-Kamera to zwykły komponent encji. Przechowuje pozycję, punkt docelowy (na co patrzy)
-i wektor "góra". Na tej podstawie tworzone są macierze widoku i projekcji.
+## System Kamer
+
+Kamera w silniku jest komponentem (`CameraComponent`), który może być dołączony do dowolnej encji (`Entity`). Pozwala to na łatwe tworzenie kamer podążających za graczem, kamer statycznych czy kamer umieszczonych "w oczach" postaci.
+
+### Kluczowe Parametry
+- **FOV (Field of View)**: Kąt widzenia kamery.
+- **Aspect Ratio**: Stosunek szerokości do wysokości okna (obliczany automatycznie).
+- **Near/Far Plane**: Zakres widoczności (odległość rysowania).
+
+### Macierze Widoku i Projekcji
+Macierz widoku (`View Matrix`) nie jest przechowywana bezpośrednio. Jest ona generowana w każdej klatce na podstawie aktualnej pozycji i rotacji encji, do której dołączona jest kamera. Macierz projekcji (`Projection Matrix`) jest generowana na podstawie parametrów perspektywy.
+
+### CameraExtractionSystem
+To system odpowiedzialny za:
+1. Znalezienie aktywnej kamery na scenie.
+2. Pobranie jej parametrów oraz pozycji/rotacji z `TransformComponent`.
+3. Wyliczenie macierzy i przygotowanie struktury `RenderView` dla renderera.
+
+---
+
+## System Sterowania (Input)
+
+Silnik wykorzystuje abstrakcyjną warstwę wejścia opartą na **akcjach** (`InputActionMap`). Zamiast sprawdzać konkretne klawisze w kodzie gry, sprawdzamy nazwane akcje.
+
+### Mapowanie Akcji
+Akcje mapują fizyczne przyciski (klawiatura, mysz) na logiczne nazwy:
+- `move.forward` -> klawisz `W`
+- `move.left` -> klawisz `A`
+- `ui.click` -> lewy przycisk myszy
+
+### Przetwarzanie Wejścia
+W każdej klatce `Engine` pobiera migawkę stanu wejścia (`InputSnapshot`). Dzięki temu:
+- Logika gry korzysta ze spójnego stanu przez całą klatkę.
+- Można łatwo zaimplementować pauzę lub blokowanie sterowania (np. gdy otwarte jest okno GUI).
+- Obsługiwane są stany: `isDown` (przycisk wciśnięty), `wasPressed` (kliknięcie), `wasReleased` (puszczenie).
+
+---
+
+## Kontroler FPS (Fly-around)
+
+Typowy kontroler używany w przykładach łączy obie powyższe funkcje:
+1. **Ruch**: Akcje `move.*` modyfikują pozycję encji kamery wzdłuż jej wektorów kierunkowych.
+2. **Rozglądanie**: Ruch myszy (delta) modyfikuje rotację encji (Yaw/Pitch).
+3. **Gładkość**: Wszystkie ruchy są mnożone przez `DeltaTime`, co zapewnia stałą prędkość niezależnie od liczby FPS.
 
 ```cpp
-// Macierz widoku — transformuje świat do przestrzeni kamery
-Matrix4 CameraComponent::getViewMatrix() {
-    return lookAt(position, target, up);
-    // lookAt:macierz 4x4 ustawiająca kamerę w position, patrzącą na target
+auto& input = engine.input();
+if (input.actionDown("move.forward")) {
+    position += direction * speed * dt;
 }
-
-// Macierz projekcji — perspektywa
-Matrix4 perspective(fovYRad, aspect, near, far);
-// tworzy macierz projekcji perspektywicznej:
-// - fovYRad: kąt widzenia w pionie (radiany)
-// - aspect:  szerokość/wysokość
-// - near:    bliska płaszczyzna odcinania
-// - far:     daleka płaszczyzna odcinania
 ```
-
----
-
-## CameraController
-
-`CameraController` to klasa odpowiedzialna za poruszanie kamerą w stylu FPS:
-
-```cpp
-class CameraController {
-    void update(float dt, const InputKeys& keys, float mouseDX, float mouseDY,
-                CameraConfig& config);
-};
-```
-
-### Sterowanie
-
-| Akcja | Klawisz |
-|-------|---------|
-| Ruch do przodu | W |
-| Ruch do tyłu | S |
-| Ruch w lewo | A |
-| Ruch w prawo | D |
-| Ruch w górę | Spacja |
-| Ruch w dół | Lewy Ctrl |
-| Obrót kamery | Mysz (gdy kursor złapany) |
-
-### Jak działa obrót myszą
-
-1. Przy starcie, kursor jest "chwytany" (`platform->grabPointer(true)`)
-2. Każda klatka: `pollInput()` zwraca `mouseDeltaX`, `mouseDeltaY`
-3. Kamera obraca się o kąt proporcjonalny do delty myszy
-4. Ograniczenie pitcha: -89° do +89° (żeby kamera się nie przekręciła)
-
-### Tryb latania
-
-Przy wciśniętym klawiszu, kamera porusza się w kierunku, w którym patrzy:
-```cpp
-Vec3 forward = normalize(target - position);  // kierunek patrzenia
-Vec3 right = normalize(cross(forward, up));    // kierunek w prawo
-position += forward * speed * dt;              // ruch przód/tył
-position += right * speed * dt;                // ruch lewo/prawo
-```
-
----
-
-## Konfiguracja kamery
-
-```cpp
-struct CameraConfig {
-    Vec3 position{0,0,4};         // początkowa pozycja
-    Vec3 target{0,0,0};           // początkowy punkt docelowy
-    Vec3 up{0,1,0};               // wektor góry
-    float fieldOfViewDegrees = 45;
-    float nearPlane = 0.1f;
-    float farPlane = 10.0f;
-};
-```
-
-W `Engine::updateCameraControls()`, kamera jest aktualizowana na podstawie
-wejścia. Jeśli `activeCamera == nullptr`, sterowanie jest pomijane.
-
----
-
-## Macierze w shaderach
-
-W shaderze HLSL, wierzchołki są transformowane przez 3 macierze:
-
-```hlsl
-output.position = mul(proj, mul(view, mul(model, float4(input.position, 1.0))));
-```
-
-Kolejność mnożenia (w HLSL `mul()`):
-1. `model` — transformuje z przestrzeni lokalnej do świata
-2. `view` — transformuje z przestrzeni świata do przestrzeni kamery
-3. `proj` — transformuje z przestrzeni kamery do clip space (NDC)
-
-Macierze są `column_major` — to standardowy format dla GPU.
-
----
-
-## Przykład: statyczna kamera
-
-W przykładach `rotating_cube` i `rotating_triangle`, kamera jest ustawiona na sztywno
-przez nadpisywanie pozycji w `onUpdate`:
-
-```cpp
-engine.onUpdate = [](float dt, Engine& e) {
-    auto* cam = const_cast<CameraComponent*>(e.getActiveCamera());
-    if (cam) {
-        cam->position = {0.0f, 0.0f, 5.5f};  // sztywna pozycja
-        cam->target = {0.0f, 0.0f, 0.0f};    // patrzy na środek sceny
-        cam->up = {0.0f, 1.0f, 0.0f};
-    }
-};
-```
-
-To nadpisuje zmiany wprowadzone przez `CameraController`, dając statyczny widok.

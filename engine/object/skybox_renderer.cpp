@@ -20,6 +20,12 @@ void SkyboxRenderer::configure(const SkyboxConfig& config, const std::string& sh
     shaderDir_ = shaderDir;
 }
 
+void SkyboxRenderer::setTextureHandles(TextureHandle fb, TextureHandle lr, TextureHandle top) {
+    textureFb_ = fb;
+    textureLr_ = lr;
+    textureTop_ = top;
+}
+
 void SkyboxRenderer::init(Renderer* renderer) {
     renderer_ = renderer;
     if (!enabled_) {
@@ -297,9 +303,9 @@ void SkyboxRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const Rend
     if (!ready_ || !enabled_ || !renderer_) return;
 
     uint32_t indices[3] = {};
-    indices[0] = renderer_->getTextureIndex("skybox_fb");
-    indices[1] = renderer_->getTextureIndex("skybox_lr");
-    indices[2] = renderer_->getTextureIndex("skybox_top");
+    indices[0] = renderer_->getTextureIndex(textureFb_);
+    indices[1] = renderer_->getTextureIndex(textureLr_);
+    indices[2] = renderer_->getTextureIndex(textureTop_);
 
     VkDescriptorSet globalSet = renderer_->getTextureDescriptorSet("", frameIndex);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &globalSet, 0, nullptr);

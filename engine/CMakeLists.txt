@@ -1,7 +1,10 @@
 add_library(engine3d SHARED
+    core/logger.cpp
     core/engine.cpp
+    core/asset_registry.cpp
     core/component.cpp
     core/entity.cpp
+    # Komponenty ECS (dane)
     core/mesh_component.cpp
     core/mesh_manager.cpp
     camera/camera_component.cpp
@@ -13,6 +16,8 @@ add_library(engine3d SHARED
     render/texture_manager.cpp
     render/shader_manager.cpp
     render/material_manager.cpp
+    render/material_compiler.cpp
+    render/render_orchestrator.cpp
     render/opaque_pass.cpp
     render/transparent_pass.cpp
     render/material_system.cpp
@@ -47,7 +52,17 @@ add_library(engine3d SHARED
     feature/gui/gui_track_bar.cpp
     feature/gui/gui_scroll_bar.cpp
     feature/gui/gui_renderer.cpp
+    scene/scene.cpp
+    scene/camera_extraction_system.cpp
+    scene/layer_manager.cpp
+    scene/light_system.cpp
+    scene/render_frame_prep_system.cpp
+    scene/render_extraction_system.cpp
+    scene/prefab_serializer.cpp
+    scene/scene_serializer.cpp
+    scene/transform_system.cpp
     scene/scene_manager.cpp
+    scene/terrain_placement_system.cpp
 )
 
 add_shader_bundle(
@@ -122,8 +137,8 @@ add_shader_bundle(
 
 add_shader_bundle(
     gbuffer_skinned
-    gbuffer_skinned.vert.hlsl=gbuffer_skinned.hlsl@vertexMain
-    gbuffer_skinned.frag.hlsl=gbuffer_skinned.hlsl@fragmentMain
+    gbuffer_skinned.vert.hlsl=gbuffer/gbuffer_skinned.hlsl@vertexMain
+    gbuffer_skinned.frag.hlsl=gbuffer/gbuffer_skinned.hlsl@fragmentMain
 )
 
 add_shader_bundle(

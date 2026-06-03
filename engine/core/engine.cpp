@@ -6,10 +6,17 @@
 #include "render/material_system.h"
 #include "core/mesh_manager.h"
 #include "render/shader_hot_reload.h"
+#include "scene/camera_extraction_system.h"
+#include "scene/light_system.h"
+#include "scene/render_frame_prep_system.h"
+#include "scene/render_extraction_system.h"
+#include "scene/scene.h"
+#include "core/entity.h"
+#include "core/logger.h"
 
 #include <chrono>
 #include <cmath>
-#include <iostream>
+#include <thread>
 #include <utility>
 
 namespace engine3d {
@@ -20,20 +27,33 @@ Engine::~Engine() { cleanup(); }
 bool Engine::initialize(const std::string& appName, int width, int height, bool enableValidationLayers) {
     try {
         platform = std::make_unique<Platform>(appName, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+        if (!platform) {
+            LOG_ERROR("Failed to create platform");
+            return false;
+        }
 
         vulkanContext = std::make_shared<VulkanContext>();
-        vulkanContext->initialize(appName);
+        if (!vulkanContext->initialize(appName)) {
+            LOG_ERROR("Failed to initialize Vulkan Context");
+            return false;
+        }
         vulkanContext->createSurface(platform->nativeWindow());
 
         materialSystem = std::make_unique<MaterialSystem>(vulkanContext, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED);
+        assetRegistry = std::make_unique<AssetRegistry>();
         meshManager = std::make_unique<MeshManager>(vulkanContext);
 
-        renderer = std::make_unique<Renderer>(platform.get(), &materialManager, vulkanContext);
+        renderer = std::make_unique<Renderer>(platform.get(), &materialManager, vulkanContext, assetRegistry.get());
         shaderManager = std::make_unique<ShaderManager>();
         textureManager = std::make_unique<TextureManager>();
         fontManager = std::make_unique<FontManager>();
 
+        materialManager.setAssetRegistry(assetRegistry.get());
+        meshManager->setAssetRegistry(assetRegistry.get());
+        textureManager->setAssetRegistry(assetRegistry.get());
+
         if (!renderer->initialize(appName, enableValidationLayers)) {
+            LOG_ERROR("Failed to initialize renderer");
             return false;
         }
 
@@ -42,37 +62,69 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
         textOverlayRenderer_ = std::make_shared<TextOverlayRenderer>();
         renderer->addFeature(textOverlayRenderer_);
 
+        sceneManager.createScene("default");
+        sceneManager.setActiveScene("default");
+        if (auto* scene = sceneManager.activeScene()) {
+            configureScene(*scene);
+        }
+
         initialized = true;
+        LOG_INFO("Engine initialized successfully");
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "Engine initialization failed: " << e.what() << std::endl;
+        LOG_CRITICAL("Engine initialization failed: {}", e.what());
         return false;
     }
 }
 
 void Engine::run() {
     if (!initialized) {
-        std::cerr << "Engine not initialized!" << std::endl;
+        LOG_ERROR("Engine not initialized!");
         return;
     }
+
     platform->processEvents();
+    currentInput_ = platform->pollInput();
+    previousInput_ = currentInput_;
     platform->grabPointer(true);
     running = true;
     lastFrameTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 
+    // Główna pętla gry (Main Game Loop)
+    // Jest to serce każdego silnika. Jej zadaniem jest synchronizacja 
+    // wejścia użytkownika, symulacji świata oraz renderowania.
     while (running && !platform->shouldClose()) {
+        const auto frameStart = std::chrono::steady_clock::now();
+        
+        // 1. Obsługa zdarzeń systemu operacyjnego i wejścia (Input)
         platform->processEvents();
+        previousInput_ = currentInput_;
+        currentInput_ = platform->pollInput();
         if (platform->shouldClose()) break;
 
+        // 2. Obliczenie Delta Time
+        // Delta Time (dt) to czas, jaki upłynął od poprzedniej klatki.
+        // Używamy go, aby ruch obiektów był niezależny od liczby FPS.
+        // Bez dt, na szybszym komputerze postać poruszałaby się szybciej.
         TimeDelta dt = calculateDeltaTimeMs();
+        
+        // 3. Aktualizacja logiki (Update)
         update(dt);
+        
+        // 4. Renderowanie (Draw)
+        renderFrame();
 
-        {
-            std::shared_lock<std::shared_mutex> lock(entitiesMutex);
-            renderFrame();
+        // Opcjonalne ograniczenie liczby klatek na sekundę (Frame Limiter)
+        if (frameRateLimit_ > 0) {
+            const auto frameElapsed = std::chrono::steady_clock::now() - frameStart;
+            const auto targetFrame = std::chrono::duration<double>(1.0 / static_cast<double>(frameRateLimit_));
+            if (frameElapsed < targetFrame) {
+                std::this_thread::sleep_for(targetFrame - frameElapsed);
+            }
         }
     }
+
     renderer->waitIdle();
 }
 
@@ -81,8 +133,10 @@ void Engine::cleanup() {
         renderer->cleanup();
         renderer.reset();
     }
+
     textOverlayRenderer_.reset();
     meshManager.reset();
+    assetRegistry.reset();
     materialSystem.reset();
     vulkanContext.reset();
     platform.reset();
@@ -90,50 +144,12 @@ void Engine::cleanup() {
     running = false;
 }
 
-Entity* Engine::createEntity(const std::string& name) {
-    std::unique_lock<std::shared_mutex> lock(entitiesMutex);
-    auto entity = std::make_unique<Entity>(name);
-    Entity* ptr = entity.get();
-    entityMap[name] = ptr;
-    entities.push_back(std::move(entity));
-    return ptr;
+Scene* Engine::activeScene() {
+    return sceneManager.activeScene();
 }
 
-Entity* Engine::getEntity(const std::string& name) {
-    std::shared_lock<std::shared_mutex> lock(entitiesMutex);
-    auto it = entityMap.find(name);
-    return it != entityMap.end() ? it->second : nullptr;
-}
-
-bool Engine::removeEntity(Entity* entity) {
-    if (!entity) return false;
-    return removeEntity(entity->getName());
-}
-
-bool Engine::removeEntity(const std::string& name) {
-    std::unique_lock<std::shared_mutex> lock(entitiesMutex);
-    auto it = entityMap.find(name);
-    if (it == entityMap.end()) return false;
-
-    for (auto eit = entities.begin(); eit != entities.end(); ++eit) {
-        if (eit->get() == it->second) {
-            if (activeCamera && activeCamera->getOwner() == it->second) {
-                activeCamera = nullptr;
-            }
-            entities.erase(eit);
-            entityMap.erase(it);
-            return true;
-        }
-    }
-    return false;
-}
-
-void Engine::setActiveCamera(CameraComponent* cameraComponent) {
-    activeCamera = cameraComponent;
-}
-
-const CameraComponent* Engine::getActiveCamera() const {
-    return activeCamera;
+const Scene* Engine::activeScene() const {
+    return sceneManager.activeScene();
 }
 
 void Engine::setShaderManifest(const ShaderManifest& manifest) {
@@ -150,69 +166,77 @@ void Engine::addShader(const std::string& name, const ShaderProgram& program) {
     }
 }
 
+void Engine::configureScene(Scene& scene) {
+    if (!scene.hasSystem("RenderExtractionSystem")) {
+        scene.addSystem(std::make_unique<RenderExtractionSystem>(
+            materialManager, *materialSystem, *meshManager, *assetRegistry));
+    }
+    if (!scene.hasSystem("LightSystem")) {
+        scene.addSystem(std::make_unique<LightSystem>());
+    }
+    if (!scene.hasSystem("CameraExtractionSystem")) {
+        scene.addSystem(std::make_unique<CameraExtractionSystem>());
+    }
+    if (!scene.hasSystem("RenderFramePrepSystem")) {
+        scene.addSystem(std::make_unique<RenderFramePrepSystem>());
+    }
+}
+
 void Engine::update(TimeDelta deltaTime) {
     float dtSeconds = std::chrono::duration<float>(deltaTime).count();
 
+    // Callback użytkownika (np. skryptowanie w pętli głównej)
     if (onUpdate) {
         onUpdate(dtSeconds, *this);
     }
 
     if (shaderHotReload_) shaderHotReload_->check();
 
-    sceneManager.update(dtSeconds);
-
-    {
-        std::shared_lock<std::shared_mutex> lock(entitiesMutex);
-        for (auto& entity : entities) {
-            entity->update(deltaTime);
-        }
+    if (auto* scene = activeScene()) {
+        // Logika ECS (Entity-Component-System):
+        // 1. Najpierw komponenty aktualizują swój stan (np. animacja, fizyka).
+        scene->updateEntities(deltaTime);
+        
+        // 2. Następnie systemy przetwarzają całą scenę (np. przeliczanie hierarchii transformacji).
+        // Rozdzielenie tych kroków pozwala na lepszą optymalizację i porządek w danych.
     }
+
+    sceneManager.update(dtSeconds);
+    layerManager.update(dtSeconds);
 }
 
 void Engine::renderFrame() {
     renderScene.clear();
+    RenderView renderView{};
+    bool hasRenderView = false;
 
-    {
-        std::shared_lock<std::shared_mutex> lock(entitiesMutex);
-        std::vector<RenderPacket> packets;
-        for (auto& entity : entities) {
-            if (!entity->isActive()) continue;
-            if (auto* renderable = entity->getComponent<MeshComponent>()) {
-                if (!renderable->materialInstance && !renderable->materialName.empty()) {
-                    auto* mat = materialManager.get(renderable->materialName);
-                    if (mat) {
-                        renderable->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
-                    }
-                }
-                renderable->collectRenderPackets(packets, *meshManager);
-            }
+    if (const auto* scene = activeScene()) {
+        // Proces Ekstrakcji Danych (Render Extraction):
+        // W nowoczesnych silnikach faza renderowania nie odczytuje danych bezpośrednio z komponentów gry
+        // w trakcie rysowania. Zamiast tego "ekstrahuje" niezbędne informacje (paczki renderowania)
+        // do oddzielnej struktury (renderScene).
+        // Dlaczego to robimy? Pozwala to na renderowanie poprzedniej klatki podczas obliczania następnej (Multithreading).
+
+        // Renderer otrzymuje komplet swiatel przygotowany przez ECS.
+        renderer->setLights(scene->frameLights());
+        hasRenderView = scene->hasFrameView();
+        if (hasRenderView) {
+            renderView = scene->frameView();
         }
 
-        for (auto& packet : packets) {
-            if (activeCamera) {
-                Vec3 objPos = { packet.transform.values[12], packet.transform.values[13], packet.transform.values[14] };
-                Vec3 camPos = activeCamera->getOwner()->transform().position;
-                Vec3 diff = subtract(objPos, camPos);
-                packet.distanceToCamera = std::sqrt(dot(diff, diff));
-            } else {
-                packet.distanceToCamera = 0.0f;
-            }
+        // Kopiujemy packet, bo ponizej uzupelniamy pola zalezne od kamery i renderera.
+        for (auto packet : scene->renderPackets()) {
             renderer->prepareRenderPacket(packet);
             renderScene.addPacket(packet);
         }
-        }
-
-    RenderView renderView{};
-    if (activeCamera) {
-        renderView.view = activeCamera->getViewMatrix();
-        renderView.projection = activeCamera->getProjectionMatrix();
-        renderView.cameraPosition = activeCamera->getOwner()->transform().position;
-        Vec3 camPos = activeCamera->getOwner()->transform().position;
-        Vec3 forward = normalize(subtract(activeCamera->target, camPos));
-        renderView.cameraRight = normalize(cross(forward, activeCamera->up));
-        renderView.cameraUp = normalize(cross(renderView.cameraRight, forward));
+    } else {
+        // Gdy nie ma aktywnej sceny, przekazujemy pusta liste, aby uniknac
+        // pozostawienia swiatel z poprzedniej klatki.
+        renderer->setLights({});
+        hasRenderView = false;
     }
 
+    // Wywołanie niskopoziomowych komend rysujących (Vulkan/DirectX/OpenGL).
     renderer->render(renderScene, renderView);
 }
 
@@ -242,23 +266,29 @@ void Engine::loadFont(const std::string& name, const std::string& path, uint32_t
 }
 
 void Engine::setTextLabel(const std::string& text, const std::string&, float x, float y, float scale,
-                           const std::array<float, 4>& color) {
+                          const std::array<float, 4>& color, float depth) {
     if (!textOverlayRenderer_ || !textOverlayRenderer_->isReady()) return;
-    float sw = renderer ? (float)renderer->width() : 1024.0f;
-    float sh = renderer ? (float)renderer->height() : 768.0f;
-    textOverlayRenderer_->addText(text, x, y, scale, color, sw, sh);
+    float sw = renderer ? static_cast<float>(renderer->width()) : 1024.0f;
+    float sh = renderer ? static_cast<float>(renderer->height()) : 768.0f;
+    textOverlayRenderer_->addText(text, x, y, scale, color, sw, sh, depth);
 }
 
 void Engine::reloadShader(const std::string&) {
     if (!materialSystem) return;
-    std::shared_lock<std::shared_mutex> lock(entitiesMutex);
-    for (auto& entity : entities) {
+
+    const auto* scene = activeScene();
+    if (!scene) return;
+
+    for (const auto& entity : scene->getEntities()) {
         auto* mc = entity->getComponent<MeshComponent>();
-        if (mc && mc->materialInstance && !mc->materialName.empty()) {
-            auto* mat = materialManager.get(mc->materialName);
-            if (mat) {
-                mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
-            }
+        if (!mc || !mc->materialInstance || !mc->materialHandle.isValid()) {
+            continue;
+        }
+
+        const Material* mat = materialManager.get(mc->materialHandle);
+
+        if (mat) {
+            mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
         }
     }
 }
@@ -279,12 +309,19 @@ void Engine::enableShaderHotReload(bool enable) {
 void Engine::setSynchronizationMode(SynchronizationMode mode) {
     if (renderer) renderer->setSynchronizationMode(mode);
 }
+
 SynchronizationMode Engine::synchronizationMode() const {
     return renderer ? renderer->synchronizationMode() : SynchronizationMode::Standard;
 }
+
 void Engine::setPresentMode(PresentMode mode) {
     if (renderer) renderer->setPresentMode(mode);
 }
+
+void Engine::setFrameRateLimit(int fps) {
+    frameRateLimit_ = fps > 0 ? fps : 0;
+}
+
 PresentMode Engine::presentMode() const {
     return renderer ? renderer->presentMode() : PresentMode::Fifo;
 }
@@ -292,30 +329,21 @@ PresentMode Engine::presentMode() const {
 void Engine::setFullscreen(bool fullscreen) {
     if (platform) platform->setFullscreen(fullscreen);
 }
+
 bool Engine::isFullscreen() const {
     return platform ? platform->isFullscreen() : false;
-}
-
-void Engine::setLightDirection(float x, float y, float z, float ambient) {
-    if (renderer) renderer->setLightDirection(x, y, z, ambient);
-}
-void Engine::setLightDirection(const std::array<float, 4>& dir) {
-    if (renderer) renderer->setLightDirection(dir);
 }
 
 void Engine::setShadowsEnabled(bool enabled) {
     if (renderer) renderer->setShadowsEnabled(enabled);
 }
+
 bool Engine::shadowsEnabled() const {
     return renderer ? renderer->shadowsEnabled() : false;
 }
 
 void Engine::configureDirectionalShadow(float halfSize) {
     if (renderer) renderer->configureDirectionalShadow(halfSize);
-}
-
-void Engine::setLightColor(float r, float g, float b) {
-    if (renderer) renderer->setLightColor(r, g, b);
 }
 
 void Engine::setLightingEnabled(bool enabled) {
@@ -334,22 +362,20 @@ void Engine::setAmbientColor(float r, float g, float b) {
     if (renderer) renderer->setAmbientColor(r, g, b);
 }
 
-void Engine::clearLights() {
-    if (renderer) renderer->clearLights();
+void Engine::bindActionKey(std::string_view action, int scancode) {
+    inputActions_.bindKey(action, scancode);
 }
 
-uint32_t Engine::addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity) {
-    return renderer ? renderer->addDirectionalLight(dx, dy, dz, r, g, b, intensity) : 0;
+bool Engine::actionDown(std::string_view action) const {
+    return inputActions_.isDown(currentInput_, action);
 }
 
-uint32_t Engine::addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range) {
-    return renderer ? renderer->addPointLight(px, py, pz, r, g, b, intensity, range) : 0;
+bool Engine::actionPressed(std::string_view action) const {
+    return inputActions_.wasPressed(previousInput_, currentInput_, action);
 }
 
-uint32_t Engine::addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
-                              float r, float g, float b, float intensity, float range,
-                              float innerAngle, float outerAngle) {
-    return renderer ? renderer->addSpotLight(px, py, pz, dx, dy, dz, r, g, b, intensity, range, innerAngle, outerAngle) : 0;
+bool Engine::actionReleased(std::string_view action) const {
+    return inputActions_.wasReleased(previousInput_, currentInput_, action);
 }
 
 } // namespace engine3d

@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include "core/asset_registry.h"
 #include "core/math.h"
 #include "core/types.h"
 #include "feature/particle/types.h"
@@ -31,7 +32,8 @@ public:
     void addEvent(ParticleEvent* e) { events_.push_back(e); }
 
     void setName(const std::string& n) { name_ = n; }
-    void setTextureName(const std::string& t) { textureName_ = t; }
+    void setTexturePath(const std::string& path) { texturePath_ = path; }
+    void setTextureHandle(TextureHandle handle) { textureHandle_ = handle; }
     void setNumParticles(int n) { numParticles_ = n; }
     void setEmitRate(int r) { emitRate_ = r; }
     void setGravity(const Vec3& g) { gravity_ = g; }
@@ -45,7 +47,8 @@ public:
     const std::string& name() const { return name_; }
     int numParticles() const { return numParticles_; }
     int activeParticles() const { return particles_ ? particles_->GetNumUsedElements() : 0; }
-    const std::string& textureName() const { return textureName_; }
+    const std::string& texturePath() const { return texturePath_; }
+    TextureHandle textureHandle() const { return textureHandle_; }
 
 private:
     friend class ParticleSystem;
@@ -53,7 +56,8 @@ private:
     EventList events_;
     EventIter beginEvents_, endEvents_;
     std::string name_;
-    std::string textureName_;
+    std::string texturePath_;
+    TextureHandle textureHandle_{};
     int numParticles_ = 1;
     float newPartsExcess_ = 0;
     Vec3 gravity_{0, 0, 0};

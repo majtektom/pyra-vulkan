@@ -73,8 +73,9 @@ void TextOverlayRenderer::init(Renderer* renderer) {
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_FALSE;
-    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
     VkPipelineColorBlendAttachmentState blendAttach{};
     blendAttach.blendEnable = VK_TRUE;
@@ -274,9 +275,9 @@ void TextOverlayRenderer::deleteVertexBuffer(uint32_t fi) {
 
 void TextOverlayRenderer::addText(const std::string& text, float x, float y, float scale,
                                    const std::array<float, 4>& color,
-                                   float screenWidth, float screenHeight) {
+                                   float screenWidth, float screenHeight, float depth) {
     if (!fontLoaded_ || fontAtlas_.glyphs.empty()) return;
-    labels_.push_back({text, x, y, scale, color, screenWidth, screenHeight});
+    labels_.push_back({text, x, y, scale, color, screenWidth, screenHeight, depth});
 }
 
 void TextOverlayRenderer::clearTexts() {
@@ -324,10 +325,10 @@ void TextOverlayRenderer::buildTexts(uint32_t fi) {
             float ndcY1 = ((gy+gh) / label.screenHeight) * 2.0f - 1.0f;
 
             TextVertex v0, v1, v2, v3;
-            v0.pos[0] = ndcX0; v0.pos[1] = ndcY0; v0.texCoord[0] = g.u0; v0.texCoord[1] = g.v0;
-            v1.pos[0] = ndcX1; v1.pos[1] = ndcY0; v1.texCoord[0] = g.u1; v1.texCoord[1] = g.v0;
-            v2.pos[0] = ndcX1; v2.pos[1] = ndcY1; v2.texCoord[0] = g.u1; v2.texCoord[1] = g.v1;
-            v3.pos[0] = ndcX0; v3.pos[1] = ndcY1; v3.texCoord[0] = g.u0; v3.texCoord[1] = g.v1;
+            v0.pos[0] = ndcX0; v0.pos[1] = ndcY0; v0.pos[2] = label.depth; v0.texCoord[0] = g.u0; v0.texCoord[1] = g.v0;
+            v1.pos[0] = ndcX1; v1.pos[1] = ndcY0; v1.pos[2] = label.depth; v1.texCoord[0] = g.u1; v1.texCoord[1] = g.v0;
+            v2.pos[0] = ndcX1; v2.pos[1] = ndcY1; v2.pos[2] = label.depth; v2.texCoord[0] = g.u1; v2.texCoord[1] = g.v1;
+            v3.pos[0] = ndcX0; v3.pos[1] = ndcY1; v3.pos[2] = label.depth; v3.texCoord[0] = g.u0; v3.texCoord[1] = g.v1;
 
             for (int i = 0; i < 4; ++i) {
                 v0.color[i] = v1.color[i] = v2.color[i] = v3.color[i] = label.color[i];

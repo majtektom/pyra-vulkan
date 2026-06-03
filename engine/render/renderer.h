@@ -19,68 +19,115 @@ class Platform;
 class MeshComponent;
 class VulkanContext;
 class IRenderFeature;
+class AssetRegistry;
 
-// Renderer — rdzeń Vulkan: swapchain, descriptor sety, UBO, tekstury, rysowanie sceny.
+/**
+ * @brief Główny interfejs niskopoziomowego systemu renderowania (Renderer).
+ *
+ * Renderer pośredniczy w komunikacji z GPU przy użyciu interfejsu API Vulkan. 
+ * Odpowiada za:
+ * - Zarządzanie łańcuchem wymiany obrazów (Swapchain) i synchronizacją klatek na GPU.
+ * - Alokację zasobów, takich jak shadery, tekstury, bufory wierzchołków/indeksów oraz Uniform Buffers (UBO).
+ * - Pętlę rysowania sceny trójwymiarowej.
+ * - Obsługę technik takich jak mapowanie cieni (Shadow Mapping) i oświetlenie.
+ *
+ * Wykorzystuje wzorzec projektowy Pimpl (Pointer to Implementation) poprzez wskaźnik impl_,
+ * co ukrywa bezpośrednie zależności od wewnętrznych struktur Vulkan i przyspiesza kompilację kodu.
+ */
 class Renderer {
 public:
-    Renderer(Platform* platform, MaterialManager* materialManager, std::shared_ptr<VulkanContext> context);
+    Renderer(
+        Platform* platform,
+        MaterialManager* materialManager,
+        std::shared_ptr<VulkanContext> context,
+        AssetRegistry* assetRegistry);
     ~Renderer();
 
+    // Blokujemy kopiowanie i przenoszenie renderea w celu zachowania spójności zasobów GPU.
     Renderer(Renderer&&) noexcept;
     Renderer& operator=(Renderer&&) noexcept;
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
+    /**
+     * @brief Inicjalizuje potok renderowania, ładuje podstawowe rozszerzenia i konfiguruje zasoby GPU.
+     */
     bool initialize(const std::string& appName, bool enableValidationLayers = true);
+    
+    /**
+     * @brief Zwalnia wszystkie zasoby przydzielone na GPU.
+     */
     void cleanup();
+    
+    /**
+     * @brief Rysuje klatkę sceny na podstawie wyekstrahowanych paczek geometrii i widoku kamery.
+     * @param scene Dane geometryczne i światła widoczne w danej klatce.
+     * @param view Parametry rzutowania kamery (macierze View i Projection).
+     */
     void render(const RenderScene& scene, const RenderView& view);
+    
+    /**
+     * @brief Czeka na zakończenie wszystkich operacji wykonywanych aktualnie przez GPU.
+     * Używane przed niszczeniem zasobów lub rekonfiguracją okna.
+     */
     void waitIdle();
 
+    /**
+     * @brief Rejestruje dodatkową funkcję graficzną (np. Skybox, Ocean, GUI).
+     */
     void addFeature(std::shared_ptr<IRenderFeature> feature);
     IRenderFeature* getFeature(const std::string& name);
 
-    void loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
-    void linkNormalMap(const std::string& diffuseName, const std::string& normalName);
+    /**
+     * @brief Ładuje teksturę z pliku dyskowego do pamięci GPU i zwraca unikalny uchwyt.
+     * @param name Identyfikator tekstury.
+     * @param path Ścieżka do pliku graficznego.
+     * @param mirroredRepeat Czy włączyć tryb powtarzania lustrzanego tekstury (dla np. terenu).
+     */
+    TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
+    
+    // Konfiguracja koloru tła (czyszczenia ekranu).
     void setClearColor(float r, float g, float b, float a);
 
+    // Konfiguracja trybów synchronizacji (np. V-Sync).
     void setSynchronizationMode(SynchronizationMode mode);
     SynchronizationMode synchronizationMode() const;
     void setPresentMode(PresentMode mode);
     PresentMode presentMode() const;
 
-    void setLightDirection(float x, float y, float z, float ambient = 0.25f);
-    void setLightDirection(const std::array<float, 4>& dir);
-
+    // Kontrola generowania cieni w silniku.
     void setShadowsEnabled(bool enabled);
     bool shadowsEnabled() const;
 
+    // Konfiguracja ortogonalnej przestrzeni cieniowania światła kierunkowego.
     void configureDirectionalShadow(float halfSize);
 
-    void setLightColor(float r, float g, float b);
-
+    // Włączanie/wyłączanie oświetlenia dynamicznego na scenie.
     void setLightingEnabled(bool enabled);
     bool isLightingEnabled() const;
 
+    // Sterowanie oświetleniem otoczenia (Ambient light).
     void setAmbientStrength(float strength);
     void setAmbientColor(float r, float g, float b);
 
-    void clearLights();
-    uint32_t addDirectionalLight(float dx, float dy, float dz, float r, float g, float b, float intensity);
-    uint32_t addPointLight(float px, float py, float pz, float r, float g, float b, float intensity, float range);
-    uint32_t addSpotLight(float px, float py, float pz, float dx, float dy, float dz,
-                          float r, float g, float b, float intensity, float range,
-                          float innerAngleDeg, float outerAngleDeg);
+    // Przesyła do renderera światła wyekstrahowane ze sceny w bieżącej klatce.
+    void setLights(const std::vector<SceneLight>& lights);
 
-    uint32_t getTextureIndex(const std::string& name) const;
+    // Pobiera wewnętrzny indeks deskryptora tekstury na GPU na podstawie uchwytu.
+    uint32_t getTextureIndex(TextureHandle handle) const;
+    
+    // Przygotowuje dane geometryczne paczki renderowania (np. tworzy i binuje bufory wierzchołków na GPU).
     void prepareRenderPacket(RenderPacket& packet) const;
 
+    // Zwraca szerokość i wysokość okna renderowania.
     uint32_t width() const;
     uint32_t height() const;
 
+    // Zwraca formaty tekstur używane w łańcuchu wymiany.
     VkFormat colorFormat() const;
     VkFormat depthFormat() const;
 
-    // Vulkan — potrzebne do inicjalizacji sub-rendererów (skybox, grid, text)
+    // Niskopoziomowy dostęp do zasobów Vulkan na potrzeby sub-rendererów i rozszerzeń:
     VkDevice device() const;
     VkPhysicalDevice physicalDevice() const;
     VkDescriptorSetLayout descriptorSetLayout() const;
@@ -90,9 +137,10 @@ public:
     VkDescriptorSet getTextureDescriptorSet(const std::string& texName, uint32_t frame) const;
     VkBuffer getUniformBuffer(uint32_t frame) const;
     bool getTextureInfo(const std::string& name, VkImageView& outView, VkSampler& outSampler) const;
+    bool getTextureInfo(TextureHandle handle, VkImageView& outView, VkSampler& outSampler) const;
 
 private:
-    class RendererImpl;
+    class RendererImpl;              // Wewnętrzna klasa implementacji niskopoziomowej Vulkana.
     std::unique_ptr<RendererImpl> impl_;
 };
 

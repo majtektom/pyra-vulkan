@@ -2,142 +2,65 @@
 
 ## Filozofia projektowa
 
-Silnik `engine3d` to edukacyjny silnik 3D napisany w C++20 z użyciem Vulkan API. Jego celem jest
-pokazanie **jak zbudować własny silnik graficzny od zera** — od inicjalizacji Vulkan,
-przez ładowanie modeli, system materiałów, shaderów HLSL, po renderowanie tekstu i cząstek.
+Silnik `engine3d` to nowoczesny, modularny silnik 3D napisany w C++20. Jego architektura ewoluowała od prostego modelu obiektowego do systemu opartego o separację danych od logiki (ECS-lite) oraz nowoczesny backend graficzny Vulkan 1.4.
 
-Silnik nie używa zewnętrznych bibliotek poza:
-- **Vulkan 1.1** — API graficzne niskiego poziomu
-- **SDL3** — tworzenie okna, obsługa wejścia (klawiatura, mysz)
-- **SDL3_ttf** — rasteryzacja czcionek TTF
-- **SDL3_image** — ładowanie obrazów (zarezerwowane na przyszłość)
-- **SDL3_sound** — odtwarzanie dźwięku (zarezerwowane na przyszłość)
-
-Cała reszta — matematyka 3D, zarządzanie pamięcią, system komponentów — jest napisana od zera.
+Kluczowe założenia:
+- **Separacja odpowiedzialności**: Wyraźny podział na świat (scena), renderowanie i platformę.
+- **Data-Driven**: Logika świata i definicje obiektów są opisane w zewnętrznych plikach zasobów.
+- **Wydajność**: Minimalizacja narzutu CPU (ekstrakcja danych renderujących, systemy przetwarzające masowo).
 
 ---
 
-## Struktura katalogów
+## Struktura Modułowa
 
-```
-przykład_vulkan/
-├── engine/                  # kod źródłowy silnika
-│   ├── core/                # pętla główna, encje, komponenty, typy, matematyka
-│   ├── render/              # system renderowania Vulkan
-│   │   ├── backend/         # kontekst Vulkan, swapchain, bufory GPU
-│   │   ├── material_system  # system materiałów i pipeline'ów
-│   │   ├── model_3ds        # loader modeli 3DS
-│   │   └── ...              # shadery, tekstury, czcionki, cząstki
-│   ├── camera/              # kamera i kontroler FPS
-│   ├── platform/            # okno SDL3 + obsługa wejścia
-│   ├── scene/               # zarządzanie sceną
-│   └── input/               # (usunięte — input jest w platform.cpp)
-├── examples/                # przykładowe aplikacje
-│   ├── flyaround/           # latanie po scenie z modelami 3DS
-│   ├── rotating_cube/       # obracające się kostki
-│   ├── rotating_triangle/   # obracający się trójkąt
-│   └── particles/           # system cząstek
-├── assets/                  # zasoby: modele 3DS, tekstury DDS/BMP/TGA, shadery HLSL
-├── doc/                     # dokumentacja (ten katalog)
-└── cmake/                   # skrypty CMake (w tym kompilacja shaderów)
-```
+Silnik podzielony jest na logiczne moduły (katalogi w `engine/`):
+
+| Moduł | Odpowiedzialność | Kluczowe Klasy |
+|-------|-----------------|----------------|
+| **Core** | Fundament silnika, pętla główna, ECS, logger, matematyka. | `Engine`, `Logger`, `Entity`, `Component` |
+| **Render** | Backend Vulkan, zarządzanie pamięcią (VMA), shadery, materiały. | `Renderer`, `MaterialSystem`, `VulkanContext` |
+| **Scene** | Zarządzanie hierarchią obiektów, serializacja, systemy ECS. | `Scene`, `SceneManager`, `TransformSystem` |
+| **Object** | Wysokopoziomowe obiekty geometryczne i loadery. | `Terrain`, `Model3ds`, `GltfModel`, `Md2Model` |
+| **Feature** | Specjalistyczne systemy renderujące i UI. | `ParticleSystem`, `SpriteSystem`, `GuiManager` |
+| **Platform** | Abstrakcja systemu operacyjnego, okno, wejście. | `Platform`, `InputActions` |
+| **Camera** | System kamer i kontrolery ruchu. | `CameraComponent`, `CameraController` |
 
 ---
 
-## Przepływ danych — od pliku do piksela
+## Przepływ danych (Frame Lifecycle)
 
-Oto jak silnik przetwarza dane w każdej klatce:
+W każdej klatce dane przechodzą przez uporządkowany proces:
 
-```
-1. ZAŁADUJ ZASOBY (raz, przy starcie)
-   Model 3DS (.3DS) ──► Model3ds::load() ──► MeshData (wierzchołki + indeksy)
-   Tekstura (.DDS/.BMP) ──► TextureAssetLoader ──► VkImage + VkImageView
-   Shader (.hlsl) ──► DXC ──► SPIR-V (.spv) ──► VkShaderModule
-
-2. GŁÓWNA PĘTLA (co klatkę)
-   ┌─ Engine::run()
-   │
-   ├─ calculateDeltaTimeMs()    # oblicz delta time i FPS
-   ├─ update(dt)               # aktualizuj logikę
-   │  ├─ updateCameraControls() # ruchy kamery (mysz + klawisze)
-   │  ├─ onUpdate(dt)          # callback użytkownika
-   │  └─ entity->update(dt)    # aktualizuj wszystkie encje
-   │
-   └─ renderFrame()            # renderuj scenę
-      ├─ zbierz RenderPacket z MeshComponent
-      ├─ oblicz odległość od kamery (do sortowania przezroczystości)
-      ├─ renderer->render()
-      │  ├─ vkBeginRenderPass
-      │  ├─ OpaquePass   – nieprzezroczyste obiekty
-      │  ├─ TransparentPass – przezroczyste (sortowane od tyłu)
-      │  ├─ Skybox       – tło nieba
-      │  ├─ Grid         – siatka pomocnicza
-      │  ├─ TextOverlay  – tekst (FPS, UI)
-      │  └─ vkEndRenderPass
-      └─ swapchain->present()
-```
+1. **Input Phase**: `Platform` pobiera zdarzenia, `InputActions` aktualizuje stany akcji.
+2. **Logic Phase**:
+   - Wywołanie `Engine::onUpdate`.
+   - Aktualizacja systemów sceny (np. animacje, cząsteczki).
+   - `TransformSystem`: Przeliczanie macierzy światowych dla brudnych (`dirty`) transformacji.
+3. **Extraction Phase**:
+   - `CameraExtractionSystem`: Przygotowanie danych kamery (`RenderView`).
+   - `RenderExtractionSystem`: Tłumaczenie komponentów sceny na paczki renderujące (`RenderPacket`).
+   - `LightSystem`: Zbiór aktywnych świateł dla renderera.
+4. **Render Phase**:
+   - `RenderOrchestrator` wykonuje plan renderowania (Cienie -> G-Buffer -> Lighting -> Transparent -> UI).
+   - Wysyłanie komend do GPU przez `Renderer`.
 
 ---
 
-## Warstwy abstrakcji
+## Kluczowe Mechanizmy
 
-Silnik ma 3 główne warstwy:
+### System ECS-lite
+Obiekty w świecie to `Entity` (identyfikowane przez `EntityId`). Każda encja posiada listę komponentów (`Component`). Logika przetwarzająca wiele encji naraz jest zawarta w systemach (np. `LightSystem`), co zapewnia lepszą lokalność danych i łatwiejszą optymalizację.
 
-| Warstwa | Odpowiedzialność | Przykład |
-|---------|-----------------|----------|
-| **Core** | Pętla gry, encje/komponenty, typy | `Engine`, `Entity`, `MeshComponent` |
-| **Render** | Wszystko związane z GPU | `MaterialSystem`, `Model3ds`, `VulkanSwapchain` |
-| **Platform** | Okno SDL3, wejście, czcionki | `Platform`, `FontAtlasLoader` |
+### Asset Registry & Handles
+Zasoby (tekstury, materiały, meshe) nie są referencjonowane przez stringi w runtime. Zamiast tego używa się typowanych uchwytów (`TextureHandle`, `MaterialHandle`). `AssetRegistry` zarządza mapowaniem nazw na uchwyty i dba o unikalność zasobów.
 
-Każda warstwa zależy tylko od warstw poniżej:
-```
-Core ──► Render ──► Platform
-```
+### Material & Shader System
+Silnik wykorzystuje shadery HLSL kompilowane do SPIR-V. `MaterialSystem` i `MaterialCompiler` zarządzają stanem potoku (`VkPipeline`). Pipeline'y są tworzone na żądanie i cache'owane na podstawie parametrów materiału.
 
----
-
-## Kluczowe koncepcje
-
-### Entity + Component (wzorzec ECS light)
-Encja (`Entity`) to kontener na komponenty. Komponenty (`MeshComponent`, `TransformComponent`, `CameraComponent`) definiują zachowanie. Nie ma systemów — aktualizacja jest bezpośrednia.
-
-### Material + Pipeline
-`Material` definiuje wygląd obiektu (tekstura, shader, przezroczystość, culling).
-`MaterialSystem` tworzy potoki Vulkan (`VkPipeline`) na podstawie właściwości materiału.
-Pipeline'y są cache'owane — ten sam zestaw parametrów = ten sam pipeline.
-
-### RenderPacket
-`RenderPacket` to jednostka rysowania: bufor wierzchołków + indeksów, macierz modelu,
-materiał. Pakiety są zbierane z komponentów, sortowane (nieprzezroczyste → przezroczyste)
-i wysyłane do GPU.
-
-### Push Constants
-Dane per-obiekt (macierz modelu, kolor) są przesyłane przez `vkCmdPushConstants` —
-szybka ścieżka w Vulkan, szybsza niż osobny bufor uniform dla każdego obiektu.
-
-### Descriptor Sets
-Globalne dane (macierze widoku/projekcji, tekstury) są w `VkDescriptorSet`.
-Binding 0 = UBO (view + proj), Binding 1 = sampler tekstury.
-Każda tekstura ma własny descriptor set per-klatka (double buffering).
+### Deferred Shading
+Renderer używa potoku odroczonego. W pierwszej fazie (G-Buffer) zapisywane są parametry geometrii (albedo, normalne, materiał), a w fazie oświetlenia wyliczany jest finalny kolor na podstawie wielu źródeł światła i mapy cieni.
 
 ---
 
-## Wątek główny vs GPU
-
-Silnik jest jednowątkowy na CPU (oprócz systemu cząstek, który używa `std::async`).
-
-```
-CPU: Update() ──► Render() ──► Present()
-GPU:            ──► [renderuje poprzednią klatkę] ──►
-
-Synchronizacja przez VkFence (CPU czeka na GPU co 2 klatki przez double buffering).
-```
-
----
-
-## Format współrzędnych
-
-- **Świat 3D**: prawoskrętny, Y=góra, X=prawo, Z=przód (OpenGL-style)
-- **Vulkan NDC**: X=[-1,1] lewo→prawo, Y=[-1,1] góra→dół, Z=[0,1]
-- **Tekstury**: UV [0,1], (0,0)=góra-lewo
-- **3DS → engine**: współrzędne są konwertowane: Y_3ds→Z_engine, Z_3ds→-Y_engine
+## System Logowania (Logger)
+Nowy moduł diagnostyczny umożliwia precyzyjne śledzenie stanu silnika. Wspiera różne poziomy logowania (`INFO`, `WARN`, `ERROR`) i pozwala na przekierowanie wyjścia do konsoli lub pliku. Jest bezpieczny wątkowo i zintegrowany z wszystkimi kluczowymi modułami.

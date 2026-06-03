@@ -11,7 +11,7 @@ VkVertexInputBindingDescription GuiVertex::bindingDescription() {
 }
 std::array<VkVertexInputAttributeDescription, 3> GuiVertex::attributeDescriptions() {
     std::array<VkVertexInputAttributeDescription, 3> a{};
-    a[0].binding = 0; a[0].location = 0; a[0].format = VK_FORMAT_R32G32_SFLOAT; a[0].offset = offsetof(GuiVertex, pos);
+    a[0].binding = 0; a[0].location = 0; a[0].format = VK_FORMAT_R32G32B32_SFLOAT; a[0].offset = offsetof(GuiVertex, pos);
     a[1].binding = 0; a[1].location = 1; a[1].format = VK_FORMAT_R32G32_SFLOAT; a[1].offset = offsetof(GuiVertex, texCoord);
     a[2].binding = 0; a[2].location = 2; a[2].format = VK_FORMAT_R32G32B32A32_SFLOAT; a[2].offset = offsetof(GuiVertex, color);
     return a;
@@ -48,7 +48,11 @@ void GuiRenderer::init(VkDevice d, VkPhysicalDevice p, VkFormat colorFormat, VkF
     VkPipelineMultisampleStateCreateInfo ms{}; ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    VkPipelineDepthStencilStateCreateInfo ds{}; ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    VkPipelineDepthStencilStateCreateInfo ds{};
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = VK_TRUE;
+    ds.depthWriteEnable = VK_TRUE;
+    ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
     VkPipelineColorBlendAttachmentState ba{};
     ba.blendEnable = VK_TRUE; ba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -143,16 +147,17 @@ void GuiRenderer::createDescriptorSet() {
     vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
 }
 
-void GuiRenderer::addRect(float x, float y, float w, float h, std::array<float,4> c) {
+void GuiRenderer::addRect(float x, float y, float w, float h, std::array<float,4> c, float z) {
+    float actualZ = (z == -999.0f) ? currentDepth_ : z;
     GuiVertex v;
     v.texCoord[0] = 0.5f; v.texCoord[1] = 0.5f;
     v.color[0] = c[0]; v.color[1] = c[1]; v.color[2] = c[2]; v.color[3] = c[3];
-    v.pos[0] = x; v.pos[1] = y; vertices_.push_back(v);
-    v.pos[0] = x+w; v.pos[1] = y; vertices_.push_back(v);
-    v.pos[0] = x+w; v.pos[1] = y+h; vertices_.push_back(v);
-    v.pos[0] = x; v.pos[1] = y; vertices_.push_back(v);
-    v.pos[0] = x+w; v.pos[1] = y+h; vertices_.push_back(v);
-    v.pos[0] = x; v.pos[1] = y+h; vertices_.push_back(v);
+    v.pos[0] = x; v.pos[1] = y; v.pos[2] = actualZ; vertices_.push_back(v);
+    v.pos[0] = x+w; v.pos[1] = y; v.pos[2] = actualZ; vertices_.push_back(v);
+    v.pos[0] = x+w; v.pos[1] = y+h; v.pos[2] = actualZ; vertices_.push_back(v);
+    v.pos[0] = x; v.pos[1] = y; v.pos[2] = actualZ; vertices_.push_back(v);
+    v.pos[0] = x+w; v.pos[1] = y+h; v.pos[2] = actualZ; vertices_.push_back(v);
+    v.pos[0] = x; v.pos[1] = y+h; v.pos[2] = actualZ; vertices_.push_back(v);
 }
 
 void GuiRenderer::addText(const std::vector<GuiVertex>& verts) {

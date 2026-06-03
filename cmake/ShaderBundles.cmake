@@ -23,7 +23,12 @@ function(add_shader_bundle bundle_name)
             string(SUBSTRING "${source_shader_name_with_entry}" ${spec_entry_start} -1 shader_entry_point)
         endif()
 
-        set(input_file ${SHADER_SOURCE_ROOT}/${bundle_name}/${source_shader_name})
+        string(FIND "${source_shader_name}" "/" source_shader_name_has_path)
+        if(source_shader_name_has_path EQUAL -1)
+            set(input_file ${SHADER_SOURCE_ROOT}/${bundle_name}/${source_shader_name})
+        else()
+            set(input_file ${SHADER_SOURCE_ROOT}/${source_shader_name})
+        endif()
         get_filename_component(shader_language_extension ${compiled_shader_name} LAST_EXT)
         get_filename_component(shader_name_without_language ${compiled_shader_name} NAME_WLE)
 

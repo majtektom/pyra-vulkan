@@ -97,6 +97,7 @@ private:
     void processNextMaterialChunk(tChunk* previousChunk);
     void processNextKeyFrameChunk(tChunk* previousChunk);
     void readColorChunk(std::array<float, 4>& color, tChunk* chunk);
+    void readPercentageChunk(float& value, tChunk* chunk);
     void readVertices(t3DObject* object, tChunk* previousChunk);
     void readVertexIndices(t3DObject* object, tChunk* previousChunk);
     void readUVCoordinates(t3DObject* object, tChunk* previousChunk);

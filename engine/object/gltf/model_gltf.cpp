@@ -1,5 +1,6 @@
 #include "object/gltf/model_gltf.h"
 #include "core/math.h"
+#include "core/logger.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -7,7 +8,6 @@
 #define TINYGLTF_IMPLEMENTATION
 
 #include <cstring>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 #include "object/gltf/tiny_gltf.h"
@@ -124,7 +124,7 @@ GltfModel loadGltfModel(const std::string& path) {
     else
         ok = loader.LoadASCIIFromFile(&model, &err, &warn, path);
 
-    if (!warn.empty()) fprintf(stderr, "glTF warn: %s\n", warn.c_str());
+    if (!warn.empty()) LOG_WARN("glTF warn: {}", warn);
     if (!err.empty()) throw std::runtime_error("glTF error: " + err);
     if (!ok) throw std::runtime_error("Failed to load glTF: " + path);
 
@@ -273,7 +273,7 @@ GltfModel loadGltfModel(const std::string& path) {
                         }
                     }
                 } else {
-                    std::cerr << "Unsupported JOINTS_0 componentType: " << acc.componentType << std::endl;
+                    LOG_ERROR("Unsupported JOINTS_0 componentType: {}", acc.componentType);
                 }
             }
 

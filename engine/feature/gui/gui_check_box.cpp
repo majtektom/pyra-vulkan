@@ -12,7 +12,7 @@ bool GuiCheckBox::isHovered(int mx, int my) const { return mx >= x_ && mx <= x_ 
 
 void GuiCheckBox::update(int mx, int my, bool leftClicked, bool, int) {
     bool h = isHovered(mx, my);
-    if (h != hovered_) { hovered_ = h; color_ = h ? std::array<float,4>{0.8f,0.8f,0.8f,0.9f} : std::array<float,4>{0.5f,0.5f,0.5f,0.9f}; }
+    if (h != hovered_) { hovered_ = h; color_ = h ? std::array<float,4>{0.2f,0.2f,0.28f,0.9f} : std::array<float,4>{0.3f,0.3f,0.38f,0.9f}; }
     if (hovered_ && leftClicked) { checked_ = !checked_; if (onToggle_) onToggle_(checked_); }
 }
 
@@ -20,7 +20,7 @@ void GuiCheckBox::draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, fl
     int ax = winX + x_, ay = winY + y_;
     int boxW = 18, boxH = 18;
     // Obramowanie kwadratu
-    r.addRectPx(ax - 1, ay - 1, boxW + 2, boxH + 2, {0.2f, 0.2f, 0.2f, 0.95f}, sw, sh);
+    r.addRectPx(ax - 2, ay - 2, boxW + 4, boxH + 4, {0.7f, 0.7f, 0.7f, 1.0f}, sw, sh);
     // Wypełnienie kwadratu
     r.addRectPx(ax, ay, boxW, boxH, color_, sw, sh);
 
