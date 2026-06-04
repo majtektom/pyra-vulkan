@@ -498,7 +498,13 @@ int main() {
                 std::vector<uint8_t> skinData(skinSize);
                 for (size_t v = 0; v < prim.joints.size(); ++v) {
                     size_t off = v * (sizeof(uint32_t)*4 + sizeof(float)*4);
-                    memcpy(skinData.data() + off, prim.joints[v].data(), sizeof(uint32_t)*4);
+                    uint32_t jointIndices[4] = {
+                        static_cast<uint32_t>(prim.joints[v][0]),
+                        static_cast<uint32_t>(prim.joints[v][1]),
+                        static_cast<uint32_t>(prim.joints[v][2]),
+                        static_cast<uint32_t>(prim.joints[v][3])
+                    };
+                    memcpy(skinData.data() + off, jointIndices, sizeof(uint32_t)*4);
                     memcpy(skinData.data() + off + sizeof(uint32_t)*4, prim.weights[v].data(), sizeof(float)*4);
                 }
                 void* mapped;

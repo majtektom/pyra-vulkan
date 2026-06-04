@@ -62,11 +62,17 @@ bool Terrain::loadFromImage(const std::string& path, float scaleXZ, float scaleY
     return true;
 }
 
-void Terrain::buildMesh(float scaleXZ, float scaleY, float texScale) {
+void Terrain::setScale(float scaleXZ, float scaleY, float texScale, int maxLodLevels) {
+    scaleXZ_ = scaleXZ;
+    scaleY_ = scaleY;
+    texScale_ = texScale;
+    maxLodLevels_ = maxLodLevels;
+}
+
+void Terrain::buildMesh() {
     int w = hmSize_;
-    scaleXZ_ = scaleXZ; scaleY_ = scaleY; texScale_ = texScale;
     sizeX = w; sizeZ = w;
-    float halfWorld = (w / 2.0f) * scaleXZ;
+    float halfWorld = (w / 2.0f) * scaleXZ_;
     mesh.vertices.clear();
     mesh.indices.clear();
     if (!root_) {
@@ -74,14 +80,14 @@ void Terrain::buildMesh(float scaleXZ, float scaleY, float texScale) {
         root_->cx = halfWorld;
         root_->cz = halfWorld;
         root_->sizeXZ = halfWorld;
-        root_->minY = 0; root_->maxY = 256.0f * scaleY;
+        root_->minY = 0; root_->maxY = 256.0f * scaleY_;
     } else {
         releaseTree(root_);
         *root_ = Node{};
         root_->cx = halfWorld;
         root_->cz = halfWorld;
         root_->sizeXZ = halfWorld;
-        root_->minY = 0; root_->maxY = 256.0f * scaleY;
+        root_->minY = 0; root_->maxY = 256.0f * scaleY_;
     }
     gridRes_ = 16;
     buildTree(root_);

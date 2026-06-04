@@ -1,6 +1,16 @@
 #include "object/gltf/model_gltf.h"
 #include "core/math.h"
 #include "core/logger.h"
+#include "render/renderer.h"
+#include "core/mesh_manager.h"
+#include "render/material_manager.h"
+#include "core/asset_registry.h"
+#include "scene/scene.h"
+#include "core/entity.h"
+#include "core/mesh_component.h"
+#include "render/vulkan_util.h"
+#include <algorithm>
+
 
 #define STB_IMAGE_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -216,7 +226,8 @@ GltfModel loadGltfModel(const std::string& path) {
                 for (int i = 0; i < vertexCount; ++i) indices[i] = (uint32_t)i;
             }
 
-            Matrix4 normalMat = removeTranslation(worldMat);
+            // Check if this primitive is skinned (has joints)
+            bool isSkinned = prim.attributes.count("JOINTS_0") > 0;
 
             auto& meshData = outPrim.mesh;
             meshData.vertices.resize(vertexCount);
@@ -225,17 +236,28 @@ GltfModel loadGltfModel(const std::string& path) {
                 float px = posData ? posData[i*3] : 0;
                 float py = posData ? posData[i*3+1] : 0;
                 float pz = posData ? posData[i*3+2] : 0;
-                auto& w = worldMat.values;
-                v.position = {px*w[0] + py*w[4] + pz*w[8] + w[12],
-                              px*w[1] + py*w[5] + pz*w[9] + w[13],
-                              px*w[2] + py*w[6] + pz*w[10] + w[14]};
                 float nx = nrmData ? nrmData[i*3] : 0;
                 float ny = nrmData ? nrmData[i*3+1] : 0;
                 float nz = nrmData ? nrmData[i*3+2] : 0;
-                auto& nw = normalMat.values;
-                v.normal = {nx*nw[0] + ny*nw[4] + nz*nw[8],
-                            nx*nw[1] + ny*nw[5] + nz*nw[9],
-                            nx*nw[2] + ny*nw[6] + nz*nw[10]};
+
+                if (isSkinned) {
+                    // For skinned meshes: store raw local-space vertices.
+                    // The GPU joint matrices handle all transformation from bind pose.
+                    // Pre-transforming by worldMat here causes parts to fly apart.
+                    v.position = {px, py, pz};
+                    v.normal = {nx, ny, nz};
+                } else {
+                    // For non-skinned meshes: bake the node world transform into vertices.
+                    Matrix4 normalMat = removeTranslation(worldMat);
+                    auto& w = worldMat.values;
+                    v.position = {px*w[0] + py*w[4] + pz*w[8] + w[12],
+                                  px*w[1] + py*w[5] + pz*w[9] + w[13],
+                                  px*w[2] + py*w[6] + pz*w[10] + w[14]};
+                    auto& nw = normalMat.values;
+                    v.normal = {nx*nw[0] + ny*nw[4] + nz*nw[8],
+                                nx*nw[1] + ny*nw[5] + nz*nw[9],
+                                nx*nw[2] + ny*nw[6] + nz*nw[10]};
+                }
                 v.color = colData ? std::array<float,3>{colData[i*3], colData[i*3+1], colData[i*3+2]} : std::array<float,3>{1,1,1};
                 v.texCoord = texData ? std::array<float,2>{texData[i*2], 1.0f - texData[i*2+1]} : std::array<float,2>{0,0};
             }
@@ -468,8 +490,8 @@ void evaluateAnimation(const GltfModel& model, int animIdx, float time, std::vec
         for (size_t j = 0; j < skin.joints.size(); ++j) {
             int ni = skin.joints[j];
             Matrix4 wm = (ni >= 0 && ni < ncount) ? worldMats[ni] : Matrix4::identity();
-            Matrix4 bindPose = (ni >= 0 && ni < ncount) ? model.nodeTransforms[ni] : Matrix4::identity();
-            jointMatrices[j] = multiply(wm, inverseMatrix4(bindPose));
+            Matrix4 ibm = (j < skin.inverseBindMatrices.size()) ? skin.inverseBindMatrices[j] : Matrix4::identity();
+            jointMatrices[j] = multiply(wm, ibm);
         }
     }
 }
@@ -487,4 +509,260 @@ float getAnimationDuration(const GltfModel& model, int animIdx) {
     return maxTime;
 }
 
+// GltfSkinnedModel implementation
+GltfSkinnedModel::~GltfSkinnedModel() {
+    cleanup();
+}
+
+bool GltfSkinnedModel::load(Renderer* renderer, MeshManager* meshManager, MaterialManager* materialManager, AssetRegistry* assets, const std::string& path) {
+    cleanup();
+    device_ = renderer->device();
+
+    try {
+        model_ = loadGltfModel(path);
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to load GLTF model ({}): {}", path, e.what());
+        return false;
+    }
+
+    if (model_.primitives.empty()) {
+        LOG_WARN("GLTF model has no primitives: {}", path);
+        return false;
+    }
+
+    primitives_.resize(model_.primitives.size());
+
+    for (size_t i = 0; i < model_.primitives.size(); ++i) {
+        const auto& prim = model_.primitives[i];
+        std::string meshName = path + "_mesh_" + std::to_string(i);
+        meshManager->loadMesh(meshName, prim.mesh);
+
+        std::string texName = path + "_prim_" + std::to_string(i) + "_tex";
+
+        Material mat;
+        mat.name = path + "_prim_" + std::to_string(i) + "_mat";
+        mat.color = prim.baseColor;
+        mat.cullMode = CullMode::Disabled;
+
+        if (!prim.texturePath.empty()) {
+            const auto texHandle = renderer->loadTexture(texName, prim.texturePath);
+            mat.textureName = assets->textureName(texHandle).value_or("");
+        }
+
+        MaterialHandle handle = materialManager->add(mat);
+
+        primitives_[i].meshName = meshName;
+        primitives_[i].materialHandle = handle;
+
+        // Tworzenie bufora wierzchołków dla wag i indeksów kości (Skinning Vertex Buffer)
+        if (!prim.joints.empty()) {
+            size_t skinSize = prim.joints.size() * (sizeof(uint32_t) * 4 + sizeof(float) * 4);
+            vk::createBuffer(renderer->device(), renderer->physicalDevice(), skinSize,
+                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                             primitives_[i].skinVertexBuffer, primitives_[i].skinVertexMemory);
+
+            std::vector<uint8_t> skinData(skinSize);
+            for (size_t v = 0; v < prim.joints.size(); ++v) {
+                size_t off = v * (sizeof(uint32_t) * 4 + sizeof(float) * 4);
+                uint32_t jointIndices[4] = {
+                    static_cast<uint32_t>(prim.joints[v][0]),
+                    static_cast<uint32_t>(prim.joints[v][1]),
+                    static_cast<uint32_t>(prim.joints[v][2]),
+                    static_cast<uint32_t>(prim.joints[v][3])
+                };
+                memcpy(skinData.data() + off, jointIndices, sizeof(uint32_t) * 4);
+                memcpy(skinData.data() + off + sizeof(uint32_t) * 4, prim.weights[v].data(), sizeof(float) * 4);
+            }
+
+            void* mapped;
+            vkMapMemory(renderer->device(), primitives_[i].skinVertexMemory, 0, skinSize, 0, &mapped);
+            memcpy(mapped, skinData.data(), skinSize);
+            vkUnmapMemory(renderer->device(), primitives_[i].skinVertexMemory);
+        }
+    }
+
+    return true;
+}
+
+void GltfSkinnedModel::cleanup() {
+    if (device_ != VK_NULL_HANDLE) {
+        for (auto& prim : primitives_) {
+            if (prim.skinVertexBuffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device_, prim.skinVertexBuffer, nullptr);
+                prim.skinVertexBuffer = VK_NULL_HANDLE;
+            }
+            if (prim.skinVertexMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device_, prim.skinVertexMemory, nullptr);
+                prim.skinVertexMemory = VK_NULL_HANDLE;
+            }
+        }
+        device_ = VK_NULL_HANDLE;
+    }
+    primitives_.clear();
+}
+
+// GltfSkinnedInstance implementation
+GltfSkinnedInstance::~GltfSkinnedInstance() {
+    cleanup();
+}
+
+GltfSkinnedInstance::GltfSkinnedInstance(GltfSkinnedInstance&& other) noexcept {
+    *this = std::move(other);
+}
+
+GltfSkinnedInstance& GltfSkinnedInstance::operator=(GltfSkinnedInstance&& other) noexcept {
+    if (this != &other) {
+        cleanup();
+        renderer_ = other.renderer_;
+        model_ = other.model_;
+        boneBuffer_ = other.boneBuffer_;
+        boneMemory_ = other.boneMemory_;
+        descriptorPool_ = other.descriptorPool_;
+        descriptorSetLayout_ = other.descriptorSetLayout_;
+        boneDescriptorSet_ = other.boneDescriptorSet_;
+        rootEntity_ = other.rootEntity_;
+        partEntities_ = std::move(other.partEntities_);
+        animTime_ = other.animTime_;
+
+        other.renderer_ = nullptr;
+        other.model_ = nullptr;
+        other.boneBuffer_ = VK_NULL_HANDLE;
+        other.boneMemory_ = VK_NULL_HANDLE;
+        other.descriptorPool_ = VK_NULL_HANDLE;
+        other.descriptorSetLayout_ = VK_NULL_HANDLE;
+        other.boneDescriptorSet_ = VK_NULL_HANDLE;
+        other.rootEntity_ = nullptr;
+        other.animTime_ = 0.0f;
+    }
+    return *this;
+}
+
+bool GltfSkinnedInstance::initialize(Renderer* renderer, const GltfSkinnedModel& model) {
+    cleanup();
+    renderer_ = renderer;
+    model_ = &model;
+    VkDevice dev = renderer->device();
+
+    // Create UBO for bone matrices (max 64 bones)
+    constexpr int kMaxBones = 64;
+    VkDeviceSize boneSize = kMaxBones * sizeof(Matrix4);
+    vk::createBuffer(dev, renderer->physicalDevice(), boneSize,
+                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     boneBuffer_, boneMemory_);
+
+    // Create descriptor pool for this instance
+    VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+    VkDescriptorPoolCreateInfo bonePoolInfo{};
+    bonePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    bonePoolInfo.maxSets = 1;
+    bonePoolInfo.poolSizeCount = 1;
+    bonePoolInfo.pPoolSizes = &bonePoolSize;
+    if (vkCreateDescriptorPool(dev, &bonePoolInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
+        return false;
+    }
+
+    // Create descriptor set layout
+    VkDescriptorSetLayoutBinding boneBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+    VkDescriptorSetLayoutCreateInfo boneLayoutInfo{};
+    boneLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    boneLayoutInfo.bindingCount = 1;
+    boneLayoutInfo.pBindings = &boneBinding;
+    if (vkCreateDescriptorSetLayout(dev, &boneLayoutInfo, nullptr, &descriptorSetLayout_) != VK_SUCCESS) {
+        return false;
+    }
+
+    // Allocate descriptor set
+    VkDescriptorSetAllocateInfo boneAlloc{};
+    boneAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    boneAlloc.descriptorPool = descriptorPool_;
+    boneAlloc.descriptorSetCount = 1;
+    boneAlloc.pSetLayouts = &descriptorSetLayout_;
+    if (vkAllocateDescriptorSets(dev, &boneAlloc, &boneDescriptorSet_) != VK_SUCCESS) {
+        return false;
+    }
+
+    // Update descriptor set
+    VkDescriptorBufferInfo boneBufInfo{boneBuffer_, 0, boneSize};
+    VkWriteDescriptorSet boneWrite{};
+    boneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    boneWrite.dstSet = boneDescriptorSet_;
+    boneWrite.dstBinding = 0;
+    boneWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    boneWrite.descriptorCount = 1;
+    boneWrite.pBufferInfo = &boneBufInfo;
+    vkUpdateDescriptorSets(dev, 1, &boneWrite, 0, nullptr);
+
+    return true;
+}
+
+Entity* GltfSkinnedInstance::instantiate(Scene* scene, const std::string& namePrefix) {
+    if (!model_) return nullptr;
+    rootEntity_ = scene->createEntity(namePrefix + "_root");
+    
+    const auto& prims = model_->getPrimitives();
+    for (size_t i = 0; i < prims.size(); ++i) {
+        Entity* part = scene->createEntity(namePrefix + "_part_" + std::to_string(i));
+        scene->setParent(part, rootEntity_);
+        
+        auto* mc = part->addComponent<MeshComponent>(prims[i].meshName);
+        mc->materialHandle = prims[i].materialHandle;
+        mc->skinVertexBuffer = prims[i].skinVertexBuffer;
+        mc->boneDescriptorSet = boneDescriptorSet_;
+        
+        partEntities_.push_back(part);
+    }
+    return rootEntity_;
+}
+
+void GltfSkinnedInstance::update(float dt, int animIdx, float speed) {
+    if (!model_ || !renderer_) return;
+    
+    animTime_ += dt * speed;
+    float dur = getAnimationDuration(model_->getModel(), animIdx);
+    if (dur > 0.001f) {
+        animTime_ = fmodf(animTime_, dur);
+    }
+    
+    std::vector<Matrix4> jointMats;
+    evaluateAnimation(model_->getModel(), animIdx, animTime_, jointMats);
+    
+    if (!jointMats.empty()) {
+        size_t copySize = std::min(jointMats.size(), (size_t)64) * sizeof(Matrix4);
+        void* mapped;
+        vkMapMemory(renderer_->device(), boneMemory_, 0, copySize, 0, &mapped);
+        memcpy(mapped, jointMats.data(), copySize);
+        vkUnmapMemory(renderer_->device(), boneMemory_);
+    }
+}
+
+void GltfSkinnedInstance::cleanup() {
+    if (renderer_) {
+        VkDevice dev = renderer_->device();
+        if (boneBuffer_ != VK_NULL_HANDLE) {
+            vkDestroyBuffer(dev, boneBuffer_, nullptr);
+            boneBuffer_ = VK_NULL_HANDLE;
+        }
+        if (boneMemory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(dev, boneMemory_, nullptr);
+            boneMemory_ = VK_NULL_HANDLE;
+        }
+        if (descriptorPool_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(dev, descriptorPool_, nullptr);
+            descriptorPool_ = VK_NULL_HANDLE;
+        }
+        if (descriptorSetLayout_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(dev, descriptorSetLayout_, nullptr);
+            descriptorSetLayout_ = VK_NULL_HANDLE;
+        }
+        renderer_ = nullptr;
+    }
+    model_ = nullptr;
+    rootEntity_ = nullptr;
+    partEntities_.clear();
+    animTime_ = 0.0f;
+}
+
 } // namespace engine3d
+

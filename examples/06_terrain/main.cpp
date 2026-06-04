@@ -115,7 +115,7 @@ int main() {
     
     if (useJson) {
         // Parametry: rozmiar komórki siatki (10.0), maksymalna wysokość (2.0), podział LOD (20.0)
-        terrain.buildMesh(10.0f, 2.0f, 20.0f);
+        terrain.buildMesh();
         terrain.uploadTo(*engine.getMeshManager());
         LOG_INFO("Terrain (JSON): {}x{} layers={} mesh={}", terrain.sizeX, terrain.sizeZ, terrain.layers.size(), terrain.meshName());
     } else {
@@ -123,7 +123,7 @@ int main() {
         // Parametry: rozmiar siatki (256x256), współczynnik chropowatości (1.2).
         terrain.generatePlasma(256, 1.2f);
         terrain.smoothEdges(); // Wygładzenie krawędzi do poziomu 0, aby teren płynnie przechodził w wodę
-        terrain.buildMesh(10.0f, 40.0f, 20.0f);
+        terrain.buildMesh();
         terrain.uploadTo(*engine.getMeshManager());
         LOG_INFO("Terrain (plasma): {}x{} layers={} mesh={}", terrain.sizeX, terrain.sizeZ, terrain.layers.size(), terrain.meshName());
     }
@@ -251,7 +251,7 @@ int main() {
                 terrain.generateDeposition(256, 100, 30, 10, 20, 0.8f);
             }
             terrain.smoothEdges();
-            terrain.buildMesh(10.0f, 40.0f, 20.0f);
+            terrain.buildMesh();
             
             // Aktualizacja dynamiczna siatki w buforach Vulkana bez niszczenia i tworzenia na nowo potoku
             engine.getMeshManager()->updateMesh(terrain.meshName(), terrain.mesh);

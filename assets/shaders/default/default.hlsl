@@ -122,13 +122,17 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
 
         // Rekonstrukcja układu współrzędnych stycznych (TBN Matrix)
         float r = 1.0 / (duv1.x * duv2.y - duv1.y * duv2.x + 0.0001);
-        float3 T = (dp1 * duv2.y - dp2 * duv1.y) * r;
-        T = normalize(T - N * dot(N, T)); // Gram-Schmidt ortogonalizacja
-        float3 B = cross(N, T);
-        float3x3 TBN = float3x3(T, B, N);
-        
-        // Przeliczenie normalnej z przestrzeni stycznej (tangent space) do przestrzeni świata
-        N = normalize(mul(normalTex, TBN));
+        float3 T_raw = (dp1 * duv2.y - dp2 * duv1.y) * r;
+        float3 T_proj = T_raw - N * dot(N, T_raw);
+        float lenSq = dot(T_proj, T_proj);
+        if (lenSq > 0.00001)
+        {
+            float3 T = T_proj / sqrt(lenSq);
+            float3 B = cross(N, T);
+            float3x3 TBN = float3x3(T, B, N);
+            // Przeliczenie normalnej z przestrzeni stycznej (tangent space) do przestrzeni świata
+            N = normalize(mul(normalTex, TBN));
+        }
     }
 
     // Jeśli oświetlenie jest wyłączone (np. tryb unlit), zwracamy czysty albedo

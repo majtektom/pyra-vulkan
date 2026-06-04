@@ -20,6 +20,7 @@ cbuffer SkydomePushConstants
     float sunDirY;          // Kierunek Y do słońca
     float sunDirZ;          // Kierunek Z do słońca
     float sunSize;          // Rozmiar tarczy słonecznej (odwrotność rozmycia glow)
+    float padX;
     float4 skyTopColor;     // Kolor nieba w zenicie
     float4 skyHorizonColor; // Kolor nieba na horyzoncie
     float4 sunColor;        // Kolor słońca (RGB) + intensywność/widoczność słońca (Alpha)

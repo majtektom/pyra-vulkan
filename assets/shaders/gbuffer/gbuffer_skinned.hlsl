@@ -27,22 +27,31 @@ VertexOutput vertexMain(VertexInput input)
     // Zabezpieczenie zakresu indeksów
     uint4 clampedJoints = min(input.joints, (uint4)(MAX_BONES - 1));
 
-    // Odczyt macierzy kości (uproszczone mapowanie single-joint)
-    float4x4 skinMat = boneMatrices[clampedJoints.x];
+    // Normalize weights
+    float4 w = input.weights;
+    float wSum = w.x + w.y + w.z + w.w;
+    if (wSum > 0.0001) w /= wSum;
+    else w = float4(1.0, 0.0, 0.0, 0.0);
 
-    // Deformacja pozycji wierzchołka
+    // LBS: weighted sum of 4 bone matrices
+    float4x4 skinMat = boneMatrices[clampedJoints.x] * w.x
+                     + boneMatrices[clampedJoints.y] * w.y
+                     + boneMatrices[clampedJoints.z] * w.z
+                     + boneMatrices[clampedJoints.w] * w.w;
+
+    // Position: skinning then entity transform
     float4 skinnedPos = mul(skinMat, float4(input.position, 1.0));
     float4 worldPos4 = mul(model, skinnedPos);
-    
-    // Deformacja wektora normalnego. 
-    // UWAGA: wektor normalny reprezentuje kierunek, dlatego rozszerzamy go do float4 z W = 0.0.
-    // Dzięki temu transformacje translacji (przesunięcia kości) nie zniekształcają kierunku normalnej.
-    float4 worldNormal4 = mul(model, mul(skinMat, float4(input.normal, 0.0)));
+
+    // Normal: use full 4x4 mul with w=0 (excludes translation).
+    // This correctly handles column_major matrices unlike (float3x3) cast.
+    float3 skinnedNormal = mul(skinMat, float4(input.normal, 0.0)).xyz;
+    float3 worldNormal = mul(model, float4(skinnedNormal, 0.0)).xyz;
 
     VertexOutput output;
     output.position = mul(proj, mul(view, worldPos4));
     output.worldPos = worldPos4.xyz;
-    output.worldNormal = normalize(worldNormal4.xyz);
+    output.worldNormal = normalize(worldNormal);
     output.color = input.color;
     output.texCoord = input.texCoord;
     return output;

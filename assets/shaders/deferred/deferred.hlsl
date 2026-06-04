@@ -73,7 +73,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     float3 N = normalize(normalRoughness.rgb * 2.0 - 1.0);
     
     float ao = occlusionEmissive.r;
-    float emissiveStrength = occlusionEmissive.g;
+    float3 emissive = occlusionEmissive.gba;
     float3 worldPos = worldPosData.xyz;
 
     // Jeżeli kanał W pozycji świata jest mniejszy niż 0.5, oznacza to, 
@@ -112,7 +112,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
 
     // KROK 3: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
     float3 ambientContrib = baseColor * ambientStrength * ambientColor.rgb * ao;
-    float3 color = ambientContrib + Lo + baseColor * emissiveStrength;
+    float3 color = ambientContrib + Lo + emissive;
     color = saturate(color);
 
     return float4(color, 1.0);

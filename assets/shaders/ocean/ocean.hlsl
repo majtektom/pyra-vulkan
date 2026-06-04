@@ -16,6 +16,7 @@ cbuffer OceanPushConstants
     float waveFrequency;    // Częstotliwość (gęstość falowania)
     float foamThreshold;    // Próg tworzenia się piany na grzbietach fal
     float pad0;
+    float pad1;
     float4 lightDir;        // Kierunek słońca (do odblasków specularity)
 };
 

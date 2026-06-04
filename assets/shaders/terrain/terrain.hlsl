@@ -166,11 +166,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
         normalTex = normalize(normalTex);
 
         float r = 1.0 / (duv1.x * duv2.y - duv1.y * duv2.x + 0.0001);
-        float3 T = (dp1 * duv2.y - dp2 * duv1.y) * r;
-        T = normalize(T - N * dot(N, T));
-        float3 B = cross(N, T);
-        float3x3 TBN = float3x3(T, B, N);
-        N = normalize(mul(normalTex, TBN));
+        float3 T_raw = (dp1 * duv2.y - dp2 * duv1.y) * r;
+        float3 T_proj = T_raw - N * dot(N, T_raw);
+        float lenSq = dot(T_proj, T_proj);
+        if (lenSq > 0.00001)
+        {
+            float3 T = T_proj / sqrt(lenSq);
+            float3 B = cross(N, T);
+            float3x3 TBN = float3x3(T, B, N);
+            N = normalize(mul(normalTex, TBN));
+        }
     }
 
     if (lightingEnabled == 0)

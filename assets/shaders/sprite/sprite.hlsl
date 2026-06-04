@@ -42,7 +42,7 @@ struct VertexInput
 struct VertexOutput
 {
     float4 position : SV_Position;
-    [[vk::location(0)]] float3 color : COLOR;
+    [[vk::location(0)]] float4 color : COLOR;
     [[vk::location(1)]] float2 texCoord : TEXCOORD0;
 };
 
@@ -65,7 +65,7 @@ VertexOutput vertexMain(VertexInput input)
                     + input.position.y * input.instancePosSize.w * camUp.xyz;
                     
     output.position = mul(proj, mul(view, float4(worldPos, 1.0)));
-    output.color = input.instanceColor.rgb;
+    output.color = input.instanceColor;
     
     // Skalowanie i przesunięcie UV do odczytania właściwej klatki z atlasu
     output.texCoord = float2(
@@ -81,5 +81,5 @@ VertexOutput vertexMain(VertexInput input)
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
     float4 tex = textures[baseColorTextureSet].Sample(globalSampler, input.texCoord);
-    return float4(tex.rgb * input.color, tex.a);
+    return float4(tex.rgb * input.color.rgb, tex.a * input.color.a);
 }

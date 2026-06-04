@@ -767,9 +767,12 @@ public:
             ? getTextureIndex(packet.diffuseTextureHandle)
             : defaultDiffuse;
 
-        packet.normalTextureIndex = packet.normalTextureHandle.isValid()
-            ? getTextureIndex(packet.normalTextureHandle)
-            : defaultNormal;
+        if (packet.normalTextureHandle.isValid()) {
+            packet.normalTextureIndex = getTextureIndex(packet.normalTextureHandle);
+        } else {
+            packet.normalTextureIndex = defaultNormal;
+            packet.bumpIntensity = 0.0f;
+        }
 
         packet.metallicRoughnessTextureIndex = packet.metallicRoughnessTextureHandle.isValid()
             ? getTextureIndex(packet.metallicRoughnessTextureHandle)

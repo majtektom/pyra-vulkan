@@ -1,8 +1,8 @@
 {
     "heightMap": "height.bmp",
-    "scaleMap": 10,
-    "scaleHeight": 2.0,
-    "scaleTexture": 20,
+    "scaleMap": 20,
+    "scaleHeight": 1.0,
+    "scaleTexture": 300,
     "layers": [
         { "mask": "m1.dds",  "texture": "../../textures/piasek.bmp" },
         { "mask": "m2.dds",  "texture": "../../textures/piasek.bmp" },

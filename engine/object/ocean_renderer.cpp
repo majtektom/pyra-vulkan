@@ -20,6 +20,7 @@ struct PushConstants {
     float waveFrequency;
     float foamThreshold;
     float _pad0;
+    float _pad1;
     float lightDir[4];
 };
 

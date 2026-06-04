@@ -53,6 +53,16 @@ public:
      */
     bool loadFromJson(const std::string& path);
 
+        /**
+     * @brief Ustawia skalowanie terenu.
+     * @param scaleXZ Skala terenu w płaszczyźnie poziomej.
+     * @param scaleY Skala wysokości terenu.
+     * @param texScale Skala kafelkowania (tiling) tekstury.
+     * @param maxLodLevels Maksymalna liczba poziomów szczegółowości Quadtree.
+     */
+    void setScale(float scaleXZ = 10.0f, float scaleY = 2.0f,
+                       float texScale = 20.0f, int maxLodLevels = 5);
+
     // Proceduralne algorytmy generowania terenu:
     
     /**
@@ -76,7 +86,7 @@ public:
     /**
      * @brief Buduje początkową siatkę geometryczną na podstawie wysokości w pamięci CPU.
      */
-    void buildMesh(float scaleXZ, float scaleY, float texScale);
+    void buildMesh();
     
     /**
      * @brief Wygładza krawędzie terenu do poziomu zerowego (ułatwia łączenie terenu z wodą/przepaścią).
@@ -108,6 +118,9 @@ public:
     int sizeX = 0, sizeZ = 0;
     int nodeCount = 0;
     int visibleCount = 0;
+    float scaleX; //skalownie mamy w funkcji buildMesh, ale przyda się do obliczeń w getHeight i update
+    float scaleY; //skalowanie wysokości, przyda się do obliczeń w getHeight i update
+    float texScale; //skalowanie tekstury, przyda się  update
     MeshData mesh;                     // Surowe dane siatki terenu.
     std::vector<TerrainLayer> layers;  // Warstwy tekstur terenu.
     std::string meshName_;

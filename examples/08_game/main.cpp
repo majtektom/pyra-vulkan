@@ -378,6 +378,7 @@ private:
         load3dsSet();
         loadMd2Character();
         loadGltfSet();
+        loadBrainStemSet();
 
         gameSceneReady_ = true;
         return true;
@@ -392,12 +393,12 @@ private:
         gameTerrain_ = std::make_shared<Terrain>();
         bool loaded = gameTerrain_->loadFromJson("assets/teren/demo/terrain.json");
         if (loaded) {
-            gameTerrain_->buildMesh(20.0f, 1.0f, 20.0f);
+            gameTerrain_->buildMesh();
         } else {
             LOG_WARN("nie wczytano terenu, generuję losowy teren");
             gameTerrain_->generatePlasma(256, 1.2f);
             gameTerrain_->smoothEdges();
-            gameTerrain_->buildMesh(40.0f, 1.0f, 40.0f);
+            gameTerrain_->buildMesh();
         }
 
         gameTerrain_->uploadTo(*meshManager_);
@@ -663,6 +664,25 @@ private:
                 TextureHandle texture = renderer_->loadTexture(materialName + "_tex", primitive.texturePath);
                 material.textureName = textureNameFromHandle(assets_, texture, "");
             }
+            if (!primitive.normalMapPath.empty()) {
+                TextureHandle texture = renderer_->loadTexture(materialName + "_n", primitive.normalMapPath);
+                material.normalMapName = textureNameFromHandle(assets_, texture, "");
+                material.bumpIntensity = 1.0f;
+            }
+            if (!primitive.ormPath.empty()) {
+                TextureHandle texture = renderer_->loadTexture(materialName + "_orm", primitive.ormPath);
+                material.metallicRoughnessTextureName = textureNameFromHandle(assets_, texture, "");
+            }
+            if (!primitive.occlusionPath.empty()) {
+                TextureHandle texture = renderer_->loadTexture(materialName + "_occ", primitive.occlusionPath);
+                material.occlusionTextureName = textureNameFromHandle(assets_, texture, "");
+            }
+            if (!primitive.emissivePath.empty()) {
+                TextureHandle texture = renderer_->loadTexture(materialName + "_em", primitive.emissivePath);
+                material.emissiveTextureName = textureNameFromHandle(assets_, texture, "");
+            }
+            material.roughnessFactor = 0.5f;
+
             MaterialHandle handle = materialManager_->add(material);
 
             subMeshes.push_back({meshName, handle});
@@ -695,6 +715,42 @@ private:
 
                 auto* mesh = part->addComponent<MeshComponent>(subMeshes[i].meshName);
                 mesh->materialHandle = subMeshes[i].material;
+            }
+        }
+    }
+
+    /**
+     * @brief Ładuje i ustawia animowane szkieletowo modele BrainStem na wysokości terenu.
+     */
+    void loadBrainStemSet() {
+        if (!brainModel_.load(renderer_, meshManager_, materialManager_, assets_, "assets/models/gLTF/BrainStem.glb")) {
+            LOG_WARN("Pomijam glTF: assets/models/gLTF/BrainStem.glb");
+            return;
+        }
+
+        const std::vector<Vec3> brainPositions = {
+            {-40.0f, 0.0f, 20.0f},
+            {10.0f, 0.0f, 10.0f},
+            {-20.0f, 0.0f, 30.0f},
+            {-50.0f, 0.0f, -10.0f},
+            {30.0f, 0.0f, -30.0f},
+        };
+
+        for (size_t i = 0; i < brainPositions.size(); ++i) {
+            GltfSkinnedInstance inst;
+            if (inst.initialize(renderer_, brainModel_)) {
+                Entity* root = inst.instantiate(gameScene_, "brainstem_" + std::to_string(i));
+                root->transform().position = brainPositions[i];
+                root->transform().rotation = {0.0f, static_cast<float>(i) * 72.0f, 0.0f};
+                root->transform().scale = {10.0f, 10.0f, 10.0f};
+                
+                // Snap to terrain and register to stay updated with terrain changes
+                registerTerrainRoot(root, 0.0f);
+                
+                // Offset animation start time so they do not animate in phase-lock sync
+                inst.setAnimationTime(static_cast<float>(i) * 0.7f);
+
+                brainInstances_.push_back(std::move(inst));
             }
         }
     }
@@ -819,6 +875,11 @@ private:
             MeshData animatedMesh;
             animateMd2(*md2Model_, *md2Anim_, dt, animatedMesh);
             e.getMeshManager()->updateMesh("goblin_md2", animatedMesh);
+        }
+
+        // Aktualizacja animacji szkieletowej modeli BrainStem
+        for (auto& inst : brainInstances_) {
+            inst.update(dt, 0, 1.0f);
         }
 
         worldTime_ += dt;
@@ -965,6 +1026,8 @@ private:
 
     std::shared_ptr<Md2ModelData> md2Model_;
     std::shared_ptr<Md2AnimationState> md2Anim_;
+    GltfSkinnedModel brainModel_;
+    std::vector<GltfSkinnedInstance> brainInstances_;
     std::vector<Entity*> treeRoots_;
     std::vector<Entity*> carRoots_;
     std::vector<Entity*> terrainRoots_;

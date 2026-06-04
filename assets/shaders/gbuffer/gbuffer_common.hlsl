@@ -3,6 +3,8 @@
 
 #define MAX_BONES 64
 
+#include "shared/light_types.hlsl"
+
 // UBO globalne do renderingu geometry pass
 cbuffer GlobalUniformBufferObject : register(b0, space0)
 {
@@ -10,20 +12,13 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     column_major float4x4 proj;
     float4 camRight;
     float4 camUp;
-    column_major float4x4 lightViewProj;
-    float4 _padLightDir;
-    uint shadowMapIndex;
-    uint lightingEnabled;
-    float ambientStrength;
-    uint lightCount;
-    float4 _padLightColor;
-    float4 ambientColor;
     float4 cameraPos;
-    // Struktura spakowana dla uproszczonego przekazywania parametrów 4 świateł
-    float4 lights_0_position; float4 lights_0_direction; float4 lights_0_color; float4 lights_0_params;
-    float4 lights_1_position; float4 lights_1_direction; float4 lights_1_color; float4 lights_1_params;
-    float4 lights_2_position; float4 lights_2_direction; float4 lights_2_color; float4 lights_2_params;
-    float4 lights_3_position; float4 lights_3_direction; float4 lights_3_color; float4 lights_3_params;
+    float4 ambientColor;
+    float ambientStrength;
+    uint lightingEnabled;
+    uint lightCount;
+    uint shadowsEnabled;
+    LightData lights[16];
 };
 
 // Parametry push constants pojedynczego obiektu
@@ -44,8 +39,8 @@ cbuffer PushConstants
     uint layerBlendEnabled;
     uint layerCount;
     float layerWorldSize;
-    uint layerBaseTextureSets[12];
-    uint layerMaskTextureSets[12];
+    uint4 layerBaseTextureSets[3];          // Spakowane indeksy tekstur warstwowych (3 * 4 = 12 warstw)
+    uint4 layerMaskTextureSets[3];          // Spakowane indeksy tekstur masek przejść (12 masek)
 };
 
 SamplerState globalSampler : register(s1, space0);
@@ -76,7 +71,7 @@ struct GBufferOutput
     // Target 1: RGB = Wektor normalny w przestrzeni świata zmapowany na [0.0, 1.0], A = Szorstkość (roughness)
     float4 normalRoughness : SV_Target1;
     
-    // Target 2: R = Ocienienie (AO), G = Intensywność samozjarzenia (emissive), B, A = Zapasowe
+    // Target 2: R = Ocienienie (AO), GBA = Kolor samozjarzenia (emissive RGB)
     float4 occlusionEmissive : SV_Target2;
     
     // Target 3: RGB = Pozycja świata w trójwymiarze (XYZ), A = 1.0 (maska głębi geometrycznej)
@@ -87,6 +82,24 @@ float3x3 inverseTranspose3x3(float4x4 m)
 {
     float3x3 a = float3x3(m[0].xyz, m[1].xyz, m[2].xyz);
     return a;
+}
+
+uint getLayerBaseTextureSet(uint index)
+{
+    uint group = index / 4u;
+    uint lane = index % 4u;
+    if (group == 0u) return layerBaseTextureSets[0][lane];
+    if (group == 1u) return layerBaseTextureSets[1][lane];
+    return layerBaseTextureSets[2][lane];
+}
+
+uint getLayerMaskTextureSet(uint index)
+{
+    uint group = index / 4u;
+    uint lane = index % 4u;
+    if (group == 0u) return layerMaskTextureSets[0][lane];
+    if (group == 1u) return layerMaskTextureSets[1][lane];
+    return layerMaskTextureSets[2][lane];
 }
 
 /**
@@ -103,15 +116,18 @@ GBufferOutput shadeGBuffer(VertexOutput input)
         float2 maskUv = (input.worldPos.xz - model[3].xz) * invWorldSize;
 
         uint n = min(layerCount, 12u);
-        float4 result = textures[layerBaseTextureSets[0]].Sample(globalSampler, input.texCoord);
+        float4 result = textures[getLayerBaseTextureSet(0u)].Sample(globalSampler, input.texCoord);
         for (uint i = 1; i < n; ++i)
         {
-            float4 layerColor = textures[layerBaseTextureSets[i]].Sample(globalSampler, input.texCoord);
-            float maskVal = saturate(textures[layerMaskTextureSets[i]].Sample(globalSampler, maskUv).r);
+            float4 layerColor = textures[getLayerBaseTextureSet(i)].Sample(globalSampler, input.texCoord);
+            float maskVal = saturate(textures[getLayerMaskTextureSet(i)].Sample(globalSampler, maskUv).r);
             result = lerp(result, layerColor, maskVal);
         }
         baseColor = result * float4(input.color, 1.0) * baseColorFactor;
     }
+
+    if (baseColor.a < alphaMaskCutoff)
+        discard;
 
     float3 N = normalize(input.worldNormal);
 
@@ -126,10 +142,16 @@ GBufferOutput shadeGBuffer(VertexOutput input)
         normalTex.xy *= bumpIntensity;
         normalTex = normalize(normalTex);
         float re = 1.0 / (duv1.x * duv2.y - duv1.y * duv2.x + 0.0001);
-        float3 T = normalize((dp1 * duv2.y - dp2 * duv1.y) * re - N * dot(N, (dp1 * duv2.y - dp2 * duv1.y) * re));
-        float3 B = cross(N, T);
-        float3x3 TBN = float3x3(T, B, N);
-        N = normalize(mul(normalTex, TBN));
+        float3 T_raw = (dp1 * duv2.y - dp2 * duv1.y) * re;
+        float3 T_proj = T_raw - N * dot(N, T_raw);
+        float lenSq = dot(T_proj, T_proj);
+        if (lenSq > 0.00001)
+        {
+            float3 T = T_proj / sqrt(lenSq);
+            float3 B = cross(N, T);
+            float3x3 TBN = float3x3(T, B, N);
+            N = normalize(mul(normalTex, TBN));
+        }
     }
 
     // 3. Odczyt parametrów PBR
@@ -138,7 +160,7 @@ GBufferOutput shadeGBuffer(VertexOutput input)
     float roughness = metallicRoughness.y * roughnessFactor;
 
     float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
-    float emissiveStrength = dot(textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb, float3(0.333, 0.333, 0.333));
+    float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
 
     // KROK 4: WYPEŁNIENIE KANAŁÓW WYJŚCIOWYCH G-BUFFERA
     GBufferOutput output;
@@ -147,7 +169,7 @@ GBufferOutput shadeGBuffer(VertexOutput input)
     // Normalne są mapowane z zakresu [-1.0, 1.0] na [0.0, 1.0], ponieważ standardowe formaty tekstur buforu koloru (np. UNORM)
     // nie wspierają bezpośrednio zapisu wartości ujemnych. Re-mapowanie to: N_mapped = N * 0.5 + 0.5.
     output.normalRoughness = float4(N * 0.5 + 0.5, roughness);
-    output.occlusionEmissive = float4(ao, emissiveStrength, 0.0, 1.0);
+    output.occlusionEmissive = float4(ao, emissive.r, emissive.g, emissive.b);
     output.worldPosition = float4(input.worldPos, 1.0);
     
     return output;

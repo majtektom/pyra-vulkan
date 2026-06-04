@@ -47,8 +47,17 @@ VertexOutput vertexMain(VertexInput input)
     // Zabezpieczenie przed wyjściem indeksu kości poza dopuszczalny zakres tablicy
     uint4 clampedJoints = min(input.joints, (uint4)(MAX_BONES - 1));
 
-    // W tym uproszczonym shaderze cieni używamy kości o największym wpływie (joints.x)
-    float4x4 skinMat = boneMatrices[clampedJoints.x];
+    // Normalize weights
+    float4 w = input.weights;
+    float wSum = w.x + w.y + w.z + w.w;
+    if (wSum > 0.0001) w /= wSum;
+    else w = float4(1.0, 0.0, 0.0, 0.0);
+
+    // LBS: weighted sum of 4 bone matrices
+    float4x4 skinMat = boneMatrices[clampedJoints.x] * w.x
+                     + boneMatrices[clampedJoints.y] * w.y
+                     + boneMatrices[clampedJoints.z] * w.z
+                     + boneMatrices[clampedJoints.w] * w.w;
 
     // Deformacja pozycji wierzchołka kośćmi (Skinning)
     float4 skinnedPos = mul(skinMat, float4(input.position, 1.0));
