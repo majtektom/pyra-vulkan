@@ -1,123 +1,103 @@
-MapVersion 1.0
-
-FOG_COLOR=VECTOR4(0.7,0.7,0.7,1.0)
-LIGHT_MODEL_AMBIEND=VECTOR4(0.3,0.3,0.3,1.0)
-CAMERA
 {
-	position=VECTOR3(3200.0,100.0,3720.0)
-	lookAt=VECTOR3(4000.0,300.0,4000.0)
-
+  "name": "Demo Map",
+  "ambient": {
+    "strength": 0.28,
+    "color": { "r": 0.35, "g": 0.38, "b": 0.45 }
+  },
+  "fog": {
+    "enabled": true,
+    "color": { "r": 0.575, "g": 0.68, "b": 0.88 },
+    "start": 150.0,
+    "end": 3500.0,
+    "density": 0.83
+  },
+  "camera": {
+    "position": { "x": -110.0, "y": 90.0, "z": -110.0 },
+    "target": { "x": 0.0, "y": 28.0, "z": 0.0 },
+    "fov": 55.0,
+    "near": 0.5,
+    "far": 12000.0
+  },
+  "skydome": {
+    "enabled": true,
+    "domeScale": 1.6,
+    "timeOfDay": 23.0,
+    "cloudCoverage": 0.35,
+    "cloudSpeed0": 0.25,
+    "cloudSpeed1": 0.12,
+    "cloudScale0": 1200.0,
+    "cloudScale1": 820.0,
+    "sunElevation": 50.0,
+    "enableSunLight": true
+  },
+  "ocean": {
+    "enabled": true,
+    "waterLevel": 20.0,
+    "waveAmplitude": 2.3,
+    "waveSpeed": 0.9,
+    "waveFrequency": 9.0,
+    "foamThreshold": 15.9
+  },
+  "terrain": {
+    "enabled": true,
+    "path": "assets/teren/demo/terrain.json"
+  },
+  "static_models_3ds": [
+    {
+      "model_path": "assets/models/3ds/drzewko5.3DS",
+      "scale": { "x": 0.26, "y": 0.26, "z": 0.26 },
+      "snap_to_terrain": true,
+      "terrain_offset": 0.2,
+      "instances": [
+        { "position": { "x": -220.0, "y": 0.0, "z": -180.0 } },
+        { "position": { "x": -120.0, "y": 0.0, "z": 40.0 } },
+        { "position": { "x": 0.0, "y": 0.0, "z": -60.0 } },
+        { "position": { "x": 130.0, "y": 0.0, "z": 120.0 } },
+        { "position": { "x": 230.0, "y": 0.0, "z": -140.0 } },
+        { "position": { "x": 320.0, "y": 0.0, "z": 70.0 } }
+      ]
+    }
+  ],
+  "characters_md2": [
+    {
+      "name": "goblin",
+      "model_path": "assets/models/md2/goblin/goblin.md2",
+      "texture_path": "assets/models/md2/goblin/goblin.bmp",
+      "position": { "x": -24.0, "y": 0.0, "z": -6.0 },
+      "rotation": { "x": -90.0, "y": 0.0, "z": 0.0 },
+      "scale": { "x": 0.46, "y": 0.46, "z": 0.46 },
+      "snap_to_terrain": true,
+      "terrain_offset": 0.0,
+      "anim_speed": 10.0
+    }
+  ],
+  "gltf_models": [
+    {
+      "model_path": "assets/models/gLTF/toycar/bin/ToyCar.glb",
+      "scale": { "x": 0.18, "y": 0.18, "z": 0.18 },
+      "snap_to_terrain": true,
+      "terrain_offset": 0.25,
+      "instances": [
+        { "position": { "x": -260.0, "y": 0.0, "z": -90.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 } },
+        { "position": { "x": -40.0, "y": 0.0, "z": 180.0 }, "rotation": { "x": 0.0, "y": 52.0, "z": 0.0 } },
+        { "position": { "x": 170.0, "y": 0.0, "z": -40.0 }, "rotation": { "x": 0.0, "y": 104.0, "z": 0.0 } },
+        { "position": { "x": 320.0, "y": 0.0, "z": 210.0 }, "rotation": { "x": 0.0, "y": 156.0, "z": 0.0 } }
+      ]
+    }
+  ],
+  "gltf_skinned_models": [
+    {
+      "model_path": "assets/models/gLTF/BrainStem.glb",
+      "scale": { "x": 10.0, "y": 10.0, "z": 10.0 },
+      "snap_to_terrain": true,
+      "terrain_offset": 0.0,
+      "instances": [
+        { "position": { "x": -40.0, "y": 0.0, "z": 20.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 } },
+        { "position": { "x": 10.0, "y": 0.0, "z": 10.0 }, "rotation": { "x": 0.0, "y": 72.0, "z": 0.0 } },
+        { "position": { "x": -20.0, "y": 0.0, "z": 30.0 }, "rotation": { "x": 0.0, "y": 144.0, "z": 0.0 } },
+        { "position": { "x": -50.0, "y": 0.0, "z": -10.0 }, "rotation": { "x": 0.0, "y": 216.0, "z": 0.0 } },
+        { "position": { "x": 30.0, "y": 0.0, "z": -30.0 }, "rotation": { "x": 0.0, "y": 288.0, "z": 0.0 } }
+      ]
+    }
+  ]
 }
-/*
-LIGHTING
-{
-	type=NATURAL
-	position=VECTOR3(100.0,100.0,100.0)
-	colorAmbiend=VECTOR4(0.7, 0.7, 0.7, 1.0);
-	colorDiffuse=VECTOR4(0.4, 0.4, 0.4, 1.0);
-	colorSpecular=VECTOR4(0.9, 0.9, 0.9, 1.0);
-	spotDirectory=VECTOR3(0.0,0.0,-1.0) //kierunek strumienia swiat³a
-	spotExponent=8.0
-	spotCutoff=180.0
-	constantAttenuation=1.0	//sta³a wartoœæ t³umienia
-	linearAttenuation=0.0	//liniowa wartosc t³umienia
-	quadraticAttenuation=0.0	//kwadratowa wartosc t³umienia
-	enable=true //czy swiat³o jes w³¹czone
-	
-}
-*/
-
-HEIGHT_MAP
-{
-	terrain="..//dane//teren//demo//terrain.xml"
-}
-
-SKY_BOX
-{
-	directory="../dane/skybox/dzien"
-	size=6500.0
-}
-
-OBJECT_MD2
-{
-	modelfile="../dane/modele/md2/sodf8/tris.md2"
-	texture="../dane/modele/md2/sodf8/Abarlith.bmp"
-	textureDot3="../dane/modele/md2/sodf8/skindot3.bmp"
-	//Vshader=NULL
-	//Pshader=NULL
-	position=VECTOR3(3100.0,0.0,3700.0)
-}
-
-OBJECT_MD2
-{
-	modelfile="../dane/modele/md2/faerie/faerie.md2"
-	texture="../dane/modele/md2/faerie/faerie2.bmp"
-	textureDot3=NULL
-	//Vshader=NULL
-	//Pshader=NULL
-	position=VECTOR3(3150.0,0.0,3700.0)
-}
-
-OBJECT_MD2
-{
-	modelfile="../dane/modele/md2/goblin/goblin.md2"
-	texture="../dane/modele/md2/goblin/goblin.bmp"
-	textureDot3="../dane/modele/md2/goblin/goblinDOT3.bmp"
-	//Vshader=NULL
-	//Pshader=NULL
-	position=VECTOR3(3100.0,0.0,3750.0)
-}
-
-OBJECT_MD2
-{
-	modelfile="../dane/modele/md2/ogro/ogro.md2"
-	texture="../dane/modele/md2/ogro/ogrobase.bmp"
-	textureDot3="../dane/modele/md2/ogro/ogrobaseDOT3.bmp"
-	//Vshader=NULL
-	//Pshader=NULL
-	position=VECTOR3(3200.0,0.0,3700.0)
-}
-
-OBJECT_MD2
-{
-	modelfile="../dane/modele/md2/zolnierz/zolnierz.md2"
-	texture="../dane/modele/md2/zolnierz/zolnierz.bmp"
-	textureDot3="../dane/modele/md2/zolnierz/zolnierzDOT3.bmp"
-	//Vshader=NULL
-	//Pshader=NULL
-	position=VECTOR3(3250.0,0.0,3700.0)
-}
-
-OBJECT_MD2
-{
-	modelfile="../dane/modele/md2/sydney/sydney.md2"
-	texture="../dane/modele/md2/sydney/sydney.bmp"
-	textureDot3=NULL
-	//Vshader=NULL
-	//Pshader=NULL
-	position=VECTOR3(3200.0,0.0,3750.0)
-}
-
-OBJECT_MD5
-{
-	modelfile="../dane/modele/md5/model/player.md5mesh"
-	texture="../dane/modele/md5/model/tex.dds"
-	anim="../dane/modele/md5/model/2stop.md5anim"
-	position=VECTOR3(3230.0,0.0,3750.0)
-}
-/*
-OBJECT_MD5
-{
-	modelfile="../dane/modele/md5/model/wepplayer.md5mesh"
-	texture="../dane/modele/md5/model/tex.dds"
-	anim="../dane/modele/md5/model/2stop.md5anim"
-	position=VECTOR3(3270.0,0.0,3750.0)
-}
-OBJECT_MD5
-{
-	modelfile="../dane/modele/md5/model/mgplayer.md5mesh"
-	texture="../dane/modele/md5/model/tex.dds"
-	anim="../dane/modele/md5/model/2stop.md5anim"
-	position=VECTOR3(3270.0,0.0,3770.0)
-}
-*/

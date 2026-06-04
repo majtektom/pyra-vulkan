@@ -25,6 +25,13 @@
 #include "core/types.h"
 
 namespace engine3d {
+class Terrain;
+class SkydomeRenderer;
+class OceanRenderer;
+struct Md2ModelData;
+struct Md2AnimationState;
+class GltfSkinnedModel;
+class GltfSkinnedInstance;
 
 class Renderer;
 class FontManager;
@@ -137,6 +144,21 @@ public:
     void setFogEnd(float end);
     void setFogDensity(float density);
 
+    bool loadMap(const std::string& path, Scene* scene);
+    void registerTerrainRoot(Entity* entity, float yOffset);
+    std::shared_ptr<Terrain> getTerrain() const { return currentTerrain_; }
+    std::shared_ptr<SkydomeRenderer> getSkydome() const { return currentSkydome_; }
+    std::shared_ptr<OceanRenderer> getOcean() const { return currentOcean_; }
+    std::shared_ptr<Md2ModelData> getMd2Model() const { return currentMd2Model_; }
+    std::shared_ptr<Md2AnimationState> getMd2Anim() const { return currentMd2Anim_; }
+    GltfSkinnedModel* getBrainModel() const { return currentBrainModel_.get(); }
+    const std::vector<std::unique_ptr<GltfSkinnedInstance>>& getBrainInstances() const { return currentBrainInstances_; }
+
+    struct TerrainRootRef {
+        Entity* entity;
+        float yOffset;
+    };
+
     std::function<void(float, Engine&)> onUpdate;
 
 private:
@@ -180,6 +202,22 @@ private:
 
     std::shared_ptr<TextOverlayRenderer> textOverlayRenderer_;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
+
+    std::shared_ptr<Terrain> currentTerrain_;
+    std::shared_ptr<SkydomeRenderer> currentSkydome_;
+    std::shared_ptr<OceanRenderer> currentOcean_;
+    std::shared_ptr<Md2ModelData> currentMd2Model_;
+    std::shared_ptr<Md2AnimationState> currentMd2Anim_;
+    std::unique_ptr<GltfSkinnedModel> currentBrainModel_;
+    std::vector<std::unique_ptr<GltfSkinnedInstance>> currentBrainInstances_;
+    std::vector<TerrainRootRef> terrainRoots_;
+
+    struct Md2Instance {
+        std::string meshName;
+        std::shared_ptr<Md2ModelData> model;
+        std::shared_ptr<Md2AnimationState> anim;
+    };
+    std::vector<Md2Instance> md2Instances_;
 };
 
 } // namespace engine3d

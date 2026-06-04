@@ -77,14 +77,16 @@ public:
      */
     void addFeature(std::shared_ptr<IRenderFeature> feature);
     IRenderFeature* getFeature(const std::string& name);
+    void removeFeature(const std::string& name);
 
     /**
      * @brief Ładuje teksturę z pliku dyskowego do pamięci GPU i zwraca unikalny uchwyt.
      * @param name Identyfikator tekstury.
      * @param path Ścieżka do pliku graficznego.
      * @param mirroredRepeat Czy włączyć tryb powtarzania lustrzanego tekstury (dla np. terenu).
+     * @param disableAlpha Czy wyłączyć czytanie kanału alfa tekstury (wymusza pełną nieprzezroczystość).
      */
-    TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false);
+    TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false, bool disableAlpha = false);
     
     // Konfiguracja koloru tła (czyszczenia ekranu).
     void setClearColor(float r, float g, float b, float a);

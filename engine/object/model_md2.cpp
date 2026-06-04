@@ -143,6 +143,30 @@ Md2ModelData loadMd2Model(const std::string& path) {
         mesh.indices[b + 2] = b + 2;
     }
 
+    if (!model.frames.empty()) {
+        const auto& f0 = model.frames[0];
+        for (int i = 0; i < numTriangles; ++i) {
+            const auto& tr = model.tris[i];
+            int vi0 = tr.vi[0], vi1 = tr.vi[2], vi2 = tr.vi[1];
+            int vc = (int)f0.vertices.size();
+            int ti0 = tr.ti[0] < (int)model.texCoords.size() ? tr.ti[0] : 0;
+            int ti1 = tr.ti[2] < (int)model.texCoords.size() ? tr.ti[2] : 0;
+            int ti2 = tr.ti[1] < (int)model.texCoords.size() ? tr.ti[1] : 0;
+
+            Vec3 v0 = (vi0 >= 0 && vi0 < vc) ? f0.vertices[vi0] : Vec3{0.0f, 0.0f, 0.0f};
+            Vec3 v1 = (vi1 >= 0 && vi1 < vc) ? f0.vertices[vi1] : Vec3{0.0f, 0.0f, 0.0f};
+            Vec3 v2 = (vi2 >= 0 && vi2 < vc) ? f0.vertices[vi2] : Vec3{0.0f, 0.0f, 0.0f};
+            Vec3 n0 = (vi0 >= 0 && vi0 < vc) ? f0.normals[vi0] : Vec3{0.0f, 0.0f, 0.0f};
+            Vec3 n1 = (vi1 >= 0 && vi1 < vc) ? f0.normals[vi1] : Vec3{0.0f, 0.0f, 0.0f};
+            Vec3 n2 = (vi2 >= 0 && vi2 < vc) ? f0.normals[vi2] : Vec3{0.0f, 0.0f, 0.0f};
+
+            int b = i * 3;
+            mesh.vertices[b + 0] = {{v0.x, v0.y, v0.z}, {n0.x, n0.y, n0.z}, {1.0f, 1.0f, 1.0f}, model.texCoords[ti0]};
+            mesh.vertices[b + 1] = {{v1.x, v1.y, v1.z}, {n1.x, n1.y, n1.z}, {1.0f, 1.0f, 1.0f}, model.texCoords[ti1]};
+            mesh.vertices[b + 2] = {{v2.x, v2.y, v2.z}, {n2.x, n2.y, n2.z}, {1.0f, 1.0f, 1.0f}, model.texCoords[ti2]};
+        }
+    }
+
     return model;
 }
 

@@ -1,22 +1,74 @@
-MapVersion 1.0
-
-FOG_COLOR=VECTOR4(0.7,0.7,0.7,1.0)
-LIGHT_MODEL_AMBIEND=VECTOR4(0.3,0.3,0.3,1.0)
-CAMERA
 {
-	position=VECTOR3(3200.0,100.0,3720.0)
-	lookAt=VECTOR3(4000.0,300.0,4000.0)
-
-}
-
-
-HEIGHT_MAP
-{
-	terrain="..//dane//teren//wyspa//terrain.xml"
-}
-
-SKY_BOX
-{
-	directory="../dane/skybox/dzien"
-	size=6500.0
+  "name": "wyspa",
+  "ambient": {
+    "strength": 0.28,
+    "color": { "r": 0.35, "g": 0.38, "b": 0.45 }
+  },
+  "fog": {
+    "enabled": true,
+    "color": { "r": 0.575, "g": 0.68, "b": 0.88 },
+    "start": 150.0,
+    "end": 3500.0,
+    "density": 0.83
+  },
+  "camera": {
+    "position": { "x": -110.0, "y": 90.0, "z": -110.0 },
+    "target": { "x": 0.0, "y": 28.0, "z": 0.0 },
+    "fov": 55.0,
+    "near": 0.5,
+    "far": 12000.0
+  },
+  "skydome": {
+    "enabled": true,
+    "domeScale": 1.6,
+    "timeOfDay": 23.0,
+    "cloudCoverage": 0.35,
+    "cloudSpeed0": 0.25,
+    "cloudSpeed1": 0.12,
+    "cloudScale0": 1200.0,
+    "cloudScale1": 820.0,
+    "sunElevation": 50.0,
+    "enableSunLight": true
+  },
+  "ocean": {
+    "enabled": true,
+    "waterLevel": 20.0,
+    "waveAmplitude": 2.3,
+    "waveSpeed": 0.9,
+    "waveFrequency": 9.0,
+    "foamThreshold": 15.9
+  },
+  "terrain": {
+    "enabled": true,
+    "path": "assets/teren/wyspa/terrain.json"
+  },
+  "static_models_3ds": [
+    {
+      "model_path": "assets/models/3ds/drzewko5.3DS",
+      "scale": { "x": 0.26, "y": 0.26, "z": 0.26 },
+      "snap_to_terrain": true,
+      "terrain_offset": 0.2,
+      "instances": [
+        { "position": { "x": -220.0, "y": 0.0, "z": -180.0 } },
+        { "position": { "x": -120.0, "y": 0.0, "z": 40.0 } },
+        { "position": { "x": 0.0, "y": 0.0, "z": -60.0 } },
+        { "position": { "x": 130.0, "y": 0.0, "z": 120.0 } },
+        { "position": { "x": 230.0, "y": 0.0, "z": -140.0 } },
+        { "position": { "x": 320.0, "y": 0.0, "z": 70.0 } }
+      ]
+    }
+  ],
+  "characters_md2": [
+    {
+      "name": "goblin",
+      "model_path": "assets/models/md2/goblin/goblin.md2",
+      "texture_path": "assets/models/md2/goblin/goblin.bmp",
+      "position": { "x": -24.0, "y": 0.0, "z": -6.0 },
+      "rotation": { "x": -90.0, "y": 0.0, "z": 0.0 },
+      "scale": { "x": 0.46, "y": 0.46, "z": 0.46 },
+      "snap_to_terrain": true,
+      "terrain_offset": 0.0,
+      "anim_speed": 10.0
+    }
+  ]
 }

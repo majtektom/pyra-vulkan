@@ -257,16 +257,16 @@ int main() {
             }
 
             if (texExists) {
-                texHandle = renderer->loadTexture(matName, texPathToLoad);
+                texHandle = renderer->loadTexture(matName, texPathToLoad, false, disableAlpha);
             }
 
             Material modelMat = Convert3dsMaterialToEngineMaterial(mat);
             modelMat.name = matName;
             modelMat.textureName = texExists ? requireTextureName(texHandle) : "";
-            if (disableAlpha) {
-                modelMat.blendMode = BlendMode::Disabled;
-                modelMat.depthWrite = true;
-            }
+            // if (disableAlpha) {
+            //     modelMat.blendMode = BlendMode::Disabled;
+            //     modelMat.depthWrite = true;
+            // }
             materialHandles[matName] = mats->add(modelMat);
 
             finalMatNames[mi] = matName;
@@ -301,6 +301,7 @@ int main() {
     addModel("assets/models/3ds/drzewko5.3DS", "DRZEWKO", {20.0f, 0.0f, 10.0f});
     addModel("assets/models/3ds/trawa/grass.3ds", "grass", {15.0f, 0.0f, 0.0f});
     addModel("assets/models/3ds/D1.3DS", "D1", {-5.0f, 0.0f, 10.0f});
+    addModel("assets/models/3ds/drzewko.3DS", "Drzewko", {-10.0f, 0.0f, 10.0f});
 
     // KROK 6: WCZYTYWANIE MODELU MD2 (Klasyczna animacja klatkowa z Quake 2)
     // Model MD2 nie posiada kości – animacja polega na płynnej, liniowej interpolacji (Morph Target)

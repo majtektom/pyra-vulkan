@@ -547,7 +547,7 @@ public:
         currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
     }
 
-    TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat) {
+    TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat, bool disableAlpha = false) {
         VkDevice device = vulkanContext_->device();
         VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
         TextureUploadData uploadData = TextureAssetLoader::load(path);
@@ -662,8 +662,29 @@ public:
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                       uploadData.mipLevels);
 
-        tex.imageView = vk::createImageView(device, tex.image, uploadData.format,
-                                            VK_IMAGE_ASPECT_COLOR_BIT, uploadData.mipLevels);
+        if (disableAlpha) {
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = tex.image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = uploadData.format;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = uploadData.mipLevels;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+            viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            viewInfo.components.a = VK_COMPONENT_SWIZZLE_ONE;
+
+            if (vkCreateImageView(device, &viewInfo, nullptr, &tex.imageView) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create image view with component swizzle");
+            }
+        } else {
+            tex.imageView = vk::createImageView(device, tex.image, uploadData.format,
+                                                VK_IMAGE_ASPECT_COLOR_BIT, uploadData.mipLevels);
+        }
         tex.sampler = mirroredRepeat ? vk::createMirrorRepeatSampler(device, uploadData.mipLevels) : vk::createTextureSampler(device, uploadData.mipLevels);
         textures_[name] = tex;
         
@@ -1055,6 +1076,13 @@ public:
             if (f->getName() == name) return f.get();
         }
         return nullptr;
+    }
+    void removeFeature(const std::string& name) {
+        auto it = std::remove_if(features_.begin(), features_.end(),
+            [&name](const std::shared_ptr<IRenderFeature>& f) {
+                return f->getName() == name;
+            });
+        features_.erase(it, features_.end());
     }
 
 private:
@@ -2454,6 +2482,9 @@ void Renderer::addFeature(std::shared_ptr<IRenderFeature> feature) {
 IRenderFeature* Renderer::getFeature(const std::string& name) {
     return impl_->getFeature(name);
 }
+void Renderer::removeFeature(const std::string& name) {
+    impl_->removeFeature(name);
+}
 void Renderer::waitIdle() {
     if (impl_) impl_->waitIdle();
 }
@@ -2461,7 +2492,7 @@ uint32_t Renderer::width() const { return impl_->extent().width; }
 uint32_t Renderer::height() const { return impl_->extent().height; }
 VkFormat Renderer::colorFormat() const { return impl_->colorFormat(); }
 VkFormat Renderer::depthFormat() const { return impl_->depthFormat(); }
-TextureHandle Renderer::loadTexture(const std::string& n, const std::string& p, bool m) { return impl_->loadTexture(n, p, m); }
+TextureHandle Renderer::loadTexture(const std::string& n, const std::string& p, bool m, bool disableAlpha) { return impl_->loadTexture(n, p, m, disableAlpha); }
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
 void Renderer::setSynchronizationMode(SynchronizationMode mode) { impl_->setSynchronizationMode(mode); }
 SynchronizationMode Renderer::synchronizationMode() const { return impl_->synchronizationMode(); }

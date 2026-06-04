@@ -22,6 +22,8 @@
 #include "feature/gui/gui_combo_box.h"
 #include "feature/gui/gui_static_text.h"
 #include "feature/gui/gui_track_bar.h"
+#include "feature/gui/gui_list_box.h"
+#include <filesystem>
 #include "object/gltf/model_gltf.h"
 #include "object/model_3ds.h"
 #include "object/model_md2.h"
@@ -285,6 +287,23 @@ private:
         btnSettingsBack_ = new GuiButton(settingsWindow_, "back", 10, 524, 180, 30);
         btnSettingsBack_->setText("Wroc");
 
+        // Okno wyboru mapy przy nowej grze
+        mapSelectionWindow_ = guiMgr_->addWindow("Wybierz mape", 520, 180, 400, 420);
+        if (mapSelectionWindow_) {
+            auto* listLabel = new GuiStaticText(mapSelectionWindow_, "list_label", 10, 10);
+            listLabel->setText("Dostepne mapy:");
+            
+            listMaps_ = new GuiListBox(mapSelectionWindow_, "maps_list", 10, 40, 380, 280);
+            
+            btnLoadSelectedMap_ = new GuiButton(mapSelectionWindow_, "load_map_btn", 10, 330, 180, 34);
+            btnLoadSelectedMap_->setText("Wczytaj");
+            
+            btnMapSelectionBack_ = new GuiButton(mapSelectionWindow_, "back_map_btn", 210, 330, 180, 34);
+            btnMapSelectionBack_->setText("Anuluj");
+
+            mapSelectionWindow_->setVisible(false);
+        }
+
         wireGuiCallbacks();
         return true;
     }
@@ -294,8 +313,21 @@ private:
      */
     void wireGuiCallbacks() {
         btnNewGame_->setOnClick([this]() {
-            if (!ensureGameScene()) {
-                LOG_ERROR("Nie udalo sie zbudowac sceny gry.");
+            showMapSelection();
+        });
+        btnMapSelectionBack_->setOnClick([this]() {
+            showMainMenu();
+        });
+        btnLoadSelectedMap_->setOnClick([this]() {
+            std::string selected = listMaps_->selectedText();
+            if (selected.empty()) {
+                statusMessage_ = "Wybierz mape z listy!";
+                statusMessageTimer_ = 3.0f;
+                return;
+            }
+            currentMapPath_ = "assets/maps/" + selected;
+            if (!ensureGameScene(currentMapPath_)) {
+                LOG_ERROR("Nie udalo sie wczytac mapy: {}", currentMapPath_);
                 return;
             }
             enterGame();
@@ -431,9 +463,10 @@ private:
      * Scena gry jest tworzona dopiero przy kliknięciu "Nowa gra", dzięki czemu 
      * menu ładuje się natychmiast bez blokowania programu wczytywaniem ciężkich modeli 3D.
      */
-    bool ensureGameScene() {
+    bool ensureGameScene(const std::string& mapPath = "assets/maps/demo.map") {
         if (gameSceneReady_) {
-            return true;
+            sceneManager_->removeScene("game");
+            gameSceneReady_ = false;
         }
 
         gameScene_ = sceneManager_->createScene("game");
@@ -442,396 +475,24 @@ private:
         }
         engine_.configureScene(*gameScene_);
 
-        setupLighting();
-        setupTerrain();
-        setupAtmosphere();
-        setupCamera();
-        load3dsSet();
-        loadMd2Character();
-        loadGltfSet();
-        loadBrainStemSet();
+        if (!engine_.loadMap(mapPath, gameScene_)) {
+            LOG_ERROR("Nie udalo sie wczytac mapy: {}", mapPath);
+            return false;
+        }
+
+        gameTerrain_ = engine_.getTerrain();
+        skydome_ = engine_.getSkydome();
+        ocean_ = engine_.getOcean();
+        md2Model_ = engine_.getMd2Model();
+        md2Anim_ = engine_.getMd2Anim();
+        gameCamera_ = gameScene_->activeCamera();
 
         gameSceneReady_ = true;
         return true;
     }
 
-    void setupLighting() {
-        // Światło słońca jest teraz tworzone i aktualizowane dynamicznie przez SkydomeRenderer w pętli gry
-    }
-
-    void setupTerrain() {
-        gameTerrain_ = std::make_shared<Terrain>();
-        bool loaded = gameTerrain_->loadFromJson("assets/teren/demo/terrain.json");
-        if (loaded) {
-            gameTerrain_->buildMesh();
-        } else {
-            LOG_WARN("nie wczytano terenu, generuję losowy teren");
-            gameTerrain_->generatePlasma(256, 1.2f);
-            gameTerrain_->smoothEdges();
-            gameTerrain_->buildMesh();
-        }
-
-        gameTerrain_->uploadTo(*meshManager_);
-
-        // Konfiguracja splat-map materiału terenu
-        Material terrainMaterial;
-        terrainMaterial.name = "game_terrain_mat";
-        terrainMaterial.shaderProgram = "terrain";
-        terrainMaterial.cullMode = CullMode::Back;
-        terrainMaterial.depthWrite = true;
-        terrainMaterial.depthTest = true;
-        if (!gameTerrain_->layers.empty() && !gameTerrain_->layers[0].texturePath.empty()) {
-            TextureHandle texture = renderer_->loadTexture("game_terrain_mat_tex", gameTerrain_->layers[0].texturePath);
-            terrainMaterial.textureName = textureNameFromHandle(assets_, texture, "");
-        }
-        const MaterialHandle terrainMaterialHandle = materialManager_->add(terrainMaterial);
-
-        Entity* terrainEntity = gameScene_->createEntity("game_terrain_entity");
-        terrainEntity->transform().position = gameTerrain_->worldOffset();
-        auto* terrainMesh = terrainEntity->addComponent<MeshComponent>(gameTerrain_->meshName());
-        terrainMesh->materialHandle = terrainMaterialHandle;
-        terrainMesh->castShadows = true;
-        terrainMesh->layerBlendEnabled = true;
-        terrainMesh->layerCount = std::min<uint32_t>(
-            static_cast<uint32_t>(gameTerrain_->layers.size()), kMaxTerrainLayers);
-        terrainMesh->layerWorldSize = gameTerrain_->worldSizeXZ();
-        
-        for (uint32_t i = 0; i < terrainMesh->layerCount; ++i) {
-            const std::string texName = "game_terrain_layer_tex_" + std::to_string(i);
-            terrainMesh->layerTextureHandles[i] = renderer_->loadTexture(texName, gameTerrain_->layers[i].texturePath);
-            if (i > 0 && !gameTerrain_->layers[i].maskPath.empty()) {
-                const std::string maskName = "game_terrain_layer_mask_" + std::to_string(i);
-                terrainMesh->layerMaskHandles[i] = renderer_->loadTexture(maskName, gameTerrain_->layers[i].maskPath);
-            }
-        }
-    }
-
-    void setupAtmosphere() {
-        skydome_ = std::make_shared<SkydomeRenderer>();
-        SkydomeConfig skydomeCfg;
-        skydomeCfg.enabled = true;
-        skydomeCfg.domeScale = 1.6f;
-        skydomeCfg.timeOfDay = 23.0f;
-        skydomeCfg.cloudCoverage = 0.35f;
-        skydomeCfg.cloudSpeed0 = 0.25f;
-        skydomeCfg.cloudSpeed1 = 0.12f;
-        skydomeCfg.cloudScale0 = 1200.0f;
-        skydomeCfg.cloudScale1 = 820.0f;
-        skydomeCfg.sunElevation = 50.0f;
-        skydomeCfg.enableSunLight = true;
-        skydome_->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
-        skydome_->setEnabled(true);
-        renderer_->addFeature(skydome_);
-
-        ocean_ = std::make_shared<OceanRenderer>();
-        OceanConfig oceanCfg;
-        oceanCfg.enabled = true;
-        oceanCfg.waterLevel = 20.0f;
-        oceanCfg.waveAmplitude = 2.3f;
-        oceanCfg.waveSpeed = 0.9f;
-        oceanCfg.waveFrequency = 9.0f;
-        oceanCfg.foamThreshold = 15.9f;
-        ocean_->configure(oceanCfg, "bin/assets/shaders/ocean", "ocean");
-        ocean_->setEnabled(true);
-        renderer_->addFeature(ocean_);
-
-        // Konfiguracja domyslnej mgly zintegrowanej z horyzontem skydome
-        engine_.setFogEnabled(true);
-        engine_.setFogColor(0.575f, 0.68f, 0.88f); // Jasny niebieski zblizony do horyzontu skydome
-        engine_.setFogStart(150.0f);
-        engine_.setFogEnd(3500.0f);
-        engine_.setFogDensity(0.83f);
-        if (checkFog_) checkFog_->setChecked(true);
-    }
-
-    void setupCamera() {
-        gameCamera_ = gameScene_->createEntity("game_camera")->addComponent<CameraComponent>();
-        const float centerX = 0.0f;
-        const float centerZ = 0.0f;
-
-        gameCamera_->getOwner()->transform().position = {centerX - 110.0f, 90.0f, centerZ - 110.0f};
-        gameCamera_->target = {centerX, 28.0f, centerZ};
-        gameCamera_->fieldOfViewDegrees = 55.0f;
-        gameCamera_->nearPlane = 0.5f;
-        gameCamera_->farPlane = 12000.0f;
-        gameScene_->setActiveCamera(gameCamera_);
-    }
-
-    MaterialHandle createBasicMaterial(const std::string& name, const std::string& texturePath, bool alpha = false) {
-        Material material;
-        material.name = name;
-        if (!texturePath.empty()) {
-            TextureHandle texture = renderer_->loadTexture(name + "_tex", texturePath);
-            material.textureName = textureNameFromHandle(assets_, texture, "");
-        }
-        material.cullMode = alpha ? CullMode::Disabled : CullMode::Back;
-        material.blendMode = alpha ? BlendMode::Alpha : BlendMode::Disabled;
-        material.depthWrite = !alpha;
-        return materialManager_->add(material);
-    }
-
-    /**
-     * @brief Przykleja pozycję encji pionowo do wysokości terenu pod nią.
-     */
-    void snapEntityToTerrain(Entity* entity, float yOffset) {
-        if (!entity || !gameTerrain_) {
-            return;
-        }
-        auto& tr = entity->transform();
-        tr.position.y = gameTerrain_->getHeight(tr.position.x, tr.position.z) + yOffset;
-    }
-
-    /**
-     * @brief Rejestruje encję jako "zakorzenioną" w terenie.
-     * 
-     * Każdy zarejestrowany obiekt będzie automatycznie przyklejany do wysokości
-     * terenu przy aktualizacji klatki.
-     */
-    void registerTerrainRoot(Entity* entity, float yOffset) {
-        if (!entity) {
-            return;
-        }
-        snapEntityToTerrain(entity, yOffset);
-        terrainRoots_.push_back(entity);
-        terrainRootOffsets_.push_back(yOffset);
-    }
-
-    /**
-     * @brief Przykleja ponownie wszystkie zakorzenione encje (np. przy regeneracji terenu).
-     */
     void resnapTerrainRoots() {
-        const size_t count = std::min(terrainRoots_.size(), terrainRootOffsets_.size());
-        for (size_t i = 0; i < count; ++i) {
-            snapEntityToTerrain(terrainRoots_[i], terrainRootOffsets_[i]);
-        }
-    }
-
-    /**
-     * @brief Ładuje obiekty z modelu 3DS (np. drzewka) i rozstawia je jako pod-drzewa (Hierarchia ECS).
-     */
-    void load3dsSet() {
-        Model3ds model;
-        if (!model.load("assets/models/3ds/drzewko5.3DS")) {
-            LOG_WARN("Pomijam 3DS: assets/models/3ds/drzewko5.3DS");
-            return;
-        }
-
-        std::vector<MaterialHandle> sourceMaterials;
-        sourceMaterials.reserve(model.materialList.size());
-        for (size_t i = 0; i < model.materialList.size(); ++i) {
-            const auto& src = *model.materialList[i];
-            Material material = Convert3dsMaterialToEngineMaterial(src);
-            material.name = "forest_3ds_mat_" + std::to_string(i);
-            if (!src.texturePath.empty()) {
-                TextureHandle texture = renderer_->loadTexture(material.name + "_tex", src.texturePath);
-                material.textureName = textureNameFromHandle(assets_, texture, "");
-            }
-            sourceMaterials.push_back(materialManager_->add(material));
-        }
-
-        struct SubMeshRef {
-            std::string meshName;
-            MaterialHandle material;
-        };
-        std::vector<SubMeshRef> subMeshes;
-        subMeshes.reserve(model.objectList.size());
-
-        for (size_t i = 0; i < model.objectList.size(); ++i) {
-            const auto& object = *model.objectList[i];
-            const std::string meshName = "forest_3ds_mesh_" + std::to_string(i);
-            meshManager_->loadMesh(meshName, object.mesh);
-
-            MaterialHandle material{};
-            if (!sourceMaterials.empty()) {
-                int materialIndex = object.materialIndex;
-                if (materialIndex < 0 || materialIndex >= static_cast<int>(sourceMaterials.size())) {
-                    materialIndex = 0;
-                }
-                material = sourceMaterials[materialIndex];
-            }
-            subMeshes.push_back({meshName, material});
-        }
-
-        const std::vector<Vec3> treePositions = {
-            {-220.0f, 0.0f, -180.0f},
-            {-120.0f, 0.0f, 40.0f},
-            {0.0f, 0.0f, -60.0f},
-            {130.0f, 0.0f, 120.0f},
-            {230.0f, 0.0f, -140.0f},
-            {320.0f, 0.0f, 70.0f},
-        };
-
-        // Tworzenie hierarchii: węzeł-rodzic (Root) kontroluje transformację globalną, 
-        // a jego dzieci (części pnia i liści) dziedziczą pozycję, rotację i skalę.
-        for (size_t treeIndex = 0; treeIndex < treePositions.size(); ++treeIndex) {
-            Entity* treeRoot = gameScene_->createEntity("forest_tree_root_" + std::to_string(treeIndex));
-            treeRoot->transform().position = treePositions[treeIndex];
-            treeRoot->transform().scale = {0.26f, 0.26f, 0.26f};
-            registerTerrainRoot(treeRoot, 0.2f);
-            treeRoots_.push_back(treeRoot);
-
-            for (size_t i = 0; i < subMeshes.size(); ++i) {
-                Entity* part = gameScene_->createEntity("forest_tree_" + std::to_string(treeIndex) + "_part_" + std::to_string(i));
-                
-                // Ustawienie rodzica (Parent-Child relation)
-                if (gameScene_->setParent(part, treeRoot)) {
-                    parentLinkSuccessCount_++;
-                } else {
-                    parentLinkFailCount_++;
-                }
-
-                auto* mesh = part->addComponent<MeshComponent>(subMeshes[i].meshName);
-                mesh->materialHandle = subMeshes[i].material;
-            }
-        }
-    }
-
-    void loadMd2Character() {
-        md2Model_ = std::make_shared<Md2ModelData>(loadMd2Model("assets/models/md2/goblin/goblin.md2"));
-        if (!md2Model_ || md2Model_->frames.empty()) {
-            LOG_WARN("Pomijam MD2: assets/models/md2/goblin/goblin.md2");
-            md2Model_.reset();
-            return;
-        }
-
-        md2Anim_ = std::make_shared<Md2AnimationState>();
-        md2Anim_->startFrame = 0;
-        md2Anim_->endFrame = static_cast<int>(md2Model_->frames.size()) - 1;
-        md2Anim_->speed = 10.0f;
-
-        meshManager_->loadMesh("goblin_md2", md2Model_->triangles);
-        MaterialHandle goblinMat = createBasicMaterial("goblin_md2_mat", "assets/models/md2/goblin/goblin.bmp", false);
-
-        Entity* goblin = gameScene_->createEntity("goblin_md2_entity");
-        auto* mesh = goblin->addComponent<MeshComponent>("goblin_md2");
-        mesh->materialHandle = goblinMat;
-
-        goblin->transform().position = {-24.0f, 0.0f, -6.0f};
-        goblin->transform().rotation = {-90.0f, 0.0f, 0.0f};
-        goblin->transform().scale = {0.46f, 0.46f, 0.46f};
-        snapEntityToTerrain(goblin, 0.0f);
-    }
-
-    /**
-     * @brief Ładuje samochodziki z formatu GLTF/GLB i linkuje hierarchicznie części.
-     */
-    void loadGltfSet() {
-        GltfModel model = loadGltfModel("assets/models/gLTF/toycar/bin/ToyCar.glb");
-        if (model.primitives.empty()) {
-            LOG_WARN("Pomijam glTF: assets/models/gLTF/toycar/bin/ToyCar.glb");
-            return;
-        }
-
-        struct SubMeshRef {
-            std::string meshName;
-            MaterialHandle material;
-        };
-        std::vector<SubMeshRef> subMeshes;
-        subMeshes.reserve(model.primitives.size());
-
-        for (size_t i = 0; i < model.primitives.size(); ++i) {
-            const auto& primitive = model.primitives[i];
-            const std::string meshName = "toycar_mesh_" + std::to_string(i);
-            const std::string materialName = "toycar_mat_" + std::to_string(i);
-
-            meshManager_->loadMesh(meshName, primitive.mesh);
-
-            Material material;
-            material.name = materialName;
-            material.cullMode = CullMode::Disabled;
-            if (!primitive.texturePath.empty()) {
-                TextureHandle texture = renderer_->loadTexture(materialName + "_tex", primitive.texturePath);
-                material.textureName = textureNameFromHandle(assets_, texture, "");
-            }
-            if (!primitive.normalMapPath.empty()) {
-                TextureHandle texture = renderer_->loadTexture(materialName + "_n", primitive.normalMapPath);
-                material.normalMapName = textureNameFromHandle(assets_, texture, "");
-                material.bumpIntensity = 1.0f;
-            }
-            if (!primitive.ormPath.empty()) {
-                TextureHandle texture = renderer_->loadTexture(materialName + "_orm", primitive.ormPath);
-                material.metallicRoughnessTextureName = textureNameFromHandle(assets_, texture, "");
-            }
-            if (!primitive.occlusionPath.empty()) {
-                TextureHandle texture = renderer_->loadTexture(materialName + "_occ", primitive.occlusionPath);
-                material.occlusionTextureName = textureNameFromHandle(assets_, texture, "");
-            }
-            if (!primitive.emissivePath.empty()) {
-                TextureHandle texture = renderer_->loadTexture(materialName + "_em", primitive.emissivePath);
-                material.emissiveTextureName = textureNameFromHandle(assets_, texture, "");
-            }
-            material.roughnessFactor = 0.5f;
-
-            MaterialHandle handle = materialManager_->add(material);
-
-            subMeshes.push_back({meshName, handle});
-        }
-
-        const std::vector<Vec3> carPositions = {
-            {-260.0f, 0.0f, -90.0f},
-            {-40.0f, 0.0f, 180.0f},
-            {170.0f, 0.0f, -40.0f},
-            {320.0f, 0.0f, 210.0f},
-        };
-
-        for (size_t car = 0; car < carPositions.size(); ++car) {
-            const float yaw = static_cast<float>(car) * 52.0f;
-
-            Entity* carRoot = gameScene_->createEntity("toycar_root_" + std::to_string(car));
-            carRoot->transform().position = carPositions[car];
-            carRoot->transform().rotation = {0.0f, yaw, 0.0f};
-            carRoot->transform().scale = {0.18f, 0.18f, 0.18f};
-            registerTerrainRoot(carRoot, 0.25f);
-            carRoots_.push_back(carRoot);
-
-            for (size_t i = 0; i < subMeshes.size(); ++i) {
-                Entity* part = gameScene_->createEntity("toycar_" + std::to_string(car) + "_part_" + std::to_string(i));
-                if (gameScene_->setParent(part, carRoot)) {
-                    parentLinkSuccessCount_++;
-                } else {
-                    parentLinkFailCount_++;
-                }
-
-                auto* mesh = part->addComponent<MeshComponent>(subMeshes[i].meshName);
-                mesh->materialHandle = subMeshes[i].material;
-            }
-        }
-    }
-
-    /**
-     * @brief Ładuje i ustawia animowane szkieletowo modele BrainStem na wysokości terenu.
-     */
-    void loadBrainStemSet() {
-        if (!brainModel_.load(renderer_, meshManager_, materialManager_, assets_, "assets/models/gLTF/BrainStem.glb")) {
-            LOG_WARN("Pomijam glTF: assets/models/gLTF/BrainStem.glb");
-            return;
-        }
-
-        const std::vector<Vec3> brainPositions = {
-            {-40.0f, 0.0f, 20.0f},
-            {10.0f, 0.0f, 10.0f},
-            {-20.0f, 0.0f, 30.0f},
-            {-50.0f, 0.0f, -10.0f},
-            {30.0f, 0.0f, -30.0f},
-        };
-
-        for (size_t i = 0; i < brainPositions.size(); ++i) {
-            GltfSkinnedInstance inst;
-            if (inst.initialize(renderer_, brainModel_)) {
-                Entity* root = inst.instantiate(gameScene_, "brainstem_" + std::to_string(i));
-                root->transform().position = brainPositions[i];
-                root->transform().rotation = {0.0f, static_cast<float>(i) * 72.0f, 0.0f};
-                root->transform().scale = {10.0f, 10.0f, 10.0f};
-                
-                // Snap to terrain and register to stay updated with terrain changes
-                registerTerrainRoot(root, 0.0f);
-                
-                // Offset animation start time so they do not animate in phase-lock sync
-                inst.setAnimationTime(static_cast<float>(i) * 0.7f);
-
-                brainInstances_.push_back(std::move(inst));
-            }
-        }
+        // Przyklejanie do terenu jest teraz automatycznie wykonywane przez silnik (Engine::update)
     }
 
     /**
@@ -847,6 +508,7 @@ private:
         menuMainWindow_->setVisible(false);
         menuPauseWindow_->setVisible(false);
         settingsWindow_->setVisible(false);
+        if (mapSelectionWindow_) mapSelectionWindow_->setVisible(false);
 
         guiMgr_->enableCursor(false); // Blokowanie i ukrycie kursora (potrzebne do obrotu kamery myszką)
         if (gameCamera_) {
@@ -863,6 +525,7 @@ private:
         menuMainWindow_->setVisible(true);
         menuPauseWindow_->setVisible(false);
         settingsWindow_->setVisible(false);
+        if (mapSelectionWindow_) mapSelectionWindow_->setVisible(false);
 
         guiMgr_->setActive("Menu");
         guiMgr_->enableCursor(true);
@@ -875,6 +538,7 @@ private:
         menuMainWindow_->setVisible(false);
         menuPauseWindow_->setVisible(true);
         settingsWindow_->setVisible(false);
+        if (mapSelectionWindow_) mapSelectionWindow_->setVisible(false);
 
         guiMgr_->setActive("Pauza");
         guiMgr_->enableCursor(true);
@@ -887,9 +551,32 @@ private:
         menuMainWindow_->setVisible(false);
         menuPauseWindow_->setVisible(false);
         settingsWindow_->setVisible(true);
+        if (mapSelectionWindow_) mapSelectionWindow_->setVisible(false);
 
         guiMgr_->setActive("Ustawienia");
         guiMgr_->enableCursor(true);
+    }
+
+    void showMapSelection() {
+        menuMainWindow_->setVisible(false);
+        menuPauseWindow_->setVisible(false);
+        settingsWindow_->setVisible(false);
+        if (mapSelectionWindow_) mapSelectionWindow_->setVisible(true);
+
+        guiMgr_->setActive("Wybierz mape");
+        guiMgr_->enableCursor(true);
+
+        if (listMaps_) {
+            listMaps_->clear();
+            namespace fs = std::filesystem;
+            if (fs::exists("assets/maps")) {
+                for (const auto& entry : fs::directory_iterator("assets/maps")) {
+                    if (entry.is_regular_file() && entry.path().extension() == ".map") {
+                        listMaps_->addItem(entry.path().filename().string());
+                    }
+                }
+            }
+        }
     }
 
     void backFromSettings() {
@@ -953,20 +640,9 @@ private:
             gameTerrain_->update(gameCamera_, *e.getMeshManager(), gameTerrain_->meshName());
         }
 
-        // Animacja morfingu klatkowego postaci MD2
-        if (md2Model_ && md2Anim_ && !md2Model_->frames.empty()) {
-            MeshData animatedMesh;
-            animateMd2(*md2Model_, *md2Anim_, dt, animatedMesh);
-            e.getMeshManager()->updateMesh("goblin_md2", animatedMesh);
-        }
 
-        // Aktualizacja animacji szkieletowej modeli BrainStem
-        for (auto& inst : brainInstances_) {
-            inst.update(dt, 0, 1.0f);
-        }
 
         worldTime_ += dt * timeSpeedMultiplier_;
-        resnapTerrainRoots(); // Aktualizacja przyklejenia obiektów do terenu
 
         if (skydome_) {
             skydome_->setTime(worldTime_);
@@ -1147,6 +823,7 @@ private:
 
         nlohmann::json root;
         root["worldTime"] = worldTime_;
+        root["mapPath"] = currentMapPath_;
         root["fogEnabled"] = engine_.isFogEnabled();
         root["lightingEnabled"] = engine_.isLightingEnabled();
         root["shadowsEnabled"] = engine_.shadowsEnabled();
@@ -1197,7 +874,8 @@ private:
             return false;
         }
 
-        if (!ensureGameScene()) {
+        currentMapPath_ = root.value("mapPath", "assets/maps/demo.map");
+        if (!ensureGameScene(currentMapPath_)) {
             LOG_ERROR("Nie udalo sie zainicjalizowac sceny gry.");
             return false;
         }
@@ -1312,6 +990,11 @@ private:
     float statusMessageTimer_ = 0.0f;
     GuiTrackBar* trackTimeSpeed_ = nullptr;
     float timeSpeedMultiplier_ = 1.0f;
+    GuiWindow* mapSelectionWindow_ = nullptr;
+    GuiListBox* listMaps_ = nullptr;
+    GuiButton* btnLoadSelectedMap_ = nullptr;
+    GuiButton* btnMapSelectionBack_ = nullptr;
+    std::string currentMapPath_ = "assets/maps/demo.map";
 };
 
 } // namespace

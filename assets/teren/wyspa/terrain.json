@@ -1,6 +1,6 @@
 {
     "heightMap": "map.bmp",
-    "scaleMap": 10,
+    "scaleMap": 20,
     "scaleHeight": 1.5,
     "scaleTexture": 20,
     "layers": [
