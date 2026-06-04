@@ -54,6 +54,14 @@ public:
     void setEnabled(bool e) { enabled_ = e; }
     void setTime(float t) { time_ = t; }
 
+    bool isSunLightEnabled() const { return config_.enableSunLight; }
+    Vec3 getSunDirection() const;
+    Vec3 getSunColor() const;
+    float getSunIntensity() const;
+    float getAmbientStrength() const;
+    Vec3 getAmbientColor() const;
+    float getTimeOfDay() const { return config_.timeOfDay; }
+
     VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
 
 private:

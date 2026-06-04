@@ -315,6 +315,7 @@ struct SkydomeConfig {
     float cloudSpeed1 = 0.5f;
     float cloudScale0 = 800.0f;
     float cloudScale1 = 400.0f;
+    bool enableSunLight = false;
 };
 
 // Konfiguracja renderingu powierzchni wody (Ocean).

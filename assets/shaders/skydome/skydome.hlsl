@@ -1,7 +1,23 @@
+#include "shared/light_types.hlsl"
+
 cbuffer GlobalUniformBufferObject : register(b0)
 {
     column_major float4x4 view;
     column_major float4x4 proj;
+    float4 camRight;
+    float4 camUp;
+    float4 cameraPos;
+    float4 ambientColor;
+    float ambientStrength;
+    uint lightingEnabled;
+    uint lightCount;
+    uint shadowsEnabled;
+    LightData lights[16];
+    float4 fogColor;
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint fogEnabled;
 };
 
 // Parametry przesyłane co klatkę określające stan atmosfery
@@ -152,8 +168,22 @@ VertexOutput vertexMain(VertexInput input)
  */
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
-    // KROK 1: GRADIENT NIEBA (Horyzont do Zenitu)
-    float3 skyGradient = lerp(skyHorizonColor.rgb, skyTopColor.rgb,
+    float3 sunDir = normalize(float3(sunDirX, sunDirY, sunDirZ));
+    float3 viewDir = normalize(float3(
+        input.worldPos.x - cameraPosition.x,
+        input.worldPos.y - cameraPosition.y,
+        input.worldPos.z - cameraPosition.z));
+    float sunDot = dot(viewDir, sunDir);
+
+    // KROK 1: GRADIENT NIEBA (Zlokalizowany na horyzoncie)
+    float3 coolHorizon = lerp(float3(0.015, 0.015, 0.08), float3(0.48, 0.65, 0.90), saturate(sunColor.a * 0.6));
+    float3 warmHorizon = skyHorizonColor.rgb;
+    
+    // Mieszamy je w zależności od kąta do słońca (sunDot)
+    float horizonBlend = pow(max(sunDot, 0.0), 6.0);
+    float3 finalHorizon = lerp(coolHorizon, warmHorizon, horizonBlend);
+
+    float3 skyGradient = lerp(finalHorizon, skyTopColor.rgb,
                                smoothstep(0.0, 0.55, input.heightFrac));
 
     // KROK 2: DYNAMICZNE CHMURY (Wiatr przesuwa współrzędne w czasie)
@@ -174,8 +204,8 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
 
     // Cieniowanie spodu chmur (im większe zachmurzenie, tym ciemniejsze chmury)
     float darkness = pow(saturate(cloudCoverage), 2.5);
-    float3 cloudLight = float3(0.94, 0.92, 0.90);
-    float3 cloudDark  = float3(0.16, 0.15, 0.14);
+    float3 cloudLight = lerp(float3(0.03, 0.03, 0.06), float3(0.94, 0.92, 0.90), saturate(sunColor.a * 1.5));
+    float3 cloudDark  = lerp(float3(0.01, 0.01, 0.02), float3(0.16, 0.15, 0.14), saturate(sunColor.a * 1.5));
     float3 cloudBase = lerp(cloudLight, cloudDark, darkness);
 
     float cloudVar = (cloudDensity - 0.5) * 0.35 * darkness;
@@ -189,13 +219,7 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     float3 result = lerp(skyGradient, cloudBase, cloudFactor);
 
     // KROK 3: RYSOWANIE SŁOŃCA I POŚWIATY (Sun Disk & Glow)
-    float3 sunDir = normalize(float3(sunDirX, sunDirY, sunDirZ));
-    float3 viewDir = normalize(float3(
-        input.worldPos.x - cameraPosition.x,
-        input.worldPos.y - cameraPosition.y,
-        input.worldPos.z - cameraPosition.z));
-        
-    float sunDot = dot(viewDir, sunDir); // Kąt między wektorem patrzenia a kierunkiem słońca
+    // sunDir, viewDir i sunDot obliczone powyżej
     
     // Potęgowanie eksponencjalne tworzy gładką, nieliniową poświatę (glow) wokół słońca
     float sunGlow = exp((sunDot - 1.0) * sunSize) * sunColor.a;
@@ -237,6 +261,15 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
         // Nadanie losowego odcienia gwiazdy (ciepła pomarańczowa / zimna niebieska)
         float3 starColor = lerp(float3(0.7, 0.8, 1.0), float3(1.0, 0.85, 0.6), starBright * 0.3);
         result += starColor * star;
+    }
+
+    if (fogEnabled != 0u)
+    {
+        // Horizon fog blending for skydome
+        float horizonThickness = 0.22; // Height thickness of the horizon fog layer in sky space
+        float skyFogFactor = saturate(1.0 - max(viewDir.y, 0.0) / horizonThickness);
+        skyFogFactor = pow(skyFogFactor, 2.5); // Sharp transition to blend perfectly at the horizon
+        result = lerp(result, fogColor.rgb, skyFogFactor);
     }
 
     return float4(result, 1.0);

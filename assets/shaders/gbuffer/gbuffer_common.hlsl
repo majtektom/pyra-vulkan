@@ -19,6 +19,11 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16];
+    float4 fogColor;
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint fogEnabled;
 };
 
 // Parametry push constants pojedynczego obiektu

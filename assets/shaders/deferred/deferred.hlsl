@@ -15,6 +15,11 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16];
+    float4 fogColor;
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint fogEnabled;
 };
 
 // Powiązanie tekstur G-Buffera (Set 1 / space1)
@@ -81,39 +86,57 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     // ponieważ nie wymaga on kalkulacji oświetlenia.
     if (worldPosData.w < 0.5) discard;
 
-    // Jeżeli oświetlenie jest wyłączone, zwracamy samo albedo
-    if (lightingEnabled == 0) return float4(baseColor, 1.0);
-
-    float3 V = normalize(cameraPos.xyz - worldPos);
-    float NdotV = max(dot(N, V), 0.0);
-    float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
-
-    float3 Lo = float3(0.0, 0.0, 0.0);
-    uint count = min(lightCount, 16u);
-
-    // KROK 2: OBLICZANIE WPŁYWU DLA WSZYSTKICH ŹRÓDEŁ ŚWIATŁA (w jednym shaderze!)
-    // W odróżnieniu od forward renderingu, nie ma tu problemu z overdrawem (wielokrotnym
-    // uruchamianiem cieniowania pikseli dla nakładającej się geometrii).
-    for (uint i = 0; i < count; i++)
+    float3 color;
+    if (lightingEnabled == 0)
     {
-        float3 L;
-        float3 radiance;
-        uint valid;
-        
-        unpackDirectLight(lights[i], worldPos, L, radiance, valid);
-        if (valid == 0u) continue;
+        color = baseColor;
+        if (shadowsEnabled != 0u && lightCount > 0u)
+        {
+            float shadow = sampleShadowPcf(shadowMapArray, shadowSampler, lights[0], worldPos, N);
+            color = baseColor * lerp(0.35, 1.0, shadow);
+        }
+    }
+    else
+    {
+        float3 V = normalize(cameraPos.xyz - worldPos);
+        float NdotV = max(dot(N, V), 0.0);
+        float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
 
-        // Próbkowanie mapy cieni z PCF
-        float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], worldPos, N) : 1.0;
-        
-        // Sumowanie oświetlenia Cook-Torrance
-        Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance) * shadow;
+        float3 Lo = float3(0.0, 0.0, 0.0);
+        uint count = min(lightCount, 16u);
+
+        // KROK 2: OBLICZANIE WPŁYWU DLA WSZYSTKICH ŹRÓDEŁ ŚWIATŁA (w jednym shaderze!)
+        // W odróżnieniu od forward renderingu, nie ma tu problemu z overdrawem (wielokrotnym
+        // uruchamianiem cieniowania pikseli dla nakładającej się geometrii).
+        for (uint i = 0; i < count; i++)
+        {
+            float3 L;
+            float3 radiance;
+            uint valid;
+            
+            unpackDirectLight(lights[i], worldPos, L, radiance, valid);
+            if (valid == 0u) continue;
+
+            // Próbkowanie mapy cieni z PCF
+            float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], worldPos, N) : 1.0;
+            
+            // Sumowanie oświetlenia Cook-Torrance
+            Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance) * shadow;
+        }
+
+        // KROK 3: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
+        float3 ambientContrib = baseColor * ambientStrength * ambientColor.rgb * ao;
+        color = ambientContrib + Lo + emissive;
+        color = saturate(color);
     }
 
-    // KROK 3: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
-    float3 ambientContrib = baseColor * ambientStrength * ambientColor.rgb * ao;
-    float3 color = ambientContrib + Lo + emissive;
-    color = saturate(color);
+    if (fogEnabled != 0u)
+    {
+        float dist = distance(cameraPos.xyz, worldPos);
+        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
+        fogFactor = saturate(fogFactor);
+        color = lerp(fogColor.rgb, color, fogFactor);
+    }
 
     return float4(color, 1.0);
 }

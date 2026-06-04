@@ -244,7 +244,7 @@ int main() {
             // Obliczenie wysokości (Elevation) i azymutu (Azimuth) słońca na niebie
             float dayProgress = (timeOfDay - 6.0f) / 12.0f; // Postęp dnia w godzinach 6:00 - 18:00
             dayProgress = std::max(0.0f, std::min(1.0f, dayProgress));
-            float sunEl = std::sin(dayProgress * 3.1415926535f) * 65.0f; // Słońce wschodzi na max 65 stopni
+            float sunEl = std::sin(dayProgress * PI) * 65.0f; // Słońce wschodzi na max 65 stopni
             float sunAz = 90.0f + dayProgress * 180.0f;                  // Ruch ze wschodu (90) na zachód (270)
 
             // Re-konfiguracja parametrów kopuły nieba

@@ -865,7 +865,7 @@ void Model3ds::readKeyFrameRotations(tChunk* previousChunk) {
         vFrameNumber.push_back(frameNumber);
         previousChunk->bytesRead += fread(&lunknown, 1, sizeof(long), filePointer);
         previousChunk->bytesRead += fread(&rotationDegree, 1, sizeof(float), filePointer);
-        rotationDegree = rotationDegree * (180.0f / 3.14159f);
+        rotationDegree = rotationDegree * (180.0f / PI);
         vRotDegree.push_back(rotationDegree);
 
         float rot[3];

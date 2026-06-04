@@ -1,7 +1,23 @@
+#include "shared/light_types.hlsl"
+
 cbuffer GlobalUniformBufferObject : register(b0)
 {
     column_major float4x4 view;
     column_major float4x4 proj;
+    float4 camRight;
+    float4 camUp;
+    float4 cameraPos;
+    float4 ambientColor;
+    float ambientStrength;
+    uint lightingEnabled;
+    uint lightCount;
+    uint shadowsEnabled;
+    LightData lights[16];
+    float4 fogColor;
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint fogEnabled;
 };
 
 // Parametry oceanu przesyłane co klatkę
@@ -159,6 +175,14 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     result += sunSpec * 0.8;
     result += subSurf;
     result = lerp(result, foamColor, foam * 0.4); // Nałożenie piany na grzbiety fal
+
+    if (fogEnabled != 0u)
+    {
+        float dist = distance(cameraPos.xyz, input.worldPos);
+        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
+        fogFactor = saturate(fogFactor);
+        result = lerp(fogColor.rgb, result, fogFactor);
+    }
 
     return float4(result, alpha);
 }

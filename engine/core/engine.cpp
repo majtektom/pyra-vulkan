@@ -377,6 +377,30 @@ void Engine::setAmbientColor(float r, float g, float b) {
     if (renderer) renderer->setAmbientColor(r, g, b);
 }
 
+void Engine::setFogEnabled(bool enabled) {
+    if (renderer) renderer->setFogEnabled(enabled);
+}
+
+bool Engine::isFogEnabled() const {
+    return renderer ? renderer->isFogEnabled() : false;
+}
+
+void Engine::setFogColor(float r, float g, float b) {
+    if (renderer) renderer->setFogColor(r, g, b);
+}
+
+void Engine::setFogStart(float start) {
+    if (renderer) renderer->setFogStart(start);
+}
+
+void Engine::setFogEnd(float end) {
+    if (renderer) renderer->setFogEnd(end);
+}
+
+void Engine::setFogDensity(float density) {
+    if (renderer) renderer->setFogDensity(density);
+}
+
 void Engine::bindActionKey(std::string_view action, int scancode) {
     inputActions_.bindKey(action, scancode);
 }

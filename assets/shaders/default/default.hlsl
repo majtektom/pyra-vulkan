@@ -14,6 +14,11 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16]; // Dane oświetlenia (maksymalnie 16 dynamicznych świateł na scenie)
+    float4 fogColor;
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint fogEnabled;
 };
 
 // Szybki bufor Push Constants powiązany z konkretnym renderowanym obiektem
@@ -135,52 +140,62 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
         }
     }
 
-    // Jeśli oświetlenie jest wyłączone (np. tryb unlit), zwracamy czysty albedo
+    float3 color;
     if (lightingEnabled == 0)
     {
-        return baseColor;
+        color = baseColor.rgb;
     }
-
-    // KROK 3: ODCZYT PARAMETRÓW FIZYCZNYCH PBR (Metallic, Roughness, Ambient Occlusion, Emissive)
-    // glTF przechowuje parametry metaliczności i szorstkości w jednej teksturze:
-    // zielony (G) = roughness, niebieski (B) = metallic.
-    float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
-    float metallic = metallicRoughness.x * metallicFactor;
-    float roughness = max(metallicRoughness.y * roughnessFactor, 0.04); // Zabezpieczenie przed zbyt idealną gładkością
-
-    float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;      // Maska ocienienia otoczenia (Ambient Occlusion)
-    float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb; // Kolor samozjarzenia (Emissive)
-
-    float3 V = normalize(cameraPos.xyz - input.worldPos); // Wektor do oka obserwatora (View vector)
-    float NdotV = max(dot(N, V), 0.0);
-
-    // KROK 4: WYLICZENIE ODBICIA BAZOWEGO (F0)
-    // Dla dielektryków (plastik, drewno) F0 wynosi średnio 0.04. Dla metali F0 jest równe kolorowi albedo.
-    float3 F0 = float3(0.04, 0.04, 0.04);
-    F0 = lerp(F0, baseColor.rgb, metallic);
-
-    // KROK 5: SUMOWANIE OŚWIETLENIA DLA WSZYSTKICH ŹRÓDEŁ ŚWIATŁA
-    float3 Lo = float3(0.0, 0.0, 0.0);
-    uint count = min(lightCount, 16u);
-    for (uint i = 0; i < count; i++)
+    else
     {
-        float3 L;
-        float3 radiance;
-        uint valid;
-        
-        // Wyznaczenie natężenia i kierunku padania światła
-        unpackDirectLight(lights[i], input.worldPos, L, radiance, valid);
-        if (valid == 0u) continue;
+        // KROK 3: ODCZYT PARAMETRÓW FIZYCZNYCH PBR (Metallic, Roughness, Ambient Occlusion, Emissive)
+        // glTF przechowuje parametry metaliczności i szorstkości w jednej teksturze:
+        // zielony (G) = roughness, niebieski (B) = metallic.
+        float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
+        float metallic = metallicRoughness.x * metallicFactor;
+        float roughness = max(metallicRoughness.y * roughnessFactor, 0.04); // Zabezpieczenie przed zbyt idealną gładkością
 
-        // Cook-Torrance specular BRDF
-        Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
+        float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;      // Maska ocienienia otoczenia (Ambient Occlusion)
+        float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb; // Kolor samozjarzenia (Emissive)
+
+        float3 V = normalize(cameraPos.xyz - input.worldPos); // Wektor do oka obserwatora (View vector)
+        float NdotV = max(dot(N, V), 0.0);
+
+        // KROK 4: WYLICZENIE ODBICIA BAZOWEGO (F0)
+        // Dla dielektryków (plastik, drewno) F0 wynosi średnio 0.04. Dla metali F0 jest równe kolorowi albedo.
+        float3 F0 = float3(0.04, 0.04, 0.04);
+        F0 = lerp(F0, baseColor.rgb, metallic);
+
+        // KROK 5: SUMOWANIE OŚWIETLENIA DLA WSZYSTKICH ŹRÓDEŁ ŚWIATŁA
+        float3 Lo = float3(0.0, 0.0, 0.0);
+        uint count = min(lightCount, 16u);
+        for (uint i = 0; i < count; i++)
+        {
+            float3 L;
+            float3 radiance;
+            uint valid;
+            
+            // Wyznaczenie natężenia i kierunku padania światła
+            unpackDirectLight(lights[i], input.worldPos, L, radiance, valid);
+            if (valid == 0u) continue;
+
+            // Cook-Torrance specular BRDF
+            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
+        }
+
+        // KROK 6: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
+        float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
+        color = ambientContrib + Lo + emissive;
+
+        color = saturate(color); // Obcięcie do bezpiecznego zakresu [0.0, 1.0]
     }
 
-    // KROK 6: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
-    float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
-    float3 color = ambientContrib + Lo + emissive;
-
-    color = saturate(color); // Obcięcie do bezpiecznego zakresu [0.0, 1.0]
+    if (fogEnabled != 0u)
+    {
+        float dist = distance(cameraPos.xyz, input.worldPos);
+        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
+        fogFactor = saturate(fogFactor);
+        color = lerp(fogColor.rgb, color, fogFactor);
+    }
 
     return float4(color, baseColor.a);
 }

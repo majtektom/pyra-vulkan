@@ -7,7 +7,7 @@
 
 namespace engine3d {
 
-static float degToRad(float d) { return d * 3.1415926535f / 180.0f; }
+static float degToRad(float d) { return d * PI / 180.0f; }
 
 CameraController::CameraController() = default;
 
@@ -37,10 +37,10 @@ void CameraController::setPositionAndTarget(const Vec3& pos, const Vec3& target)
     Vec3 forward = normalize(subtract(target, pos));
     
     // Wyznaczamy kąt Pitch (pochylenia) za pomocą funkcji arcsin (y to wysokość wektora).
-    pitchDegrees_ = std::asin(std::clamp(forward.y, -1.0f, 1.0f)) * 180.0f / 3.1415926535f;
+    pitchDegrees_ = std::asin(std::clamp(forward.y, -1.0f, 1.0f)) * 180.0f / PI;
     
     // Wyznaczamy kąt Yaw (obrotu wokół osi Y) za pomocą funkcji atan2 z rzutu wektora na płaszczyznę XZ.
-    headingDegrees_ = std::atan2(-forward.x, -forward.z) * 180.0f / 3.1415926535f;
+    headingDegrees_ = std::atan2(-forward.x, -forward.z) * 180.0f / PI;
 }
 
 void CameraController::update(float deltaTime, CameraComponent& cam) {

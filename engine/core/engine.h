@@ -130,6 +130,13 @@ public:
     void setAmbientStrength(float strength);
     void setAmbientColor(float r, float g, float b);
 
+    void setFogEnabled(bool enabled);
+    bool isFogEnabled() const;
+    void setFogColor(float r, float g, float b);
+    void setFogStart(float start);
+    void setFogEnd(float end);
+    void setFogDensity(float density);
+
     std::function<void(float, Engine&)> onUpdate;
 
 private:

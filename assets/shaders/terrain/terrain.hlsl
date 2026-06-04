@@ -15,6 +15,11 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16];
+    float4 fogColor;
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint fogEnabled;
 };
 
 // Parametry push constants dla terenu (w tym tablice indeksów warstw i masek)
@@ -178,46 +183,63 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
         }
     }
 
+    float3 color;
     if (lightingEnabled == 0)
     {
-        return baseColor;
+        color = baseColor.rgb;
+        if (shadowsEnabled != 0u && lightCount > 0u)
+        {
+            float shadow = sampleShadowPcf(shadowMapArray, shadowSampler, lights[0], input.worldPos, N);
+            color = baseColor.rgb * lerp(0.35, 1.0, shadow);
+        }
     }
-
-    // Odczyt parametrów PBR
-    float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
-    float metallic = metallicRoughness.x * metallicFactor;
-    float roughness = max(metallicRoughness.y * roughnessFactor, 0.04);
-
-    float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
-    float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
-
-    float3 V = normalize(cameraPos.xyz - input.worldPos);
-    float NdotV = max(dot(N, V), 0.0);
-
-    float3 F0 = float3(0.04, 0.04, 0.04);
-    F0 = lerp(F0, baseColor.rgb, metallic);
-
-    float3 Lo = float3(0.0, 0.0, 0.0);
-
-    // KROK 2: WYDLICZENIE OŚWIETLENIA BEZPOŚREDNIEGO Z UWZGLĘDNIENIEM MAPY CIENI
-    uint count = min(lightCount, 16u);
-    for (uint i = 0; i < count; i++)
+    else
     {
-        float3 L;
-        float3 radiance;
-        uint valid;
-        unpackDirectLight(lights[i], input.worldPos, L, radiance, valid);
-        if (valid == 0u) continue;
+        // Odczyt parametrów PBR
+        float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
+        float metallic = metallicRoughness.x * metallicFactor;
+        float roughness = max(metallicRoughness.y * roughnessFactor, 0.04);
 
-        // Próbkowanie mapy cieni (Shadow Map) z filtrowaniem PCF
-        float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], input.worldPos, N) : 1.0;
-        
-        // Zastosowanie cienia jako mnożnik oświetlenia bezpośredniego
-        Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance) * shadow;
+        float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
+        float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
+
+        float3 V = normalize(cameraPos.xyz - input.worldPos);
+        float NdotV = max(dot(N, V), 0.0);
+
+        float3 F0 = float3(0.04, 0.04, 0.04);
+        F0 = lerp(F0, baseColor.rgb, metallic);
+
+        float3 Lo = float3(0.0, 0.0, 0.0);
+
+        // KROK 2: WYDLICZENIE OŚWIETLENIA BEZPOŚREDNIEGO Z UWZGLĘDNIENIEM MAPY CIENI
+        uint count = min(lightCount, 16u);
+        for (uint i = 0; i < count; i++)
+        {
+            float3 L;
+            float3 radiance;
+            uint valid;
+            unpackDirectLight(lights[i], input.worldPos, L, radiance, valid);
+            if (valid == 0u) continue;
+
+            // Próbkowanie mapy cieni (Shadow Map) z filtrowaniem PCF
+            float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], input.worldPos, N) : 1.0;
+            
+            // Zastosowanie cienia jako mnożnik oświetlenia bezpośredniego
+            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance) * shadow;
+        }
+
+        float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
+        color = ambientContrib + Lo + emissive;
+        color = saturate(color);
     }
 
-    float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
-    float3 color = ambientContrib + Lo + emissive;
-    color = saturate(color);
+    if (fogEnabled != 0u)
+    {
+        float dist = distance(cameraPos.xyz, input.worldPos);
+        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
+        fogFactor = saturate(fogFactor);
+        color = lerp(fogColor.rgb, color, fogFactor);
+    }
+
     return float4(color, baseColor.a);
 }

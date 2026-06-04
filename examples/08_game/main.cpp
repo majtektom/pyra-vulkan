@@ -8,6 +8,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #include "camera/camera_component.h"
 #include "core/engine.h"
@@ -19,6 +21,7 @@
 #include "feature/gui/gui_check_box.h"
 #include "feature/gui/gui_combo_box.h"
 #include "feature/gui/gui_static_text.h"
+#include "feature/gui/gui_track_bar.h"
 #include "object/gltf/model_gltf.h"
 #include "object/model_3ds.h"
 #include "object/model_md2.h"
@@ -186,7 +189,7 @@ private:
         // Dodanie okien i widgetów
         menuMainWindow_ = guiMgr_->addWindow("Menu", 520, 180, 360, 300);
         menuPauseWindow_ = guiMgr_->addWindow("Pauza", 520, 180, 360, 300);
-        settingsWindow_ = guiMgr_->addWindow("Ustawienia", 480, 120, 440, 430);
+        settingsWindow_ = guiMgr_->addWindow("Ustawienia", 480, 120, 440, 570);
         if (!menuMainWindow_ || !menuPauseWindow_ || !settingsWindow_) {
             return false;
         }
@@ -198,7 +201,9 @@ private:
         btnNewGame_->setText("Nowa gra");
         btnSettingsMain_ = new GuiButton(menuMainWindow_, "settings", 10, 105, 200, 34);
         btnSettingsMain_->setText("Ustawienia");
-        btnExitMain_ = new GuiButton(menuMainWindow_, "exit", 10, 150, 200, 34);
+        btnLoadMain_ = new GuiButton(menuMainWindow_, "load_game", 10, 150, 200, 34);
+        btnLoadMain_->setText("Wczytaj gre");
+        btnExitMain_ = new GuiButton(menuMainWindow_, "exit", 10, 195, 200, 34);
         btnExitMain_->setText("Wyjscie");
 
         // Widgety Menu Pauzy
@@ -208,8 +213,12 @@ private:
         btnContinue_->setText("Kontynuuj");
         btnSettingsPause_ = new GuiButton(menuPauseWindow_, "settings", 10, 105, 200, 34);
         btnSettingsPause_->setText("Ustawienia");
-        btnEnd_ = new GuiButton(menuPauseWindow_, "end", 10, 150, 200, 34);
-        btnEnd_->setText("Koniec");
+        btnSavePause_ = new GuiButton(menuPauseWindow_, "save_game", 10, 150, 200, 34);
+        btnSavePause_->setText("Zapisz gre");
+        btnLoadPause_ = new GuiButton(menuPauseWindow_, "load_game", 10, 195, 200, 34);
+        btnLoadPause_->setText("Wczytaj gre");
+        btnEnd_ = new GuiButton(menuPauseWindow_, "end", 10, 240, 200, 34);
+        btnEnd_->setText("Wyjscie");
 
         // Widgety Ustawień Graficznych
         auto* settingsTitle = new GuiStaticText(settingsWindow_, "title", 10, 10);
@@ -256,7 +265,24 @@ private:
         checkWireframe_->setText("Wyswietlaj siatke (Wireframe)");
         checkWireframe_->setChecked(engine_.isWireframeEnabled());
 
-        btnSettingsBack_ = new GuiButton(settingsWindow_, "back", 10, 384, 180, 30);
+        checkFog_ = new GuiCheckBox(settingsWindow_, "fog", 10, 382);
+        checkFog_->setText("Wlacz mgle (Fog)");
+        checkFog_->setChecked(engine_.isFogEnabled());
+
+        checkLighting_ = new GuiCheckBox(settingsWindow_, "lighting", 10, 412);
+        checkLighting_->setText("Wlacz oswietlenie (Lighting)");
+        checkLighting_->setChecked(engine_.isLightingEnabled());
+
+        checkShadows_ = new GuiCheckBox(settingsWindow_, "shadows", 10, 442);
+        checkShadows_->setText("Wlacz cienie (Shadows)");
+        checkShadows_->setChecked(engine_.shadowsEnabled());
+
+        auto* timeSpeedLabel = new GuiStaticText(settingsWindow_, "time_speed_label", 10, 466);
+        timeSpeedLabel->setText("Szybkosc uplywu czasu (mnoznik)");
+        trackTimeSpeed_ = new GuiTrackBar(settingsWindow_, "time_speed", 10, 490, 260, 1, 500);
+        trackTimeSpeed_->setValue(static_cast<int>(timeSpeedMultiplier_));
+
+        btnSettingsBack_ = new GuiButton(settingsWindow_, "back", 10, 524, 180, 30);
         btnSettingsBack_->setText("Wroc");
 
         wireGuiCallbacks();
@@ -280,6 +306,36 @@ private:
             }
             enterGame();
         });
+        btnLoadMain_->setOnClick([this]() {
+            if (loadGameScene("save/save.json")) {
+                statusMessage_ = "Wczytano stan gry!";
+                statusMessageTimer_ = 3.0f;
+                enterGame();
+            } else {
+                statusMessage_ = "Nie znaleziono zapisu gry!";
+                statusMessageTimer_ = 3.0f;
+            }
+        });
+        btnSavePause_->setOnClick([this]() {
+            if (saveGameScene("save/save.json")) {
+                statusMessage_ = "Stan gry zostal zapisany!";
+                statusMessageTimer_ = 3.0f;
+                enterGame();
+            } else {
+                statusMessage_ = "Nie udalo sie zapisac gry!";
+                statusMessageTimer_ = 3.0f;
+            }
+        });
+        btnLoadPause_->setOnClick([this]() {
+            if (loadGameScene("save/save.json")) {
+                statusMessage_ = "Wczytano stan gry!";
+                statusMessageTimer_ = 3.0f;
+                enterGame();
+            } else {
+                statusMessage_ = "Nie znaleziono zapisu gry!";
+                statusMessageTimer_ = 3.0f;
+            }
+        });
         btnSettingsMain_->setOnClick([this]() {
             showSettings();
         });
@@ -288,6 +344,9 @@ private:
         });
         btnSettingsBack_->setOnClick([this]() {
             backFromSettings();
+        });
+        trackTimeSpeed_->setOnChange([this](int val) {
+            timeSpeedMultiplier_ = static_cast<float>(val) / 100.0f;
         });
         btnExitMain_->setOnClick([]() {
             pushQuitEvent();
@@ -334,6 +393,15 @@ private:
         checkWireframe_->setOnToggle([this](bool on) {
             engine_.setWireframeEnabled(on);
         });
+        checkFog_->setOnToggle([this](bool on) {
+            engine_.setFogEnabled(on);
+        });
+        checkLighting_->setOnToggle([this](bool on) {
+            engine_.setLightingEnabled(on);
+        });
+        checkShadows_->setOnToggle([this](bool on) {
+            engine_.setShadowsEnabled(on);
+        });
     }
 
     /**
@@ -342,13 +410,16 @@ private:
     void applyGraphicsPreset(const std::string& preset) {
         if (preset == "Niska") {
             engine_.setShadowsEnabled(false);
+            if (checkShadows_) checkShadows_->setChecked(false);
             engine_.setAmbientStrength(0.55f);
         } else if (preset == "Srednia") {
             engine_.setShadowsEnabled(true);
+            if (checkShadows_) checkShadows_->setChecked(true);
             engine_.configureDirectionalShadow(130.0f);
             engine_.setAmbientStrength(0.40f);
         } else {
             engine_.setShadowsEnabled(true);
+            if (checkShadows_) checkShadows_->setChecked(true);
             engine_.configureDirectionalShadow(220.0f);
             engine_.setAmbientStrength(0.28f);
         }
@@ -385,8 +456,7 @@ private:
     }
 
     void setupLighting() {
-        gameScene_->createDirectionalLight(
-            "game_sun", Vec3{1.4f, 2.2f, 1.1f}, Vec3{1.0f, 0.96f, 0.9f}, 3.2f);
+        // Światło słońca jest teraz tworzone i aktualizowane dynamicznie przez SkydomeRenderer w pętli gry
     }
 
     void setupTerrain() {
@@ -441,13 +511,14 @@ private:
         SkydomeConfig skydomeCfg;
         skydomeCfg.enabled = true;
         skydomeCfg.domeScale = 1.6f;
-        skydomeCfg.timeOfDay = 11.0f;
+        skydomeCfg.timeOfDay = 23.0f;
         skydomeCfg.cloudCoverage = 0.35f;
         skydomeCfg.cloudSpeed0 = 0.25f;
         skydomeCfg.cloudSpeed1 = 0.12f;
         skydomeCfg.cloudScale0 = 1200.0f;
         skydomeCfg.cloudScale1 = 820.0f;
         skydomeCfg.sunElevation = 50.0f;
+        skydomeCfg.enableSunLight = true;
         skydome_->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
         skydome_->setEnabled(true);
         renderer_->addFeature(skydome_);
@@ -463,6 +534,14 @@ private:
         ocean_->configure(oceanCfg, "bin/assets/shaders/ocean", "ocean");
         ocean_->setEnabled(true);
         renderer_->addFeature(ocean_);
+
+        // Konfiguracja domyslnej mgly zintegrowanej z horyzontem skydome
+        engine_.setFogEnabled(true);
+        engine_.setFogColor(0.575f, 0.68f, 0.88f); // Jasny niebieski zblizony do horyzontu skydome
+        engine_.setFogStart(150.0f);
+        engine_.setFogEnd(3500.0f);
+        engine_.setFogDensity(0.83f);
+        if (checkFog_) checkFog_->setChecked(true);
     }
 
     void setupCamera() {
@@ -827,6 +906,10 @@ private:
     void update(float dt, Engine& e) {
         const auto& snap = e.input();
 
+        if (statusMessageTimer_ > 0.0f) {
+            statusMessageTimer_ -= dt;
+        }
+
         if (e.actionPressed(kActionToggleDebug)) {
             debugOverlayEnabled_ = !debugOverlayEnabled_;
         }
@@ -882,11 +965,41 @@ private:
             inst.update(dt, 0, 1.0f);
         }
 
-        worldTime_ += dt;
+        worldTime_ += dt * timeSpeedMultiplier_;
         resnapTerrainRoots(); // Aktualizacja przyklejenia obiektów do terenu
 
         if (skydome_) {
             skydome_->setTime(worldTime_);
+            if (skydome_->isSunLightEnabled()) {
+                Vec3 sunDir = skydome_->getSunDirection();
+                Vec3 sunCol = skydome_->getSunColor();
+                float sunIntensity = skydome_->getSunIntensity();
+
+                auto* sunLight = gameScene_->getEntity("game_sun");
+                if (sunLight) {
+                    auto* lightComp = sunLight->getComponent<LightComponent>();
+                    if (lightComp) {
+                        lightComp->direction = sunDir;
+                        lightComp->color = sunCol;
+                        lightComp->intensity = sunIntensity;
+                    }
+                } else {
+                    gameScene_->createDirectionalLight("game_sun", sunDir, sunCol, sunIntensity);
+                }
+
+                // Dynamic ambient light adjusted by skydome
+                float ambientStrength = skydome_->getAmbientStrength();
+                Vec3 ambientColor = skydome_->getAmbientColor();
+                engine_.setAmbientStrength(ambientStrength);
+                engine_.setAmbientColor(ambientColor.x, ambientColor.y, ambientColor.z);
+
+                // Dynamic fog color linked to ambient light intensity (almost black at night)
+                float t = std::clamp((ambientStrength - 0.065f) / (0.28f - 0.065f), 0.0f, 1.0f);
+                float fogR = 0.005f + (0.575f - 0.005f) * t;
+                float fogG = 0.006f + (0.68f - 0.006f) * t;
+                float fogB = 0.012f + (0.88f - 0.012f) * t;
+                engine_.setFogColor(fogR, fogG, fogB);
+            }
         }
         if (ocean_) {
             ocean_->setTime(worldTime_);
@@ -920,6 +1033,10 @@ private:
                         static_cast<float>(e.getRenderer()->height()));
         guiMgr_->renderGui();
 
+        if (statusMessageTimer_ > 0.0f) {
+            e.setTextLabel(statusMessage_, "times", 12.0f, static_cast<float>(e.getRenderer()->height() - 40), 0.6f, {0.2f, 1.0f, 0.2f, 1.0f});
+        }
+
         std::ostringstream fps;
         fps << "FPS: " << static_cast<int>(e.getCurrentFPS());
         e.setTextLabel(fps.str(), "times", 12.0f, 20.0f, 0.6f, {1.0f, 0.95f, 0.3f, 1.0f});
@@ -930,8 +1047,35 @@ private:
             e.setTextLabel("ESC: wyjscie", "times", 12.0f, 46.0f, 0.52f, {0.8f, 0.9f, 1.0f, 1.0f});
         }
 
+        // Wyświetlanie godziny ze skydome oraz czasu do zachodu/wschodu
+        std::ostringstream hudTime;
+        if (skydome_) {
+            float tod = skydome_->getTimeOfDay();
+            int hours = static_cast<int>(tod);
+            int minutes = static_cast<int>((tod - hours) * 60.0f);
+            
+            hudTime << "Czas gry: " 
+                    << (hours < 10 ? "0" : "") << hours << ":" 
+                    << (minutes < 10 ? "0" : "") << minutes;
+            
+            if (tod >= 6.0f && tod < 18.0f) {
+                float diff = 18.0f - tod;
+                int diffH = static_cast<int>(diff);
+                int diffM = static_cast<int>((diff - diffH) * 60.0f);
+                hudTime << " (Do zachodu: " << diffH << "h " << diffM << "m)";
+            } else {
+                float diff = (tod >= 18.0f) ? (24.0f - tod + 6.0f) : (6.0f - tod);
+                int diffH = static_cast<int>(diff);
+                int diffM = static_cast<int>((diff - diffH) * 60.0f);
+                hudTime << " (Do wschodu: " << diffH << "h " << diffM << "m)";
+            }
+        } else {
+            hudTime << "Czas gry: --:--";
+        }
+        e.setTextLabel(hudTime.str(), "times", 12.0f, 72.0f, 0.52f, {0.3f, 1.0f, 0.3f, 1.0f});
+
         if (!debugOverlayEnabled_) {
-            e.setTextLabel("F2: debug", "times", 12.0f, 72.0f, 0.46f, {0.65f, 0.75f, 0.9f, 1.0f});
+            e.setTextLabel("F2: debug", "times", 12.0f, 98.0f, 0.46f, {0.65f, 0.75f, 0.9f, 1.0f});
             return;
         }
 
@@ -945,14 +1089,14 @@ private:
         const std::size_t activeEntities = active ? active->getEntities().size() : 0;
         const std::size_t gameEntities = gameScene_ ? gameScene_->getEntities().size() : 0;
 
-        e.setTextLabel("F2: debug ON", "times", 12.0f, 72.0f, 0.50f, {0.95f, 0.82f, 0.35f, 1.0f});
+        e.setTextLabel("F2: debug ON", "times", 12.0f, 98.0f, 0.50f, {0.95f, 0.82f, 0.35f, 1.0f});
 
         std::ostringstream line1;
         line1 << "mode=" << modeText
               << " scene=" << (active ? "active" : "none")
               << " scene_entities=" << activeEntities
               << " game_entities=" << gameEntities;
-        e.setTextLabel(line1.str(), "times", 12.0f, 94.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
+        e.setTextLabel(line1.str(), "times", 12.0f, 120.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
 
         std::ostringstream line2;
         line2 << "terrain=" << (gameTerrain_ ? "yes" : "no");
@@ -963,7 +1107,7 @@ private:
               << " car_roots=" << carRoots_.size();
         line2 << " skydome=" << (skydome_ ? "yes" : "no")
               << " ocean=" << (ocean_ ? "yes" : "no");
-        e.setTextLabel(line2.str(), "times", 12.0f, 116.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
+        e.setTextLabel(line2.str(), "times", 12.0f, 142.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
 
         if (gameCamera_) {
             const auto& pos = gameCamera_->getOwner()->transform().position;
@@ -973,7 +1117,7 @@ private:
                 const float h = gameTerrain_->getHeight(pos.x, pos.z);
                 line3 << " terrain_h=" << static_cast<int>(h);
             }
-            e.setTextLabel(line3.str(), "times", 12.0f, 138.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
+            e.setTextLabel(line3.str(), "times", 12.0f, 164.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
         }
 
         if (gameScene_ && !carRoots_.empty()) {
@@ -981,8 +1125,126 @@ private:
             line4 << "hierarchy children(car0)=" << gameScene_->childrenOf(carRoots_[0]).size()
                   << " parent_ok=" << parentLinkSuccessCount_
                   << " parent_fail=" << parentLinkFailCount_;
-            e.setTextLabel(line4.str(), "times", 12.0f, 160.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
+            e.setTextLabel(line4.str(), "times", 12.0f, 186.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
         }
+    }
+
+    Vec3 vec3FromJson(const nlohmann::json& node, const Vec3& fallback) {
+        Vec3 result = fallback;
+        if (node.is_object()) {
+            result.x = node.value("x", result.x);
+            result.y = node.value("y", result.y);
+            result.z = node.value("z", result.z);
+        }
+        return result;
+    }
+
+    bool saveGameScene(const std::string& filePath) {
+        if (!gameSceneReady_ || !gameScene_) {
+            LOG_ERROR("Gra nie zostala jeszcze uruchomiona.");
+            return false;
+        }
+
+        nlohmann::json root;
+        root["worldTime"] = worldTime_;
+        root["fogEnabled"] = engine_.isFogEnabled();
+        root["lightingEnabled"] = engine_.isLightingEnabled();
+        root["shadowsEnabled"] = engine_.shadowsEnabled();
+
+        if (gameCamera_) {
+            root["camera"] = {
+                {"target", {{"x", gameCamera_->target.x}, {"y", gameCamera_->target.y}, {"z", gameCamera_->target.z}}}
+            };
+        }
+
+        auto entitiesVal = nlohmann::json::array();
+        for (const auto& entity : gameScene_->getEntities()) {
+            nlohmann::json e;
+            e["name"] = entity->getName();
+            e["active"] = entity->isActive();
+
+            const auto& t = entity->transform();
+            e["transform"] = {
+                {"position", {{"x", t.position.x}, {"y", t.position.y}, {"z", t.position.z}}},
+                {"rotation", {{"x", t.rotation.x}, {"y", t.rotation.y}, {"z", t.rotation.z}}},
+                {"scale", {{"x", t.scale.x}, {"y", t.scale.y}, {"z", t.scale.z}}}
+            };
+            entitiesVal.push_back(e);
+        }
+        root["entities"] = entitiesVal;
+
+        std::ofstream out(filePath);
+        if (!out.is_open()) {
+            LOG_ERROR("Nie udalo sie otworzyc pliku do zapisu: {}", filePath);
+            return false;
+        }
+        out << root.dump(2);
+        return out.good();
+    }
+
+    bool loadGameScene(const std::string& filePath) {
+        std::ifstream in(filePath);
+        if (!in.is_open()) {
+            LOG_ERROR("Nie udalo sie otworzyc pliku do odczytu: {}", filePath);
+            return false;
+        }
+
+        nlohmann::json root;
+        try {
+            in >> root;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Blad parsowania JSON przy wczytywaniu: {}", e.what());
+            return false;
+        }
+
+        if (!ensureGameScene()) {
+            LOG_ERROR("Nie udalo sie zainicjalizowac sceny gry.");
+            return false;
+        }
+
+        worldTime_ = root.value("worldTime", 0.0f);
+        if (skydome_) skydome_->setTime(worldTime_);
+        if (ocean_) ocean_->setTime(worldTime_);
+
+        bool fogOn = root.value("fogEnabled", true);
+        engine_.setFogEnabled(fogOn);
+        if (checkFog_) checkFog_->setChecked(fogOn);
+
+        bool lightOn = root.value("lightingEnabled", true);
+        engine_.setLightingEnabled(lightOn);
+        if (checkLighting_) checkLighting_->setChecked(lightOn);
+
+        bool shadowsOn = root.value("shadowsEnabled", true);
+        engine_.setShadowsEnabled(shadowsOn);
+        if (checkShadows_) checkShadows_->setChecked(shadowsOn);
+
+        if (root.contains("camera") && root["camera"].is_object()) {
+            const auto& cam = root["camera"];
+            if (gameCamera_) {
+                gameCamera_->target = vec3FromJson(cam.value("target", nlohmann::json::object()), gameCamera_->target);
+            }
+        }
+
+        if (root.contains("entities") && root["entities"].is_array()) {
+            for (const auto& e : root["entities"]) {
+                std::string name = e.value("name", "");
+                if (name.empty()) continue;
+
+                Entity* entity = gameScene_->getEntity(name);
+                if (entity) {
+                    entity->setActive(e.value("active", true));
+                    if (e.contains("transform") && e["transform"].is_object()) {
+                        const auto& t = e["transform"];
+                        entity->transform().position = vec3FromJson(t.value("position", nlohmann::json::object()), entity->transform().position);
+                        entity->transform().rotation = vec3FromJson(t.value("rotation", nlohmann::json::object()), entity->transform().rotation);
+                        entity->transform().scale = vec3FromJson(t.value("scale", nlohmann::json::object()), entity->transform().scale);
+                    }
+                }
+            }
+        }
+
+        LOG_INFO("Pomyslnie wczytano stan sceny z pliku: {}", filePath);
+        return true;
     }
 
 private:
@@ -1007,9 +1269,12 @@ private:
 
     GuiButton* btnNewGame_ = nullptr;
     GuiButton* btnSettingsMain_ = nullptr;
+    GuiButton* btnLoadMain_ = nullptr;
     GuiButton* btnExitMain_ = nullptr;
     GuiButton* btnContinue_ = nullptr;
     GuiButton* btnSettingsPause_ = nullptr;
+    GuiButton* btnSavePause_ = nullptr;
+    GuiButton* btnLoadPause_ = nullptr;
     GuiButton* btnEnd_ = nullptr;
     GuiButton* btnSettingsBack_ = nullptr;
 
@@ -1019,6 +1284,9 @@ private:
     GuiComboBox* comboPresent_ = nullptr;
     GuiCheckBox* checkFullscreen_ = nullptr;
     GuiCheckBox* checkWireframe_ = nullptr;
+    GuiCheckBox* checkFog_ = nullptr;
+    GuiCheckBox* checkLighting_ = nullptr;
+    GuiCheckBox* checkShadows_ = nullptr;
 
     std::shared_ptr<Terrain> gameTerrain_;
     std::shared_ptr<SkydomeRenderer> skydome_;
@@ -1040,6 +1308,10 @@ private:
     bool debugOverlayEnabled_ = true;
     bool gameSceneReady_ = false;
     float worldTime_ = 0.0f;
+    std::string statusMessage_;
+    float statusMessageTimer_ = 0.0f;
+    GuiTrackBar* trackTimeSpeed_ = nullptr;
+    float timeSpeedMultiplier_ = 1.0f;
 };
 
 } // namespace

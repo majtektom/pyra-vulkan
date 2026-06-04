@@ -5,6 +5,9 @@
 
 namespace engine3d {
 
+constexpr float PI	= 3.14159265358979323846264338327950288f;
+constexpr float G	= -32.174f;		/// acceleration due to gravity, 
+
 // Prosty wektor 3D uzywany do pozycji, kierunkow i skalowania.
 struct Vec3 {
     float x = 0.0f;
@@ -73,7 +76,7 @@ struct Matrix4 {
 }
 
 [[nodiscard]] inline float radians(float degrees) {
-    return degrees * 3.1415926535f / 180.0f;
+    return degrees * PI / 180.0f;
 }
 
 [[nodiscard]] inline Quaternion normalize(const Quaternion& quaternion) {

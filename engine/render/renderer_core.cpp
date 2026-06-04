@@ -47,6 +47,11 @@ struct GlobalUBO {
     uint32_t lightCount;
     uint32_t shadowsEnabled;
     LightData lights[kMaxLights];
+    float fogColor[4];
+    float fogStart;
+    float fogEnd;
+    float fogDensity;
+    uint32_t fogEnabled;
 };
 
 struct TextureResources {
@@ -981,6 +986,13 @@ public:
     void setLightingEnabled(bool enabled) { lightingEnabled_ = enabled; }
     bool isLightingEnabled() const { return lightingEnabled_; }
 
+    void setFogEnabled(bool enabled) { fogEnabled_ = enabled; }
+    bool isFogEnabled() const { return fogEnabled_; }
+    void setFogColor(float r, float g, float b) { fogColor_[0] = r; fogColor_[1] = g; fogColor_[2] = b; }
+    void setFogStart(float start) { fogStart_ = start; }
+    void setFogEnd(float end) { fogEnd_ = end; }
+    void setFogDensity(float density) { fogDensity_ = density; }
+
     void setAmbientStrength(float s) { ambientStrength_ = s; }
 
     void setDirectionalShadowConfig(float halfSize, bool /*unused*/) {
@@ -1027,8 +1039,8 @@ public:
                 break;
             case SceneLightType::Spot:
                 dst.direction[3] = 3.0f;
-                dst.params[0] = std::cos(src.innerAngleDeg * 3.14159265f / 180.0f);
-                dst.params[1] = std::cos(src.outerAngleDeg * 3.14159265f / 180.0f);
+                dst.params[0] = std::cos(src.innerAngleDeg * PI / 180.0f);
+                dst.params[1] = std::cos(src.outerAngleDeg * PI / 180.0f);
                 dst.params[2] = src.range;
                 break;
             }
@@ -1076,6 +1088,15 @@ private:
         ubo.lightCount = std::min(storedLightCount_, (uint32_t)kMaxLights);
         std::memcpy(ubo.ambientColor, ambientColor_, sizeof(ambientColor_));
         ubo.ambientColor[3] = 1.0f;
+
+        ubo.fogColor[0] = fogColor_[0];
+        ubo.fogColor[1] = fogColor_[1];
+        ubo.fogColor[2] = fogColor_[2];
+        ubo.fogColor[3] = 1.0f;
+        ubo.fogStart = fogStart_;
+        ubo.fogEnd = fogEnd_;
+        ubo.fogDensity = fogDensity_;
+        ubo.fogEnabled = fogEnabled_ ? 1u : 0u;
 
         for (uint32_t i = 0; i < ubo.lightCount; i++) {
             LightData& l = storedLights_[i];
@@ -2368,6 +2389,11 @@ private:
     bool wireframeEnabled_ = false;
     float dirShadowHalfSize_ = 100.0f;
     bool cleanedUp_ = false;
+    bool fogEnabled_ = false;
+    float fogColor_[3] = {0.8f, 0.8f, 0.8f};
+    float fogStart_ = 10.0f;
+    float fogEnd_ = 100.0f;
+    float fogDensity_ = 0.01f;
 
     LightData storedLights_[kMaxLights] = {};
     uint32_t storedLightCount_ = 0;
@@ -2451,6 +2477,13 @@ bool Renderer::isLightingEnabled() const { return impl_->isLightingEnabled(); }
 void Renderer::setAmbientStrength(float s) { impl_->setAmbientStrength(s); }
 void Renderer::setAmbientColor(float r, float g, float b) { impl_->setAmbientColor(r, g, b); }
 void Renderer::setLights(const std::vector<SceneLight>& lights) { impl_->setLights(lights); }
+
+void Renderer::setFogEnabled(bool enabled) { if (impl_) impl_->setFogEnabled(enabled); }
+bool Renderer::isFogEnabled() const { return impl_ ? impl_->isFogEnabled() : false; }
+void Renderer::setFogColor(float r, float g, float b) { if (impl_) impl_->setFogColor(r, g, b); }
+void Renderer::setFogStart(float start) { if (impl_) impl_->setFogStart(start); }
+void Renderer::setFogEnd(float end) { if (impl_) impl_->setFogEnd(end); }
+void Renderer::setFogDensity(float density) { if (impl_) impl_->setFogDensity(density); }
 
 uint32_t Renderer::getTextureIndex(TextureHandle handle) const { return impl_->getTextureIndex(handle); }
 void Renderer::prepareRenderPacket(RenderPacket& packet) const {

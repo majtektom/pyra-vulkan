@@ -20,7 +20,7 @@ void lerpColor(const std::array<float, 4>& a, const std::array<float, 4>& b,
 
 float sunHeightFromTime(float tod) {
     float t = std::fmod(tod, 24.0f);
-    return std::sin((t - 6.0f) / 12.0f * 3.1415926535f);
+    return std::sin((t - 6.0f) / 12.0f * PI);
 }
 
 void generateDomeGeometry(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) {
@@ -28,8 +28,8 @@ void generateDomeGeometry(std::vector<Vertex>& vertices, std::vector<uint32_t>& 
     constexpr float r = 100.0f;
     constexpr float rh = 1000.0f;
     constexpr double theta1 = 0.0;
-    constexpr double theta2 = 3.1415926535;
-    constexpr double phi1 = -(3.1415926535) / 2.0;
+    constexpr double theta2 = PI;
+    constexpr double phi1 = -PI / 2.0;
     constexpr double phi2 = 0.0;
 
     int numVertices = n * n;
@@ -77,21 +77,21 @@ void computeSkyColors(float timeOfDay,
                       std::array<float, 4>& sunColorOut) {
     using Arr4 = std::array<float, 4>;
 
-    const Arr4 nightTop       = {0.03f, 0.03f, 0.18f, 0.0f};
-    const Arr4 nightHorizon   = {0.02f, 0.02f, 0.10f, 0.0f};
+    const Arr4 nightTop       = {0.003f, 0.003f, 0.015f, 0.0f};
+    const Arr4 nightHorizon   = {0.001f, 0.001f, 0.008f, 0.0f};
     const Arr4 nightSun       = {0.0f, 0.0f, 0.0f, 0.0f};
 
     const Arr4 sunriseTop     = {0.18f, 0.28f, 0.72f, 0.0f};
     const Arr4 sunriseHorizon = {0.92f, 0.52f, 0.28f, 0.0f};
-    const Arr4 sunriseSun     = {1.0f, 0.55f, 0.15f, 1.2f};
+    const Arr4 sunriseSun     = {1.0f, 0.40f, 0.05f, 0.6f};
 
-    const Arr4 dayTop         = {0.28f, 0.52f, 0.95f, 0.0f};
-    const Arr4 dayHorizon     = {0.52f, 0.72f, 0.96f, 0.0f};
-    const Arr4 daySun         = {1.0f, 0.95f, 0.88f, 0.25f};
+    const Arr4 dayTop         = {0.20f, 0.45f, 0.95f, 0.0f};
+    const Arr4 dayHorizon     = {0.50f, 0.75f, 0.98f, 0.0f};
+    const Arr4 daySun         = {1.0f, 0.96f, 0.65f, 4.5f};
 
-    const Arr4 sunsetTop      = {0.28f, 0.18f, 0.48f, 0.0f};
-    const Arr4 sunsetHorizon  = {1.0f, 0.38f, 0.12f, 0.0f};
-    const Arr4 sunsetSun      = {1.0f, 0.42f, 0.10f, 1.2f};
+    const Arr4 sunsetTop      = {0.28f, 0.15f, 0.48f, 0.0f};
+    const Arr4 sunsetHorizon  = {1.0f, 0.30f, 0.05f, 0.0f};
+    const Arr4 sunsetSun      = {1.0f, 0.25f, 0.02f, 0.6f};
 
     float t = std::fmod(timeOfDay, 24.0f);
     if (t < 0.0f) t += 24.0f;
@@ -332,6 +332,16 @@ void SkydomeRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const Ren
 
     if (!ready_) return;
 
+    // Dynamically advance time of day and compute sun elevation for dynamic day/night cycle
+    config_.timeOfDay = std::fmod(11.0f + time_ * 0.05f, 24.0f);
+    if (config_.timeOfDay < 0.0f) config_.timeOfDay += 24.0f;
+    
+    float hourAngle = (config_.timeOfDay - 6.0f) / 12.0f * PI;
+    float tiltRad = 35.0f * PI / 180.0f;
+    float y = std::sin(hourAngle) * std::cos(tiltRad);
+    config_.sunElevation = std::asin(y) * 180.0f / PI;
+    config_.sunAzimuth = std::atan2(std::sin(hourAngle) * std::sin(tiltRad), -std::cos(hourAngle)) * 180.0f / PI;
+
     VkDescriptorSet cloudDescSet = renderer_->getTextureDescriptorSet(descName_, frameIndex);
     recordDrawCommands(cmd, view.cameraPosition, time_, cloudDescSet, config_);
 }
@@ -381,11 +391,10 @@ void SkydomeRenderer::recordDrawCommands(
     std::array<float, 4> topCol, horCol, sunCol;
     computeSkyColors(config.timeOfDay, topCol, horCol, sunCol);
 
-    float sunElRad = config.sunElevation * 3.1415926535f / 180.0f;
-    float sunAzRad = config.sunAzimuth * 3.1415926535f / 180.0f;
-    float sunDirX = std::cos(sunElRad) * std::cos(sunAzRad);
-    float sunDirY = std::sin(sunElRad);
-    float sunDirZ = std::cos(sunElRad) * std::sin(sunAzRad);
+    Vec3 sunDir = getSunDirection();
+    float sunDirX = sunDir.x;
+    float sunDirY = sunDir.y;
+    float sunDirZ = sunDir.z;
 
     SkydomePushConstants push{};
     push.cameraPosition[0] = cameraPosition.x;
@@ -419,6 +428,56 @@ void SkydomeRenderer::recordDrawCommands(
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vb, offset);
     vkCmdBindIndexBuffer(commandBuffer, indexBuffer_, 0, VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(commandBuffer, indexCount_, 1, 0, 0, 0);
+}
+
+Vec3 SkydomeRenderer::getSunDirection() const {
+    float hourAngle = (config_.timeOfDay - 6.0f) / 12.0f * PI;
+    float tiltRad = 35.0f * PI / 180.0f;
+    float x = -std::cos(hourAngle);
+    float y = std::sin(hourAngle) * std::cos(tiltRad);
+    float z = std::sin(hourAngle) * std::sin(tiltRad);
+    return Vec3{x, y, z};
+}
+
+Vec3 SkydomeRenderer::getSunColor() const {
+    std::array<float, 4> topCol, horCol, sunCol;
+    computeSkyColors(config_.timeOfDay, topCol, horCol, sunCol);
+    return Vec3{sunCol[0], sunCol[1], sunCol[2]};
+}
+
+float SkydomeRenderer::getSunIntensity() const {
+    std::array<float, 4> topCol, horCol, sunCol;
+    computeSkyColors(config_.timeOfDay, topCol, horCol, sunCol);
+    
+    // Smooth fade factor based on elevation between -5.0 and +5.0 degrees
+    float elevationFactor = std::clamp((config_.sunElevation + 5.0f) / 10.0f, 0.0f, 1.0f);
+    elevationFactor = elevationFactor * elevationFactor * (3.0f - 2.0f * elevationFactor); // Smoothstep
+
+    return sunCol[3] * elevationFactor;
+}
+
+float SkydomeRenderer::getAmbientStrength() const {
+    // Ambient fades out between -12.0 and +10.0 degrees sun elevation
+    float ambientFactor = std::clamp((config_.sunElevation + 12.0f) / 22.0f, 0.0f, 1.0f);
+    ambientFactor = ambientFactor * ambientFactor * (3.0f - 2.0f * ambientFactor); // Smoothstep
+    
+    float nightStrength = 0.065f;
+    float dayStrength = 0.28f;
+    return nightStrength + (dayStrength - nightStrength) * ambientFactor;
+}
+
+Vec3 SkydomeRenderer::getAmbientColor() const {
+    float ambientFactor = std::clamp((config_.sunElevation + 12.0f) / 22.0f, 0.0f, 1.0f);
+    ambientFactor = ambientFactor * ambientFactor * (3.0f - 2.0f * ambientFactor); // Smoothstep
+    
+    Vec3 nightColor{0.08f, 0.10f, 0.18f};
+    Vec3 dayColor{0.35f, 0.38f, 0.45f};
+    
+    return Vec3{
+        nightColor.x + (dayColor.x - nightColor.x) * ambientFactor,
+        nightColor.y + (dayColor.y - nightColor.y) * ambientFactor,
+        nightColor.z + (dayColor.z - nightColor.z) * ambientFactor
+    };
 }
 
 }  // namespace engine3d

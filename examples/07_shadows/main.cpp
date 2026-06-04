@@ -69,12 +69,12 @@ static MeshData makeSphere(int segments, float radius, float r, float g, float b
     MeshData m;
     int rings = segments / 2;
     for (int i = 0; i <= rings; i++) {
-        float phi = 3.14159265f * float(i) / float(rings);
+        float phi = PI * float(i) / float(rings);
         float sinPhi = std::sin(phi);
         float cosPhi = std::cos(phi);
         
         for (int j = 0; j <= segments; j++) {
-            float theta = 2.0f * 3.14159265f * float(j) / float(segments);
+            float theta = 2.0f * PI * float(j) / float(segments);
             float sinTheta = std::sin(theta);
             float cosTheta = std::cos(theta);
             

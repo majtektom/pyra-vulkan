@@ -112,6 +112,14 @@ public:
     void setAmbientStrength(float strength);
     void setAmbientColor(float r, float g, float b);
 
+    // Sterowanie mgłą (Fog)
+    void setFogEnabled(bool enabled);
+    bool isFogEnabled() const;
+    void setFogColor(float r, float g, float b);
+    void setFogStart(float start);
+    void setFogEnd(float end);
+    void setFogDensity(float density);
+
     // Przesyła do renderera światła wyekstrahowane ze sceny w bieżącej klatce.
     void setLights(const std::vector<SceneLight>& lights);
 
