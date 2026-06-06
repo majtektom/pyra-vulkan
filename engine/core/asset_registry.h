@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 
@@ -41,8 +42,9 @@ public:
     std::optional<MeshHandle> meshHandle(const std::string& name) const;
 
 private:
+    // Wewnętrzny mechanizm rejestracji - wymaga zewnętrznego blokowania (write lock).
     template <typename Handle>
-    Handle registerAsset(const std::string& name,
+    Handle registerAssetLocked(const std::string& name,
                          std::unordered_map<std::string, Handle>& nameToHandle,
                          std::unordered_map<uint32_t, std::string>& handleToName,
                          uint32_t& nextId);
@@ -54,6 +56,10 @@ private:
     template <typename Handle>
     std::optional<Handle> getHandleByName(const std::string& name,
                                           const std::unordered_map<std::string, Handle>& nameToHandle) const;
+
+    // Blokada shared_mutex: wiele wątków może czytać jednocześnie (shared_lock),
+    // ale tylko jeden może pisać (unique_lock). Idealna do "register" vs "lookup".
+    mutable std::shared_mutex mutex_;
 
     uint32_t nextMaterialId_ = 1;
     uint32_t nextTextureId_ = 1;

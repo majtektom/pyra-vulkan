@@ -194,7 +194,7 @@ void SpriteSystem::createSheetGroup(TextureHandle texHandle,
 
     Material mat;
     mat.name = "spriteSheetMat_" + std::to_string(groupIdx);
-    mat.textureName = requireTextureName(*assetRegistry_, texHandle, mat.name);
+    mat.textureHandle = texHandle;
     mat.shaderProgram = "sprite";
     mat.blendMode = BlendMode::Alpha;
     mat.renderPriority = 1;
@@ -228,7 +228,7 @@ void SpriteSystem::createSequenceEntity(int spriteId) {
     for (const auto texHandle : s.frameTextureHandles) {
         Material mat;
         mat.name = "spriteSeqMat_" + std::to_string(texHandle.value);
-        mat.textureName = requireTextureName(*assetRegistry_, texHandle, mat.name);
+        mat.textureHandle = texHandle;
         mat.shaderProgram = "sprite";
         mat.blendMode = BlendMode::Additive;
         // mat.blendMode = BlendMode::Alpha;

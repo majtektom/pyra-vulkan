@@ -97,22 +97,22 @@
       "name": "goblin",
       "model_path": "assets/models/md2/goblin/goblin.md2",
       "texture_path": "assets/models/md2/goblin/goblin.bmp",
-      "position": { "x": -24.0, "y": 0.0, "z": -6.0 },
-      "rotation": { "x": -90.0, "y": 0.0, "z": 0.0 },
+      "position": { "x": -84.0, "y": 0.0, "z": -6.0 },
+      "rotation": { "x": -96.0, "y": 0.0, "z": 0.0 },
       "scale": { "x": 0.46, "y": 0.46, "z": 0.46 },
       "snap_to_terrain": true,
-      "terrain_offset": 0.0,
+      "terrain_offset": 10.0,
       "anim_speed": 10.0
     },{
       "name": "goblinmap",
       "model_path": "assets/models/md2/goblin/goblin.md2",
       "texture_path": "assets/models/md2/goblin/goblin.bmp",
       "normalmap_path": "assets/models/md2/goblin/goblinDOT3.bmp",
-      "position": { "x": -10.0, "y": 0.0, "z": -6.0 },
-      "rotation": { "x": -90.0, "y": 0.0, "z": 0.0 },
+      "position": { "x": -60.0, "y": 0.0, "z": -6.0 },
+      "rotation": { "x": -96.0, "y": 0.0, "z": 0.0 },
       "scale": { "x": 0.46, "y": 0.46, "z": 0.46 },
       "snap_to_terrain": true,
-      "terrain_offset": 0.0,
+      "terrain_offset": 10.0,
       "anim_speed": 10.0
     }
   ],

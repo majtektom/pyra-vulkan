@@ -1,5 +1,26 @@
 # changelog
 
+## 0.5.0
+
+ - system oparty na ECS (Entity-Component-System)
+ - Nowy  JobSystem  (job_system.h
+  Prosta, lekka pula wątków. Przy starcie tworzy  N-1  wątków roboczych (N = liczba rdzeni logicznych CPU), które czekają na zadania w kolejce. Posiada dwie kluczowe metody:
+  •  submit(fn)  – zwraca  std::future<> , wątek roboczy wykonuje zadanie asynchronicznie
+  •  parallelFor(count, fn)  – automatycznie dzieli zakres na chunki i rozdaje je wątkom, blokując wywołującego aż do zakończenia 
+ 2.  RenderExtractionSystem  – równoległe zbieranie  RenderPacket  (render_extraction_system.cpp)   To jest największy potencjalny zysk przy 200+ encjach drzew i trawy. Teraz:
+  • Faza 1 (single-thread): rozwiązanie materiałów (modyfikuje stan komponentu)
+  • Faza 2 (multi-thread):  collectRenderPackets()  +  resolvePacketAssetHandles()  na każdym wątku we własnym lokalnym buforze  std::vector<RenderPacket>  → zero rywalizacji o mutex      
+  • Faza 3 (single-thread): scalenie buforów lokalnych do wektora sceny przez  std::move 
+ 
+ 3.  RenderFramePrepSystem  – równoległe obliczanie odległości do kamery (render_frame_prep_system.cpp)
+  
+  Obliczanie  distanceToCamera  dla każdej z 200+ paczek podzielone na chunki i wykonywane równolegle. Brak współdzielenia danych → brak muteksów.
+  
+ 4. MD2 + GLTF animacje – równoległe obliczanie kości i interpolacji (engine.cpp)
+  
+  Każda instancja goblina MD2 (interpolacja wierzchołków CPU) i każda instancja GLTF BrainStem (ewaluacja animacji + upload macierzy kości) teraz startuje jako osobne zadanie na  JobSystem
+  . Wyniki zbierane przez  std::future::get()  a upload do GPU ( updateMesh ) wykonywany jest po zebraniu wyników na głównym wątku.
+
 ## 0.4.0
 
 system obiektów oparty na ECS (Entity-Component-System) z domieszką Data-Oriented Design

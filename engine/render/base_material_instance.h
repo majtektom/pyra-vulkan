@@ -23,8 +23,8 @@ public:
         return data_.blendMode != BlendMode::Disabled; 
     }
 
-    const std::string& getTextureName() const override {
-        return data_.textureName;
+    TextureHandle getDiffuseHandle() const override {
+        return data_.textureHandle;
     }
 
     float getBumpIntensity() const override {
@@ -47,20 +47,20 @@ public:
         return data_.roughnessFactor;
     }
 
-    const std::string& getMetallicRoughnessTextureName() const override {
-        return data_.metallicRoughnessTextureName;
+    TextureHandle getMetallicRoughnessHandle() const override {
+        return data_.metallicRoughnessTextureHandle;
     }
 
-    const std::string& getOcclusionTextureName() const override {
-        return data_.occlusionTextureName;
+    TextureHandle getOcclusionHandle() const override {
+        return data_.occlusionTextureHandle;
     }
 
-    const std::string& getEmissiveTextureName() const override {
-        return data_.emissiveTextureName;
+    TextureHandle getEmissiveHandle() const override {
+        return data_.emissiveTextureHandle;
     }
 
-    const std::string& getNormalMapName() const override {
-        return data_.normalMapName;
+    TextureHandle getNormalHandle() const override {
+        return data_.normalMapHandle;
     }
 
 private:

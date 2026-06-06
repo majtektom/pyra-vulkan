@@ -4,8 +4,10 @@
 #include "core/mesh_component.h"
 #include "core/asset_registry.h"
 #include "core/mesh_manager.h"
+#include "core/job_system.h"
 #include "render/material_manager.h"
 #include "render/material_system.h"
+#include "render/renderer.h"
 
 namespace engine3d {
 
@@ -13,105 +15,116 @@ RenderExtractionSystem::RenderExtractionSystem(
     MaterialManager& materialManager,
     MaterialSystem& materialSystem,
     MeshManager& meshManager,
-    AssetRegistry& assetRegistry)
+    AssetRegistry& assetRegistry,
+    JobSystem& jobs,
+    const Renderer& renderer)
     : materialManager_(materialManager),
       materialSystem_(materialSystem),
       meshManager_(meshManager),
-      assetRegistry_(assetRegistry) {}
+      assetRegistry_(assetRegistry),
+      jobs_(jobs),
+      renderer_(renderer) {}
 
 void RenderExtractionSystem::update(Scene& scene, float /*deltaTime*/) {
-    // Krok 1: Czyścimy paczki geometrii wygenerowane w poprzedniej klatce.
     scene.clearRenderPackets();
+
+    const auto& entities = scene.getEntities();
+    const size_t entityCount = entities.size();
+    if (entityCount == 0) return;
+
+    // ------------------------------------------------------------------
+    // Krok 1 (single-thread): Rozwiązywanie materiałów.
+    // resolveMaterialIfNeeded() modyfikuje MeshComponent::materialInstance.
+    // Musi być sekwencyjne – shared_ptr assignment nie jest thread-safe.
+    // ------------------------------------------------------------------
+    for (const auto& entity : entities) {
+        if (!entity->isActive()) continue;
+        auto* mc = entity->getComponent<MeshComponent>();
+        if (!mc) continue;
+        resolveMaterialIfNeeded(*mc);
+    }
+
+    // ------------------------------------------------------------------
+    // Krok 2 (multi-thread): Równoległa ekstrakcja paczek renderowania.
+    //
+    // Każdy wątek roboczy JobSystem ma STAŁY indeks (0..N-1) przypisany raz
+    // przy starcie puli. JobSystem::currentWorkerIndex() zwraca ten indeks.
+    // To eliminuje wszelkie wyścigi przy przypisywaniu buforów lokalnych.
+    //
+    // Bezpieczeństwo wątkowe:
+    //  a) localBuffers[i] – wyłącznie wątek i pisze do swojego bufora.
+    //  b) getMesh() – tylko odczyt z mapy (brak zapisu w tym czasie).
+    //  c) getWorldMatrix() – tylko odczyt (TransformSystem zakończył).
+    //  d) materialInstance – tylko odczyt (Krok 1 zakończył).
+    //  e) registerTexture() – thread-safe (shared_mutex w AssetRegistry).
+    // ------------------------------------------------------------------
+    const size_t nWorkers = jobs_.threadCount();
+    // N buforów – po jednym na każdy wątek roboczy (główny wątek nie przetwarza chunków).
+    std::vector<std::vector<RenderPacket>> localBuffers(nWorkers);
+    {
+        const size_t estPerBuf = std::max<size_t>(4, entityCount / nWorkers + 4);
+        for (auto& buf : localBuffers) buf.reserve(estPerBuf);
+    }
+
+    jobs_.parallelFor(entityCount, [&](size_t begin, size_t end) {
+        // Stały indeks wątku - nigdy nie zmienia się przez cały czas życia silnika.
+        const size_t wIdx = JobSystem::currentWorkerIndex();
+
+        // Defensywna walidacja: jeśli z jakiegoś powodu indeks jest poza zakresem,
+        // pomijamy (nie powinno się zdarzyć - parallelFor wykonuje tylko wątki robocze).
+        if (wIdx >= nWorkers) return;
+
+        auto& myBuf = localBuffers[wIdx];
+
+        for (size_t i = begin; i < end; ++i) {
+            const auto& entity = entities[i];
+            if (!entity->isActive()) continue;
+
+            auto* mc = entity->getComponent<MeshComponent>();
+            if (!mc || !mc->isActive()) continue;
+
+            const size_t prevCount = myBuf.size();
+            mc->collectRenderPackets(myBuf, meshManager_);
+
+            for (size_t pi = prevCount; pi < myBuf.size(); ++pi) {
+                myBuf[pi].materialHandle = mc->materialHandle;
+                resolvePacketAssetHandles(myBuf[pi]);
+                renderer_.prepareRenderPacket(myBuf[pi]);
+            }
+        }
+    });
+
+    // ------------------------------------------------------------------
+    // Krok 3 (single-thread): Scalanie lokalnych buforów wątków.
+    // ------------------------------------------------------------------
     auto& packets = scene.mutableRenderPackets();
-
-    // Krok 2: Iterujemy po wszystkich encjach na scenie.
-    for (const auto& entity : scene.getEntities()) {
-        if (!entity->isActive()) {
-            continue; // Ignorujemy obiekty nieaktywne (np. wyłączone w hierarchii).
-        }
-
-        // Krok 3: Sprawdzamy, czy encja posiada MeshComponent (komponent do rysowania modelu 3D).
-        auto* meshComponent = entity->getComponent<MeshComponent>();
-        if (!meshComponent) {
-            continue;
-        }
-
-        // Krok 4: Upewniamy się, że materiał powiązany z siatką został załadowany i przygotowany.
-        resolveMaterialIfNeeded(*meshComponent);
-        
-        // Zapamiętujemy bieżącą liczbę paczek przed zbieraniem nowych, 
-        // aby móc przetworzyć wyłącznie nowo dodane paczki dla tej encji.
-        const auto previousPacketCount = packets.size();
-        
-        // Komponent siatki rozbija model na poszczególne części (sub-meshe) 
-        // i dodaje ich paczki renderowania do wektora.
-        meshComponent->collectRenderPackets(packets, meshManager_);
-
-        // Krok 5: Wiążemy nowo wyekstrahowane paczki z zasobami.
-        for (size_t packetIdx = previousPacketCount; packetIdx < packets.size(); ++packetIdx) {
-            // Przypisujemy uchwyt materiału bezpośrednio do paczki.
-            packets[packetIdx].materialHandle = meshComponent->materialHandle;
-            
-            // Pobieramy uchwyty GPU dla wszystkich tekstur (Diffuse, Normal, Metallic, Roughness, Occlusion, Emissive).
-            // Przetłumaczenie nazw tekstur na uchwyty na tym etapie oszczędza czas procesora w rendererze niskopoziomowym.
-            resolvePacketAssetHandles(packets[packetIdx]);
-        }
+    size_t total = 0;
+    for (const auto& buf : localBuffers) total += buf.size();
+    packets.reserve(total);
+    for (auto& buf : localBuffers) {
+        for (auto& p : buf) packets.push_back(std::move(p));
     }
 }
 
 void RenderExtractionSystem::resolveMaterialIfNeeded(MeshComponent& meshComponent) {
-    if (meshComponent.materialInstance) {
-        return; // Materiał jest już w pełni zainicjalizowany.
-    }
+    if (meshComponent.materialInstance) return;
 
     const Material* material = meshComponent.materialHandle.isValid()
         ? materialManager_.get(meshComponent.materialHandle)
         : nullptr;
+    if (!material) return;
 
-    if (!material) {
-        return; // Brak przypisanego materiału.
-    }
-
-    // Pobieramy lub kompilujemy instancję materiału za pośrednictwem systemu materiałów.
     meshComponent.materialInstance = materialSystem_.getOrCreateMaterialInstance(*material);
 }
 
 void RenderExtractionSystem::resolvePacketAssetHandles(RenderPacket& packet) {
-    if (!packet.material) {
-        return;
-    }
+    if (!packet.material) return;
 
-    // Pobieramy z rejestru zasobów (AssetRegistry) unikalne uchwyty GPU dla każdej tekstury PBR:
-    
-    // Tekstura koloru bazowego (albedo/diffuse):
-    const auto& baseColorTextureName = packet.material->getTextureName();
-    if (!baseColorTextureName.empty()) {
-        packet.diffuseTextureHandle = assetRegistry_.registerTexture(baseColorTextureName);
-    }
-
-    // Tekstura normalnych (normal map - symulacja chropowatości powierzchni poprzez zaburzanie wektorów normalnych):
-    const auto& normalTextureName = packet.material->getNormalMapName();
-    if (!normalTextureName.empty()) {
-        packet.normalTextureHandle = assetRegistry_.registerTexture(normalTextureName);
-    }
-
-    // Tekstura metaliczności i szorstkości (Metallic-Roughness):
-    const auto& metallicRoughnessTextureName = packet.material->getMetallicRoughnessTextureName();
-    if (!metallicRoughnessTextureName.empty()) {
-        packet.metallicRoughnessTextureHandle = assetRegistry_.registerTexture(metallicRoughnessTextureName);
-    }
-
-    // Tekstura okluzji otoczenia (Ambient Occlusion - symulacja cieni w szczelinach geometrii):
-    const auto& occlusionTextureName = packet.material->getOcclusionTextureName();
-    if (!occlusionTextureName.empty()) {
-        packet.occlusionTextureHandle = assetRegistry_.registerTexture(occlusionTextureName);
-    }
-
-    // Tekstura emisji światła (Emissive map - świecenie własne obiektu):
-    const auto& emissiveTextureName = packet.material->getEmissiveTextureName();
-    if (!emissiveTextureName.empty()) {
-        packet.emissiveTextureHandle = assetRegistry_.registerTexture(emissiveTextureName);
-    }
+    packet.diffuseTextureHandle = packet.material->getDiffuseHandle();
+    packet.normalTextureHandle = packet.material->getNormalHandle();
+    packet.metallicRoughnessTextureHandle = packet.material->getMetallicRoughnessHandle();
+    packet.occlusionTextureHandle = packet.material->getOcclusionHandle();
+    packet.emissiveTextureHandle = packet.material->getEmissiveHandle();
 }
 
 } // namespace engine3d

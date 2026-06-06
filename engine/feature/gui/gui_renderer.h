@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "render/renderer.h"
+
 namespace engine3d {
 
 struct GuiVertex {
@@ -14,7 +16,7 @@ struct GuiVertex {
     static std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions();
 };
 
-static constexpr uint32_t kGuiMaxFrames = 2;
+static constexpr uint32_t kGuiMaxFrames = Renderer::kMaxFrames;
 
 // Prosty renderer 2D dla GUI — rysuje kolorowe prostokąty i tekst w NDC.
 class GuiRenderer {

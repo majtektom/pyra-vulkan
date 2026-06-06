@@ -6,6 +6,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include "render/renderer.h"
 #include "core/types.h"
 #include "feature/font/font_atlas_loader.h"
 #include "render/render_feature.h"
@@ -42,7 +43,7 @@ struct TextVertex {
     }
 };
 
-static constexpr uint32_t kTxtMaxFrames = 2;
+static constexpr uint32_t kTxtMaxFrames = Renderer::kMaxFrames;
 
 class TextOverlayRenderer : public IRenderFeature {
 public:

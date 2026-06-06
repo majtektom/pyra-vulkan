@@ -23,16 +23,16 @@ public:
     virtual void bind(VkCommandBuffer commandBuffer, uint32_t currentFrame) = 0;
     virtual const VulkanPipeline& getPipeline() const = 0;
     virtual bool isTransparent() const = 0;
-    virtual const std::string& getTextureName() const = 0;
+    virtual TextureHandle getDiffuseHandle() const = 0;
     virtual float getBumpIntensity() const = 0;
     virtual std::array<float,4> getColor() const = 0;
     virtual int getRenderPriority() const = 0;
     virtual float getMetallicFactor() const = 0;
     virtual float getRoughnessFactor() const = 0;
-    virtual const std::string& getMetallicRoughnessTextureName() const = 0;
-    virtual const std::string& getOcclusionTextureName() const = 0;
-    virtual const std::string& getEmissiveTextureName() const = 0;
-    virtual const std::string& getNormalMapName() const = 0;
+    virtual TextureHandle getMetallicRoughnessHandle() const = 0;
+    virtual TextureHandle getOcclusionHandle() const = 0;
+    virtual TextureHandle getEmissiveHandle() const = 0;
+    virtual TextureHandle getNormalHandle() const = 0;
 };
 
 struct RenderPacket {

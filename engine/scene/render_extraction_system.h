@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/job_system.h"
 #include "scene/scene.h"
 
 namespace engine3d {
@@ -17,9 +18,12 @@ class AssetRegistry;
  * filtruje obiekty posiadające MeshComponent i tworzy "paczki renderowania" (RenderPackets).
  *
  * Paczka (RenderPacket) to spłaszczona struktura zawierająca surowe dane potrzebne do wywołania
- * rysowania na GPU (wskaźniki do buforów, ID tekstur, ID materiału). Separacja ta pozwala na:
- * 1. Zrównoleglenie: GPU może renderować klatkę N, podczas gdy CPU wylicza klatkę N+1.
- * 2. Wydajność cache: Dane są zwarte i ułożone w pamięci sekwencyjnie.
+ * rysowania na GPU (wskaźniki do buforów, ID tekstur, ID materiału).
+ *
+ * Równoległość:
+ *  - Faza 1 (sequential): rozwiązanie materiałów (modyfikuje stan komponentu).
+ *  - Faza 2 (parallel): zbieranie paczek do thread-local buforów przez JobSystem.
+ *  - Faza 3 (sequential): scalenie buforów do wektora sceny.
  */
 class RenderExtractionSystem final : public ISceneSystem {
 public:
@@ -27,28 +31,23 @@ public:
         MaterialManager& materialManager,
         MaterialSystem& materialSystem,
         MeshManager& meshManager,
-        AssetRegistry& assetRegistry);
+        AssetRegistry& assetRegistry,
+        JobSystem& jobs,
+        const class Renderer& renderer);
 
-    /**
-     * @brief Zbiera dane renderowania dla bieżącej klatki.
-     * Przeszukuje encje w poszukiwaniu komponentów siatek i generuje z nich RenderPackets.
-     */
     void update(Scene& scene, float deltaTime) override;
-
-    // Nazwa systemu.
     const char* name() const override { return "RenderExtractionSystem"; }
 
 private:
-    // Pobiera lub tworzy instancję materiału powiązaną z komponentem siatki.
     void resolveMaterialIfNeeded(class MeshComponent& meshComponent);
-
-    // Przypisuje unikalne identyfikatory zasobów (tekstur PBR) na podstawie ich nazw w materiale.
     void resolvePacketAssetHandles(RenderPacket& packet);
 
     MaterialManager& materialManager_;
     MaterialSystem& materialSystem_;
     MeshManager& meshManager_;
     AssetRegistry& assetRegistry_;
+    JobSystem& jobs_;
+    const class Renderer& renderer_;
 };
 
 } // namespace engine3d

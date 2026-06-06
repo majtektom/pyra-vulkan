@@ -36,6 +36,8 @@ class AssetRegistry;
  */
 class Renderer {
 public:
+    static constexpr uint32_t kMaxFrames = 3;
+
     Renderer(
         Platform* platform,
         MaterialManager* materialManager,

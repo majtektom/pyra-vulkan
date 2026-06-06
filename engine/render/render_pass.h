@@ -14,14 +14,24 @@ public:
         shadowPackets.clear();
     }
 
-    void addPacket(const RenderPacket& packet) {
-        if (packet.material && packet.material->isTransparent()) {
-            transparentPackets.push_back(packet);
+    void addPacket(RenderPacket packet) {
+        const bool isTransparent = packet.material && packet.material->isTransparent();
+        const bool castShadows = packet.castShadows && packet.vertexBuffer != VK_NULL_HANDLE;
+
+        if (castShadows) {
+            if (isTransparent) {
+                shadowPackets.push_back(packet);
+                transparentPackets.push_back(std::move(packet));
+            } else {
+                shadowPackets.push_back(packet);
+                opaquePackets.push_back(std::move(packet));
+            }
         } else {
-            opaquePackets.push_back(packet);
-        }
-        if (packet.castShadows && packet.vertexBuffer != VK_NULL_HANDLE) {
-            shadowPackets.push_back(packet);
+            if (isTransparent) {
+                transparentPackets.push_back(std::move(packet));
+            } else {
+                opaquePackets.push_back(std::move(packet));
+            }
         }
     }
 

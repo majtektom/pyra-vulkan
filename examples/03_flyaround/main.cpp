@@ -144,17 +144,17 @@ int main() {
     const auto podlogaHandle = renderer->loadTexture("podloga", "assets/textures/piasek.bmp");
 
     // Rejestrowanie materiałów powiązanych z teksturami
-    auto addMat = [&](const std::string& name, const std::string& tex) {
+    auto addMat = [&](const std::string& name, TextureHandle tex) {
         Material m;
         m.name = name;
-        m.textureName = tex;
+        m.textureHandle = tex;
         materialHandles[name] = mats->add(m);
     };
-    addMat("drewno", requireTextureName(drewnoHandle));
-    addMat("cegla", requireTextureName(ceglaHandle));
-    addMat("metal", requireTextureName(metalHandle));
-    addMat("trawa", requireTextureName(trawaHandle));
-    addMat("podloga", requireTextureName(podlogaHandle));
+    addMat("drewno", drewnoHandle);
+    addMat("cegla", ceglaHandle);
+    addMat("metal", metalHandle);
+    addMat("trawa", trawaHandle);
+    addMat("podloga", podlogaHandle);
 
     // KROK 3: UTWORZENIE PŁASZCZYZNY PODŁOGI (Floor Mesh)
     {
@@ -262,7 +262,7 @@ int main() {
 
             Material modelMat = Convert3dsMaterialToEngineMaterial(mat);
             modelMat.name = matName;
-            modelMat.textureName = texExists ? requireTextureName(texHandle) : "";
+            modelMat.textureHandle = texExists ? texHandle : TextureHandle{};
             // if (disableAlpha) {
             //     modelMat.blendMode = BlendMode::Disabled;
             //     modelMat.depthWrite = true;
@@ -326,8 +326,8 @@ int main() {
         // Materiał z mapowaniem normalnych (Bump Mapping)
         Material matGoblinBump;
         matGoblinBump.name = "goblin_bump";
-        matGoblinBump.textureName = requireTextureName(goblinTexHandle);
-        matGoblinBump.normalMapName = requireTextureName(goblinDot3Handle);
+        matGoblinBump.textureHandle = goblinTexHandle;
+        matGoblinBump.normalMapHandle = goblinDot3Handle;
         matGoblinBump.bumpIntensity = 1.0f;
         matGoblinBump.cullMode = CullMode::Disabled;
         materialHandles[matGoblinBump.name] = mats->add(matGoblinBump);
@@ -335,7 +335,7 @@ int main() {
         // Materiał płaski bez mapowania normalnych
         Material matGoblinFlat;
         matGoblinFlat.name = "goblin_flat";
-        matGoblinFlat.textureName = requireTextureName(goblinTexHandle);
+        matGoblinFlat.textureHandle = goblinTexHandle;
         matGoblinFlat.bumpIntensity = 0.0f;
         matGoblinFlat.cullMode = CullMode::Disabled;
         materialHandles[matGoblinFlat.name] = mats->add(matGoblinFlat);
@@ -370,27 +370,26 @@ int main() {
             std::string name = "toycar_" + std::to_string(i);
             engine.getMeshManager()->loadMesh(name, prim.mesh);
 
-            std::string texName = requireTextureName(metalHandle);
+            TextureHandle texHandle = metalHandle;
             if (!prim.texturePath.empty()) {
-                const auto texHandle = renderer->loadTexture(name + "_tex", prim.texturePath);
-                texName = requireTextureName(texHandle, texName);
+                texHandle = renderer->loadTexture(name + "_tex", prim.texturePath);
             }
 
             // PBR korzysta z dodatkowych tekstur PBR (Normal Map, ORM: Occlusion, Roughness, Metallic, oraz Emissive)
-            std::string nmName, ormName, occName, emName;
-            if (!prim.normalMapPath.empty()) { nmName = requireTextureName(renderer->loadTexture(name + "_n", prim.normalMapPath)); }
-            if (!prim.ormPath.empty())        { ormName = requireTextureName(renderer->loadTexture(name + "_orm", prim.ormPath)); }
-            if (!prim.occlusionPath.empty())  { occName = requireTextureName(renderer->loadTexture(name + "_occ", prim.occlusionPath)); }
-            if (!prim.emissivePath.empty())   { emName = requireTextureName(renderer->loadTexture(name + "_em", prim.emissivePath)); }
+            TextureHandle nmHandle{}, ormHandle{}, occHandle{}, emHandle{};
+            if (!prim.normalMapPath.empty()) { nmHandle = renderer->loadTexture(name + "_n", prim.normalMapPath); }
+            if (!prim.ormPath.empty())        { ormHandle = renderer->loadTexture(name + "_orm", prim.ormPath); }
+            if (!prim.occlusionPath.empty())  { occHandle = renderer->loadTexture(name + "_occ", prim.occlusionPath); }
+            if (!prim.emissivePath.empty())   { emHandle = renderer->loadTexture(name + "_em", prim.emissivePath); }
 
             Material mat;
             mat.name = name;
-            mat.textureName = texName;
+            mat.textureHandle = texHandle;
             mat.cullMode = CullMode::Disabled;
-            if (!nmName.empty()) { mat.normalMapName = nmName; mat.bumpIntensity = 1.0f; }
-            if (!ormName.empty()) mat.metallicRoughnessTextureName = ormName;
-            if (!occName.empty()) mat.occlusionTextureName = occName;
-            if (!emName.empty()) mat.emissiveTextureName = emName;
+            if (nmHandle.isValid()) { mat.normalMapHandle = nmHandle; mat.bumpIntensity = 1.0f; }
+            if (ormHandle.isValid()) mat.metallicRoughnessTextureHandle = ormHandle;
+            if (occHandle.isValid()) mat.occlusionTextureHandle = occHandle;
+            if (emHandle.isValid()) mat.emissiveTextureHandle = emHandle;
             mat.roughnessFactor = 0.5f;
             materialHandles[mat.name] = mats->add(mat);
 
@@ -468,17 +467,14 @@ int main() {
             std::string name = "brain_" + std::to_string(i);
             engine.getMeshManager()->loadMesh(name, prim.mesh);
 
-            std::string texName = name + "_tex";
+            TextureHandle texHandle{};
             if (!prim.texturePath.empty()) {
-                const auto texHandle = renderer->loadTexture(texName, prim.texturePath);
-                texName = requireTextureName(texHandle, "");
-            } else {
-                texName = "";
+                texHandle = renderer->loadTexture(name + "_tex", prim.texturePath);
             }
 
             Material mat;
             mat.name = name;
-            mat.textureName = texName;
+            mat.textureHandle = texHandle;
             mat.color = prim.baseColor;
             mat.cullMode = CullMode::Disabled;
             materialHandles[mat.name] = mats->add(mat);

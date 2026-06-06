@@ -1,4 +1,6 @@
 #include "render/backend/vulkan_swapchain.h"
+#include "render/renderer.h"
+#include "core/logger.h"
 #include <stdexcept>
 #include <algorithm>
 #include <array>
@@ -64,7 +66,27 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
     imageFormat_ = VK_FORMAT_B8G8R8A8_SRGB;
     for (auto& f : fmts) { if (f.format == VK_FORMAT_B8G8R8A8_SRGB) { imageFormat_ = f.format; break; } }
 
-    uint32_t imgCount = std::max(2u, caps.minImageCount);
+    // Triple buffering: 3 obrazy swapchain - GPU prezentuje jeden, CPU renderuje do drugiego,
+    // trzeci jest buforem zapasowym. Eliminuje stall na vkAcquireNextImageKHR.
+    uint32_t imgCount = std::max(Renderer::kMaxFrames, caps.minImageCount);
+    if (caps.maxImageCount > 0) imgCount = std::min(imgCount, caps.maxImageCount);
+
+    uint32_t modeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surf, &modeCount, nullptr);
+    std::vector<VkPresentModeKHR> modes(modeCount);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surf, &modeCount, modes.data());
+
+    VkPresentModeKHR selectedPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+    for (auto m : modes) {
+        if (m == presentMode_) {
+            selectedPresentMode = m;
+            break;
+        }
+    }
+
+    LOG_INFO("Swapchain present mode: {}", 
+             selectedPresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE (VSync OFF)" :
+             selectedPresentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX (VSync OFF)" : "FIFO (VSync ON)");
 
     VkSwapchainCreateInfoKHR ci{};
     ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -77,7 +99,7 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ci.preTransform = caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    ci.presentMode = presentMode_;
+    ci.presentMode = selectedPresentMode;
     ci.clipped = VK_TRUE;
 
     if (vkCreateSwapchainKHR(dev, &ci, nullptr, &swapchain_) != VK_SUCCESS)

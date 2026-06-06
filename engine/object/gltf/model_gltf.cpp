@@ -546,7 +546,7 @@ bool GltfSkinnedModel::load(Renderer* renderer, MeshManager* meshManager, Materi
 
         if (!prim.texturePath.empty()) {
             const auto texHandle = renderer->loadTexture(texName, prim.texturePath);
-            mat.textureName = assets->textureName(texHandle).value_or("");
+            mat.textureHandle = texHandle;
         }
 
         MaterialHandle handle = materialManager->add(mat);

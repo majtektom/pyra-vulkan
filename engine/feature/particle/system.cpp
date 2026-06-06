@@ -379,17 +379,9 @@ void ParticleSystem::initialize(Scene& scene,
             e->setTextureHandle(textureHandle);
         }
 
-        std::string materialTextureName = "default";
-        if (textureHandle.isValid()) {
-            const auto textureName = assetRegistry_->textureName(textureHandle);
-            if (textureName.has_value()) {
-                materialTextureName = *textureName;
-            }
-        }
-
         Material mat;
         mat.name = "particleMat_" + std::to_string(ei);
-        mat.textureName = materialTextureName;
+        mat.textureHandle = textureHandle;
         mat.shaderProgram = "particle";
         mat.blendMode = BlendMode::Additive;
         mat.renderPriority = 1;

@@ -179,9 +179,12 @@ if(TARGET PkgConfig::SDL3_SOUND AND SDL3_SOUND_FOUND)
     target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_SOUND)
 endif()
 
+find_package(Threads REQUIRED)
+
 target_link_libraries(engine3d
     PUBLIC
         Vulkan::Vulkan
+        Threads::Threads
 )
 
 

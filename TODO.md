@@ -123,3 +123,39 @@ Przenieś logikę renderowania z obiektów do oddzielnego RenderSystem.
 Wskazówka: Jeśli projekt jest duży, nie pisz własnego ECS od zera – polecam bibliotekę EnTT (standard w branży, niezwykle szybka).
 
 Czy chcesz, abym rozpisał Ci, jak przenieść obecny MeshComponent i MeshManager do tego systemu, abyś zobaczył różnicę w czytelności kodu?
+
+----------------
+  Mamy trzy główne ścieżki zrównoleglenia i optymalizacji w Vulkanie:                                                                                                                       
+                                                                                                                                                                                            
+  #### 1. GPU Instancing (Rekomendowane i najbardziej wydajne)                                                                                                                              
+                                                                                                                                                                                            
+  Zamiast zrównoleglać CPU, całkowicie eliminujemy pętlę po stronie procesora. Zamiast wysyłać 100 drzew osobno:                                                                            
+                                                                                                                                                                                            
+  • Tworzymy jeden bufor instancji ( VkBuffer instanceBuffer ), w którym zapisujemy macierze transformacji wszystkich 100 drzew.                                                            
+  • Wywołujemy tylko jedno polecenie rysowania:  vkCmdDrawIndexed  z parametrem  instanceCount = 100 .                                                                                      
+  • GPU narysuje wszystkie drzewa na raz w jednym przebiegu.                                                                                                                                
+  • Stan w silniku: Silnik posiada już przygotowany kod pod bindowanie  instanceBuffer  (w  opaque_pass.cpp ), ale wymagałoby to modyfikacji shaderów  default / gbuffer , aby potrafiły    
+  odczytywać macierz modelu z wejściowego slotu vertexów o indeksie instancji ( VK_VERTEX_INPUT_RATE_INSTANCE ) zamiast z Push Constants.                                                   
+                                                                                                                                                                                            
+  #### 2. Zrównoleglenie nagrywania komend Vulkan (Secondary Command Buffers)                                                                                                               
+                                                                                                                                                                                            
+  Vulkan pozwala na nagrywanie komend rysowania z wielu wątków CPU jednocześnie:                                                                                                            
+                                                                                                                                                                                            
+  • Główny wątek: Tworzy główny bufor komend ( Primary VkCommandBuffer ).                                                                                                                   
+  • Wątki pomocnicze (Worker Threads): Każdy wątek otrzymuje własną pulę komend ( VkCommandPool  – nie są one bezpieczne wielowątkowo, więc każdy wątek musi mieć swoją) i nagrywa podrzędny
+  bufor ( Secondary VkCommandBuffer ). Jeden wątek może nagrywać np. teren, drugi drzewa i trawę, trzeci cienie.                                                                            
+  • Połączenie: Na koniec wątek główny wykonuje jedno szybkie połączenie za pomocą:                                                                                                         
+    vkCmdExecuteCommands(primaryCmdBuffer, secondaryCmdBuffers.size(), secondaryCmdBuffers.data());                                                                                         
+                                                                                                                                                                                            
+  • Pozwala to rozłożyć narzut sterownika graficznego Vulkan na wszystkie rdzenie procesora.                                                                                                
+                                                                                                                                                                                            
+  #### 3. Zrównoleglenie systemów aktualizacji ECS                                                                                                                                          
+                                                                                                                                                                                            
+  Przed renderowaniem, silnik wykonuje aktualizacje komponentów (np. animacje MD2, fizyka, TransformSystem). Możemy zrównoleglić te obliczenia na CPU za pomocą puli wątków lub  std::async 
+  w scene.cpp:                                                                                                                                                                         
+                                                                                                                                                                                            
+    // Przykładowe zrównoleglenie aktualizacji pozycji encji:                                                                                                                               
+    void Scene::updateEntities(std::chrono::milliseconds deltaTime) {
+        // Możemy podzielić entities_ na pakiety i przetworzyć je w std::async/wątkach
+    }
+  

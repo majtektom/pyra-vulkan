@@ -77,12 +77,12 @@ int main() {
     // Funkcja pomocnicza lambda do ładowania tekstury i rejestrowania materiału.
     auto createMaterial = [&](const std::string& name, const std::string& texName, const std::string& texPath) -> MaterialHandle {
         // Ładowanie pliku tekstury z dysku i przesyłanie do pamięci GPU.
-        engine.getRenderer()->loadTexture(texName, texPath);
+        TextureHandle texHandle = engine.getRenderer()->loadTexture(texName, texPath);
         
         // Tworzenie materiału powiązanego z załadowaną teksturą.
         Material mat;
         mat.name = name;
-        mat.textureName = texName;
+        mat.textureHandle = texHandle;
         return engine.getMaterialManager()->add(mat);
     };
 

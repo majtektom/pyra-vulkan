@@ -195,12 +195,6 @@ void animateMd2(const Md2ModelData& model, Md2AnimationState& state, float dt, M
 
     int triCount = (int)model.tris.size();
     outMesh.vertices.resize(triCount * 3);
-    outMesh.indices.resize(triCount * 3);
-    for (int i = 0; i < triCount; ++i) {
-        outMesh.indices[i * 3 + 0] = (uint32_t)(i * 3 + 0);
-        outMesh.indices[i * 3 + 1] = (uint32_t)(i * 3 + 1);
-        outMesh.indices[i * 3 + 2] = (uint32_t)(i * 3 + 2);
-    }
 
     for (int i = 0; i < triCount; ++i) {
         const auto& tr = model.tris[i];

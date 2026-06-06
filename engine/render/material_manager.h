@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "core/asset_registry.h"
 #include "core/types.h"
@@ -56,6 +57,7 @@ public:
 
 private:
     std::unordered_map<std::string, Material> materials_; // Mapa nazw na definicje właściwości materiałów.
+    std::vector<Material> handleToMaterial_;              // Wyszukiwanie po uchwycie (O(1)).
     AssetRegistry* assetRegistry_ = nullptr;              // Wskaźnik do rejestru zasobów.
 };
 

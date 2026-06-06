@@ -10,6 +10,7 @@
 #include <vulkan/vulkan.h>
 
 #include "core/math.h"
+#include "core/asset_registry.h"
 
 namespace engine3d {
 
@@ -230,8 +231,8 @@ enum class CullMode {
  */
 struct Material {
     std::string name;
-    std::string textureName;
-    std::string normalMapName;
+    TextureHandle textureHandle{};
+    TextureHandle normalMapHandle{};
     std::string shaderProgram;
     TextureFilter minFilter = TextureFilter::Linear;
     TextureFilter magFilter = TextureFilter::Linear;
@@ -256,9 +257,9 @@ struct Material {
     // Parametry standardu PBR (Physically Based Rendering):
     float metallicFactor = 0.0f;              // Stopień metaliczności powierzchni (0.0 - dielektryk, 1.0 - czysty metal).
     float roughnessFactor = 1.0f;             // Stopień szorstkości (0.0 - idealne lustro, 1.0 - mat).
-    std::string metallicRoughnessTextureName; // Mapa metaliczności i szorstkości.
-    std::string occlusionTextureName;         // Mapa okluzji otoczenia (cienie w zakamarkach).
-    std::string emissiveTextureName;          // Mapa emisji światła.
+    TextureHandle metallicRoughnessTextureHandle{}; // Mapa metaliczności i szorstkości.
+    TextureHandle occlusionTextureHandle{};         // Mapa okluzji otoczenia (cienie w zakamarkach).
+    TextureHandle emissiveTextureHandle{};          // Mapa emisji światła.
 };
 
 // Konfiguracja kamery (perspektywy patrzenia na świat).

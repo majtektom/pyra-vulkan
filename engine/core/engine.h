@@ -21,6 +21,7 @@
 #include "core/mesh_manager.h"
 #include "core/asset_registry.h"
 #include "core/input_actions.h"
+#include "core/job_system.h"
 #include "feature/font/text_overlay_renderer.h"
 #include "core/types.h"
 
@@ -157,6 +158,8 @@ public:
     struct TerrainRootRef {
         Entity* entity;
         float yOffset;
+        mutable float lastX = -999999.0f;
+        mutable float lastZ = -999999.0f;
     };
 
     std::function<void(float, Engine&)> onUpdate;
@@ -168,6 +171,9 @@ private:
     std::unique_ptr<AssetRegistry> assetRegistry;
     std::unique_ptr<MeshManager> meshManager;
     std::unique_ptr<Renderer> renderer;
+    // Pula wątków roboczych (Job System) - jeden na cały silnik, żyje do końca aplikacji.
+    // Inicjalizowana z liczbą rdzeni logicznych - 1 (main thread + worker threads).
+    JobSystem jobSystem_;
     std::unique_ptr<ShaderManager> shaderManager;
     std::unique_ptr<TextureManager> textureManager;
     std::unique_ptr<FontManager> fontManager;

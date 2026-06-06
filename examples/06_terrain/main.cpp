@@ -30,16 +30,7 @@ constexpr const char* kActionTerrainModePlasma = "terrain.mode_plasma";
 constexpr const char* kActionTerrainModeFault = "terrain.mode_fault";
 constexpr const char* kActionTerrainModeDeposition = "terrain.mode_deposition";
 
-/**
- * @brief Pobiera nazwę tekstury z rejestru zasobów na podstawie jej uchwytu.
- */
-std::string textureNameFromHandle(AssetRegistry* assets, TextureHandle textureHandle, const std::string& fallback = "") {
-    if (!assets || !textureHandle.isValid()) {
-        return fallback;
-    }
-    const auto name = assets->textureName(textureHandle);
-    return name.has_value() ? *name : fallback;
-}
+
 
 /**
  * @brief Mapuje fizyczne klawisze na akcje systemu terenu.
@@ -140,7 +131,7 @@ int main() {
     terrainMaterial.depthTest = true;
     if (!terrain.layers.empty() && !terrain.layers[0].texturePath.empty()) {
         TextureHandle texture = renderer->loadTexture("terrain_scene_mat_tex", terrain.layers[0].texturePath);
-        terrainMaterial.textureName = textureNameFromHandle(assets, texture, "");
+        terrainMaterial.textureHandle = texture;
     }
     const MaterialHandle terrainMaterialHandle = mats->add(terrainMaterial);
 

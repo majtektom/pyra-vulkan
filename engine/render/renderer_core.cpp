@@ -22,7 +22,9 @@
 
 namespace engine3d {
 
-constexpr int kMaxFrames = 2;
+// Triple buffering: CPU może przygotowywać klatkę N+2 gdy GPU renderuje N.
+// Eliminuje vkWaitForFences stall który ograniczał do ~120fps.
+constexpr int kMaxFrames = Renderer::kMaxFrames;
 constexpr int kMaxDescriptorSets = 64;
 
 constexpr int kMaxLights = 16;
@@ -100,6 +102,12 @@ public:
             registerTextureInBindless("default_normal", defaultNormalImageView_, defaultNormalSampler_);
             registerTextureInBindless("default_orm", defaultOrmImageView_, defaultOrmSampler_);
             registerTextureInBindless("default_black", defaultBlackImageView_, defaultBlackSampler_);
+
+            defaultDiffuseIndex_ = getTextureIndex("default");
+            defaultNormalIndex_ = getTextureIndex("default_normal");
+            defaultOrmIndex_ = getTextureIndex("default_orm");
+            defaultEmissiveIndex_ = getTextureIndex("default_black");
+            defaultMaskIndex_ = getTextureIndex("default_black");
 
             passes_.push_back(std::make_unique<OpaquePass>());
             passes_.push_back(std::make_unique<TransparentPass>());
@@ -317,7 +325,7 @@ public:
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_);
 
-        auto opaquePackets = scene.getOpaquePackets();
+        const auto& opaquePackets = scene.getOpaquePackets();
 
         for (const auto& packet : opaquePackets) {
             if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
@@ -711,6 +719,9 @@ public:
         if (assetRegistry_) {
             const auto handle = assetRegistry_->registerTexture(name);
             if (handle.isValid()) {
+                if (handle.value >= textureHandleToIndex_.size()) {
+                    textureHandleToIndex_.resize(handle.value + 1, 0);
+                }
                 textureHandleToIndex_[handle.value] = index;
             }
         }
@@ -758,21 +769,13 @@ public:
         if (!handle.isValid()) {
             return 0;
         }
-
-        auto it = textureHandleToIndex_.find(handle.value);
-        if (it != textureHandleToIndex_.end()) {
-            return it->second;
+        if (handle.value < textureHandleToIndex_.size()) {
+            return textureHandleToIndex_[handle.value];
         }
         return 0;
     }
 
     void prepareRenderPacket(RenderPacket& packet) {
-        const uint32_t defaultDiffuse = getTextureIndex("default");
-        const uint32_t defaultNormal = getTextureIndex("default_normal");
-        const uint32_t defaultOrm = getTextureIndex("default_orm");
-        const uint32_t defaultEmissive = getTextureIndex("default_black");
-        const uint32_t defaultMask = getTextureIndex("default_black");
-
         packet.forwardOpaquePass = false;
         const bool wantsLayeredForward = packet.layerBlendEnabled;
         if (materialManager_) {
@@ -791,38 +794,38 @@ public:
 
         packet.diffuseTextureIndex = packet.diffuseTextureHandle.isValid()
             ? getTextureIndex(packet.diffuseTextureHandle)
-            : defaultDiffuse;
+            : defaultDiffuseIndex_;
 
         if (packet.normalTextureHandle.isValid()) {
             packet.normalTextureIndex = getTextureIndex(packet.normalTextureHandle);
         } else {
-            packet.normalTextureIndex = defaultNormal;
+            packet.normalTextureIndex = defaultNormalIndex_;
             packet.bumpIntensity = 0.0f;
         }
 
         packet.metallicRoughnessTextureIndex = packet.metallicRoughnessTextureHandle.isValid()
             ? getTextureIndex(packet.metallicRoughnessTextureHandle)
-            : defaultOrm;
+            : defaultOrmIndex_;
 
         packet.occlusionTextureIndex = packet.occlusionTextureHandle.isValid()
             ? getTextureIndex(packet.occlusionTextureHandle)
-            : defaultDiffuse;
+            : defaultDiffuseIndex_;
 
         packet.emissiveTextureIndex = packet.emissiveTextureHandle.isValid()
             ? getTextureIndex(packet.emissiveTextureHandle)
-            : defaultEmissive;
+            : defaultEmissiveIndex_;
 
         packet.layerCount = std::min(packet.layerCount, kMaxTerrainLayers);
         for (uint32_t i = 0; i < kMaxTerrainLayers; ++i) {
-            packet.layerTextureIndices[i] = defaultDiffuse;
-            packet.layerMaskIndices[i] = defaultMask;
+            packet.layerTextureIndices[i] = defaultDiffuseIndex_;
+            packet.layerMaskIndices[i] = defaultMaskIndex_;
         }
 
         if (packet.layerBlendEnabled && packet.layerCount > 0) {
             for (uint32_t i = 0; i < packet.layerCount; ++i) {
                 packet.layerTextureIndices[i] = packet.layerTextureHandles[i].isValid()
                     ? getTextureIndex(packet.layerTextureHandles[i])
-                    : defaultDiffuse;
+                    : defaultDiffuseIndex_;
                 if (i > 0 && packet.layerMaskHandles[i].isValid()) {
                     packet.layerMaskIndices[i] = getTextureIndex(packet.layerMaskHandles[i]);
                 }
@@ -867,7 +870,7 @@ public:
 
     void cleanupGBuffer() {
         VkDevice device = vulkanContext_->device();
-        for (int f = 0; f < 2; f++) {
+        for (int f = 0; f < kMaxFrames; f++) {
             for (int a = 0; a < kGBufferAttachments; a++) {
                 if (gbufferViews_[a][f]) { vkDestroyImageView(device, gbufferViews_[a][f], nullptr); gbufferViews_[a][f] = VK_NULL_HANDLE; }
                 if (gbufferImages_[a][f]) { vkDestroyImage(device, gbufferImages_[a][f], nullptr); gbufferImages_[a][f] = VK_NULL_HANDLE; }
@@ -1816,7 +1819,7 @@ private:
         samplerInfo.maxLod = 1.0f;
         vkCreateSampler(device, &samplerInfo, nullptr, &gbufferSampler_);
 
-        for (int f = 0; f < 2; f++) {
+        for (int f = 0; f < kMaxFrames; f++) {
             for (int a = 0; a < kGBufferAttachments; a++) {
                 VkImageCreateInfo ci{};
                 ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -2190,15 +2193,15 @@ private:
         dslInfo.pBindings = gbufferBindings;
         vkCreateDescriptorSetLayout(device, &dslInfo, nullptr, &deferredDescriptorSetLayout_);
 
-        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * 2};
+        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * static_cast<uint32_t>(kMaxFrames)};
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = 2;
+        poolInfo.maxSets = kMaxFrames;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = &poolSize;
         vkCreateDescriptorPool(device, &poolInfo, nullptr, &deferredDescriptorPool_);
 
-        for (int f = 0; f < 2; f++) {
+        for (int f = 0; f < kMaxFrames; f++) {
             VkDescriptorSetAllocateInfo allocInfo{};
             allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             allocInfo.descriptorPool = deferredDescriptorPool_;
@@ -2393,16 +2396,22 @@ private:
 
     std::unordered_map<std::string, TextureResources> textures_;
     std::unordered_map<std::string, uint32_t> textureNameToIndex_;
-    std::unordered_map<uint32_t, uint32_t> textureHandleToIndex_;
+    std::vector<uint32_t> textureHandleToIndex_;
     uint32_t nextTextureIndex_ = 0;
 
-    std::array<VkSemaphore, 2> imageAvailableSemaphores_;
-    std::array<VkSemaphore, 2> renderFinishedSemaphores_;
-    std::array<VkSemaphore, 2> presentReadySemaphores_;
-    std::array<VkSemaphore, 2> renderTimelineSemaphores_;
-    std::array<uint64_t, 2> timelineCounters_{};
+    uint32_t defaultDiffuseIndex_ = 0;
+    uint32_t defaultNormalIndex_ = 0;
+    uint32_t defaultOrmIndex_ = 0;
+    uint32_t defaultEmissiveIndex_ = 0;
+    uint32_t defaultMaskIndex_ = 0;
+
+    std::array<VkSemaphore, kMaxFrames> imageAvailableSemaphores_;
+    std::array<VkSemaphore, kMaxFrames> renderFinishedSemaphores_;
+    std::array<VkSemaphore, kMaxFrames> presentReadySemaphores_;
+    std::array<VkSemaphore, kMaxFrames> renderTimelineSemaphores_;
+    std::array<uint64_t, kMaxFrames> timelineCounters_{};
     uint64_t globalTimelineCounter_ = 0;
-    std::array<VkFence, 2> inFlightFences_;
+    std::array<VkFence, kMaxFrames> inFlightFences_;
     std::vector<VkCommandBuffer> commandBuffers_;
     uint32_t currentFrame_ = 0;
     SynchronizationMode synchronizationMode_ = SynchronizationMode::Standard;
@@ -2440,9 +2449,9 @@ private:
 
     // GBuffer
     static constexpr int kGBufferAttachments = 4;
-    VkImage gbufferImages_[kGBufferAttachments][2] = {};
-    VkDeviceMemory gbufferMemories_[kGBufferAttachments][2] = {};
-    VkImageView gbufferViews_[kGBufferAttachments][2] = {};
+    VkImage gbufferImages_[kGBufferAttachments][kMaxFrames] = {};
+    VkDeviceMemory gbufferMemories_[kGBufferAttachments][kMaxFrames] = {};
+    VkImageView gbufferViews_[kGBufferAttachments][kMaxFrames] = {};
     VkSampler gbufferSampler_ = VK_NULL_HANDLE;
 
     // GBuffer pipeline
@@ -2458,7 +2467,7 @@ private:
     VkPipeline deferredPipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout deferredDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool deferredDescriptorPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet deferredDescriptorSets_[2] = {};
+    VkDescriptorSet deferredDescriptorSets_[kMaxFrames] = {};
 };
 
 // Facade

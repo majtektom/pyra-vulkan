@@ -194,7 +194,7 @@ void Engine::addShader(const std::string& name, const ShaderProgram& program) {
 void Engine::configureScene(Scene& scene) {
     if (!scene.hasSystem("RenderExtractionSystem")) {
         scene.addSystem(std::make_unique<RenderExtractionSystem>(
-            materialManager, *materialSystem, *meshManager, *assetRegistry));
+            materialManager, *materialSystem, *meshManager, *assetRegistry, jobSystem_, *renderer));
     }
     if (!scene.hasSystem("LightSystem")) {
         scene.addSystem(std::make_unique<LightSystem>());
@@ -203,7 +203,7 @@ void Engine::configureScene(Scene& scene) {
         scene.addSystem(std::make_unique<CameraExtractionSystem>());
     }
     if (!scene.hasSystem("RenderFramePrepSystem")) {
-        scene.addSystem(std::make_unique<RenderFramePrepSystem>());
+        scene.addSystem(std::make_unique<RenderFramePrepSystem>(jobSystem_));
     }
 }
 
@@ -217,29 +217,65 @@ void Engine::update(TimeDelta deltaTime) {
 
     if (shaderHotReload_) shaderHotReload_->check();
 
-    // Automatyczne przyklejanie obiektów mapy do terenu
+    // Automatyczne przyklejanie obiektów mapy do terenu (tylko w razie przemieszczenia)
     if (currentTerrain_) {
         for (auto& root : terrainRoots_) {
-            if (root.entity) {
+            if (root.entity && root.entity->isActive()) {
                 auto& tr = root.entity->transform();
-                tr.position.y = currentTerrain_->getHeight(tr.position.x, tr.position.z) + root.yOffset;
+                if (tr.position.x != root.lastX || tr.position.z != root.lastZ) {
+                    tr.position.y = currentTerrain_->getHeight(tr.position.x, tr.position.z) + root.yOffset;
+                    root.lastX = tr.position.x;
+                    root.lastZ = tr.position.z;
+                }
             }
         }
     }
 
-    // Aktualizacja animacji szkieletowych GLTF
-    for (auto& inst : currentBrainInstances_) {
-        if (inst) {
-            inst->update(dtSeconds, 0, 1.0f);
+    // Aktualizacja animacji szkieletowych GLTF + morphingowych MD2 równolegle.
+    // GLTF i MD2 działają na niezależnych danych (różne bufory GPU) - brak wyścigów.
+    {
+        // Uruchamiamy GLTF asynchronicznie na wątkach roboczych.
+        std::vector<std::future<void>> gltfFutures;
+        gltfFutures.reserve(currentBrainInstances_.size());
+        for (auto& inst : currentBrainInstances_) {
+            if (inst) {
+                // Każda instancja GLTF posiada własną pamięć GPU (boneMemory_) - thread-safe.
+                gltfFutures.push_back(jobSystem_.submit([&inst, dtSeconds]() {
+                    inst->update(dtSeconds, 0, 1.0f);
+                }));
+            }
         }
-    }
 
-    // Aktualizacja animacji morphingowych MD2
-    for (auto& inst : md2Instances_) {
-        if (inst.model && inst.anim) {
-            MeshData animMesh;
-            animateMd2(*inst.model, *inst.anim, dtSeconds, animMesh);
-            meshManager->updateMesh(inst.meshName, animMesh);
+        // MD2 również równolegle - każda instancja ma własny MeshData i meshName.
+        // Zbieramy pary (meshName, MeshData) tylko dla aktywnych instancji z zachowaniem kolejności.
+        struct Md2Job {
+            std::string meshName;
+            MeshData result;
+            std::future<void> fut;
+        };
+        std::vector<Md2Job> md2Jobs;
+        md2Jobs.reserve(md2Instances_.size());
+
+        for (auto& inst : md2Instances_) {
+            if (!inst.model || !inst.anim) continue;
+            md2Jobs.emplace_back();
+            auto& job = md2Jobs.back();
+            job.meshName = inst.meshName;
+            // Animacja obliczana na wątku roboczym - każda instancja ma osobny stan i bufor wyjściowy.
+            job.fut = jobSystem_.submit([&inst, &out = job.result, dtSeconds]() {
+                animateMd2(*inst.model, *inst.anim, dtSeconds, out);
+            });
+        }
+
+        // Czekamy na ukończenie GLTF.
+        for (auto& f : gltfFutures) f.get();
+
+        // Czekamy na MD2 i przesyłamy wyniki do GPU (updateMesh musi być single-threaded - Vulkan).
+        for (auto& job : md2Jobs) {
+            job.fut.get();
+            if (!job.result.vertices.empty()) {
+                meshManager->updateMesh(job.meshName, job.result);
+            }
         }
     }
 
@@ -261,7 +297,7 @@ void Engine::renderFrame() {
     RenderView renderView{};
     bool hasRenderView = false;
 
-    if (const auto* scene = activeScene()) {
+    if (auto* scene = activeScene()) {
         // Proces Ekstrakcji Danych (Render Extraction):
         // W nowoczesnych silnikach faza renderowania nie odczytuje danych bezpośrednio z komponentów gry
         // w trakcie rysowania. Zamiast tego "ekstrahuje" niezbędne informacje (paczki renderowania)
@@ -275,10 +311,10 @@ void Engine::renderFrame() {
             renderView = scene->frameView();
         }
 
-        // Kopiujemy packet, bo ponizej uzupelniamy pola zalezne od kamery i renderera.
-        for (auto packet : scene->renderPackets()) {
-            renderer->prepareRenderPacket(packet);
-            renderScene.addPacket(packet);
+        // Paczki zostały przygotowane równolegle w RenderExtractionSystem.
+        // Przenosimy je bez kopiowania do renderScene.
+        for (auto& packet : scene->mutableRenderPackets()) {
+            renderScene.addPacket(std::move(packet));
         }
     } else {
         // Gdy nie ma aktywnej sceny, przekazujemy pusta liste, aby uniknac
@@ -470,10 +506,12 @@ bool Engine::actionReleased(std::string_view action) const {
 
 void Engine::registerTerrainRoot(Entity* entity, float yOffset) {
     if (!entity) return;
-    terrainRoots_.push_back({entity, yOffset});
     if (currentTerrain_) {
         auto& tr = entity->transform();
         tr.position.y = currentTerrain_->getHeight(tr.position.x, tr.position.z) + yOffset;
+        terrainRoots_.push_back({entity, yOffset, tr.position.x, tr.position.z});
+    } else {
+        terrainRoots_.push_back({entity, yOffset});
     }
 }
 
@@ -514,11 +552,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
     currentSkydome_.reset();
     currentTerrain_.reset();
 
-    auto textureNameFromHandle = [&](TextureHandle handle) -> std::string {
-        if (!assetRegistry || !handle.isValid()) return "";
-        auto nameOpt = assetRegistry->textureName(handle);
-        return nameOpt.has_value() ? *nameOpt : "";
-    };
+
 
     // 1. Oświetlenie otoczenia (Ambient)
     if (root.contains("ambient")) {
@@ -607,7 +641,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
             terrainMaterial.depthTest = true;
             if (!currentTerrain_->layers.empty() && !currentTerrain_->layers[0].texturePath.empty()) {
                 TextureHandle texture = renderer->loadTexture("map_terrain_mat_tex", currentTerrain_->layers[0].texturePath);
-                terrainMaterial.textureName = textureNameFromHandle(texture);
+                terrainMaterial.textureHandle = texture;
             }
             MaterialHandle terrainMaterialHandle = materialManager.add(terrainMaterial);
 
@@ -680,7 +714,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                 }
                 if (!texPath.empty()) {
                     TextureHandle texture = renderer->loadTexture(material.name + "_tex", texPath, false, disableAlpha);
-                    material.textureName = textureNameFromHandle(texture);
+                    material.textureHandle = texture;
                 }
                 sourceMaterials.push_back(materialManager.add(material));
             }
@@ -689,7 +723,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                 Material material;
                 material.name = "map_3ds_mat_default_" + mpath;
                 TextureHandle texture = renderer->loadTexture(material.name + "_tex", fallbackTexture, false, disableAlpha);
-                material.textureName = textureNameFromHandle(texture);
+                material.textureHandle = texture;
                 material.cullMode = CullMode::Back;
                 material.blendMode = BlendMode::Disabled;
                 material.depthWrite = true;
@@ -804,11 +838,11 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
             material.name = name + "_mat";
             if (!tpath.empty()) {
                 TextureHandle texture = renderer->loadTexture(name + "_tex", tpath);
-                material.textureName = textureNameFromHandle(texture);
+                material.textureHandle = texture;
             }
             if (!npath.empty()) {
                 TextureHandle texture = renderer->loadTexture(name + "_norm", npath);
-                material.normalMapName = textureNameFromHandle(texture);
+                material.normalMapHandle = texture;
                 material.bumpIntensity = 1.0f;
             }
             material.cullMode = CullMode::Back;
@@ -869,24 +903,24 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                 material.cullMode = CullMode::Disabled;
                 if (!primitive.texturePath.empty()) {
                     TextureHandle texture = renderer->loadTexture(materialName + "_tex", primitive.texturePath);
-                    material.textureName = textureNameFromHandle(texture);
+                    material.textureHandle = texture;
                 }
                 if (!primitive.normalMapPath.empty()) {
                     TextureHandle texture = renderer->loadTexture(materialName + "_n", primitive.normalMapPath);
-                    material.normalMapName = textureNameFromHandle(texture);
+                    material.normalMapHandle = texture;
                     material.bumpIntensity = 1.0f;
                 }
                 if (!primitive.ormPath.empty()) {
                     TextureHandle texture = renderer->loadTexture(materialName + "_orm", primitive.ormPath);
-                    material.metallicRoughnessTextureName = textureNameFromHandle(texture);
+                    material.metallicRoughnessTextureHandle = texture;
                 }
                 if (!primitive.occlusionPath.empty()) {
                     TextureHandle texture = renderer->loadTexture(materialName + "_occ", primitive.occlusionPath);
-                    material.occlusionTextureName = textureNameFromHandle(texture);
+                    material.occlusionTextureHandle = texture;
                 }
                 if (!primitive.emissivePath.empty()) {
                     TextureHandle texture = renderer->loadTexture(materialName + "_em", primitive.emissivePath);
-                    material.emissiveTextureName = textureNameFromHandle(texture);
+                    material.emissiveTextureHandle = texture;
                 }
                 material.roughnessFactor = 0.5f;
                 MaterialHandle handle = materialManager.add(material);

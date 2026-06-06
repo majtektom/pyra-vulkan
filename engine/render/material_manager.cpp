@@ -13,7 +13,14 @@ MaterialHandle MaterialManager::add(const Material& material) {
     
     // Rejestrujemy materiał w rejestrze zasobów i zwracamy unikalny uchwyt.
     if (assetRegistry_) {
-        return assetRegistry_->registerMaterial(material.name);
+        MaterialHandle handle = assetRegistry_->registerMaterial(material.name);
+        if (handle.isValid()) {
+            if (handle.value >= handleToMaterial_.size()) {
+                handleToMaterial_.resize(handle.value + 1);
+            }
+            handleToMaterial_[handle.value] = material;
+        }
+        return handle;
     }
     
     LOG_WARN("[MaterialManager] AssetRegistry not set, material registration may be incomplete: {}", material.name);
@@ -30,12 +37,18 @@ const Material* MaterialManager::get(const std::string& name) const {
 }
 
 const Material* MaterialManager::get(MaterialHandle handle) const {
-    if (!assetRegistry_) {
-        LOG_ERROR("[MaterialManager] AssetRegistry not set while getting material by handle");
+    if (!handle.isValid()) {
         return nullptr;
     }
-    if (!handle.isValid()) {
-        LOG_WARN("[MaterialManager] Invalid MaterialHandle used");
+    if (handle.value < handleToMaterial_.size()) {
+        const auto& mat = handleToMaterial_[handle.value];
+        if (!mat.name.empty()) {
+            return &mat;
+        }
+    }
+
+    if (!assetRegistry_) {
+        LOG_ERROR("[MaterialManager] AssetRegistry not set while getting material by handle");
         return nullptr;
     }
 
