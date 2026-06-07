@@ -29,7 +29,10 @@
 #include "object/model_md2.h"
 #include "object/ocean_renderer.h"
 #include "object/skydome_renderer.h"
-#include "object/terrain.h"
+#include "object/terrain/terrain.h"
+#include "object/terrain/terrain_component.h"
+#include "object/terrain/terrain_system.h"
+#include "object/terrain/terrain_placement_system.h"
 #include "render/renderer.h"
 
 using namespace engine3d;
@@ -475,12 +478,77 @@ private:
         }
         engine_.configureScene(*gameScene_);
 
+        // Register ECS Systems for Terrain
+        gameScene_->addSystem(std::make_unique<TerrainSystem>(*engine_.getMeshManager(), *engine_.getMaterialManager(), *engine_.getMaterialSystem()));
+        gameScene_->addSystem(std::make_unique<TerrainPlacementSystem>());
+
+        gameTerrain_ = nullptr;
+
+        // Manually load Terrain from the map config before loading other map elements
+        std::ifstream file(mapPath);
+        if (file.is_open()) {
+            nlohmann::json root;
+            try {
+                file >> root;
+                if (root.contains("terrain")) {
+                    auto tnode = root["terrain"];
+                    if (tnode.value("enabled", false)) {
+                        std::string tpath = tnode.value("path", "");
+                        auto terrain = std::make_shared<Terrain>();
+                        bool loaded = terrain->loadFromJson(tpath);
+                        if (loaded) {
+                            terrain->buildMesh();
+                        } else {
+                            LOG_WARN("Could not load terrain, generating plasma");
+                            terrain->generatePlasma(256, 1.2f);
+                            terrain->smoothEdges();
+                            terrain->buildMesh();
+                        }
+                        terrain->uploadTo(*engine_.getMeshManager());
+
+                        Material terrainMaterial;
+                        terrainMaterial.name = "map_terrain_mat";
+                        terrainMaterial.shaderProgram = "terrain";
+                        terrainMaterial.cullMode = CullMode::Back;
+                        terrainMaterial.depthWrite = true;
+                        terrainMaterial.depthTest = true;
+                        if (!terrain->layers.empty() && !terrain->layers[0].texturePath.empty()) {
+                            TextureHandle texture = engine_.getRenderer()->loadTexture("map_terrain_mat_tex", terrain->layers[0].texturePath);
+                            terrainMaterial.textureHandle = texture;
+                        }
+                        MaterialHandle terrainMaterialHandle = engine_.getMaterialManager()->add(terrainMaterial);
+
+                        Entity* terrainEntity = gameScene_->createEntity("game_terrain_entity");
+                        terrainEntity->transform().position = terrain->worldOffset();
+                        auto* terrainComp = terrainEntity->addComponent<TerrainComponent>(terrain);
+                        terrainComp->materialHandle = terrainMaterialHandle;
+                        terrainComp->castShadows = true;
+                        terrainComp->layerBlendEnabled = true;
+                        terrainComp->layerCount = std::min<uint32_t>(
+                            static_cast<uint32_t>(terrain->layers.size()), kMaxTerrainLayers);
+                        terrainComp->layerWorldSize = terrain->worldSizeXZ();
+
+                        for (uint32_t i = 0; i < terrainComp->layerCount; ++i) {
+                            std::string texName = "map_terrain_layer_tex_" + std::to_string(i);
+                            terrainComp->layerTextureHandles[i] = engine_.getRenderer()->loadTexture(texName, terrain->layers[i].texturePath);
+                            if (i > 0 && !terrain->layers[i].maskPath.empty()) {
+                                std::string maskName = "map_terrain_layer_mask_" + std::to_string(i);
+                                terrainComp->layerMaskHandles[i] = engine_.getRenderer()->loadTexture(maskName, terrain->layers[i].maskPath);
+                            }
+                        }
+                        gameTerrain_ = terrain;
+                    }
+                }
+            } catch (const std::exception& e) {
+                LOG_ERROR("Failed to parse map file JSON for terrain in ensureGameScene: {}", e.what());
+            }
+        }
+
         if (!engine_.loadMap(mapPath, gameScene_)) {
             LOG_ERROR("Nie udalo sie wczytac mapy: {}", mapPath);
             return false;
         }
 
-        gameTerrain_ = engine_.getTerrain();
         skydome_ = engine_.getSkydome();
         ocean_ = engine_.getOcean();
         md2Model_ = engine_.getMd2Model();
@@ -635,13 +703,6 @@ private:
             controller->update(dt, *gameCamera_);
         }
 
-        // Aktualizacja podziału LOD terenu
-        if (gameTerrain_) {
-            gameTerrain_->update(gameCamera_, *e.getMeshManager(), gameTerrain_->meshName());
-        }
-
-
-
         worldTime_ += dt * timeSpeedMultiplier_;
 
         if (skydome_) {
@@ -784,6 +845,23 @@ private:
         line2 << " skydome=" << (skydome_ ? "yes" : "no")
               << " ocean=" << (ocean_ ? "yes" : "no");
         e.setTextLabel(line2.str(), "times", 12.0f, 142.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
+
+        if(gameTerrain_) {
+            // Obliczamy liczbę węzłów na każdym poziomie LOD
+            std::array<int, 5> lodCounts{};
+            for (const auto* node : gameTerrain_->getVisibleNodes()) {
+                int lod = std::max(0, std::min(4, node->lodLevel));
+                lodCounts[lod]++;
+            }
+            
+            std::ostringstream mode;
+            mode << " Total Boxes: " << gameTerrain_->getTotalLeafCount()
+                    << "  Visible: " << gameTerrain_->visibleCount
+                    << " (LOD0:" << lodCounts[0] << " LOD1:" << lodCounts[1]
+                    << " LOD2:" << lodCounts[2] << " LOD3:" << lodCounts[3]
+                    << " LOD4:" << lodCounts[4] << ")";
+            e.setTextLabel(mode.str(), "times", 10, 180, 0.45f, {0.7f, 0.7f, 1.0f, 1.0f});
+        }
 
         if (gameCamera_) {
             const auto& pos = gameCamera_->getOwner()->transform().position;

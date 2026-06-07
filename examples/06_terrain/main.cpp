@@ -9,7 +9,10 @@
 #include "core/types.h"
 #include "core/mesh_component.h"
 #include "camera/camera_component.h"
-#include "object/terrain.h"
+#include "object/terrain/terrain.h"
+#include "object/terrain/terrain_component.h"
+#include "object/terrain/terrain_system.h"
+#include "object/terrain/terrain_placement_system.h"
 #include "object/ocean_renderer.h"
 #include "object/skydome_renderer.h"
 
@@ -58,9 +61,13 @@ int main() {
     if (!engine.initialize("engine3d: terrain LOD", 1280, 800)) return 1;
 
     configureTerrainBindings(engine);
+    engine.setWireframeEnabled(false);
 
     auto* scene = engine.getSceneManager()->activeScene();
     if (!scene) return 1;
+
+    scene->addSystem(std::make_unique<TerrainSystem>(*engine.getMeshManager(), *engine.getMaterialManager(), *engine.getMaterialSystem()));
+    scene->addSystem(std::make_unique<TerrainPlacementSystem>());
 
     auto* renderer = engine.getRenderer();
     renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -101,22 +108,24 @@ int main() {
     // Klasa Terrain reprezentuje siatkę wysokościową (Heightfield).
     // Może zostać wczytana z konfiguracji JSON (wraz z warstwami tekstur) lub
     // wygenerowana proceduralnie bezpośrednio w pamięci RAM.
-    Terrain terrain;
-    bool useJson = terrain.loadFromJson("assets/teren/demo/terrain.json");
+    auto terrain = std::make_shared<Terrain>();
+    bool useJson = terrain->loadFromJson("assets/teren/demo/terrain.json");
     
     if (useJson) {
         // Parametry: rozmiar komórki siatki (10.0), maksymalna wysokość (2.0), podział LOD (20.0)
-        terrain.buildMesh();
-        terrain.uploadTo(*engine.getMeshManager());
-        LOG_INFO("Terrain (JSON): {}x{} layers={} mesh={}", terrain.sizeX, terrain.sizeZ, terrain.layers.size(), terrain.meshName());
+        terrain->setScale(15.0f, 2.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+        terrain->buildMesh();
+        terrain->uploadTo(*engine.getMeshManager());
+        LOG_INFO("Terrain (JSON): {}x{} layers={} mesh={}", terrain->sizeX, terrain->sizeZ, terrain->layers.size(), terrain->meshName());
     } else {
         // Proceduralny algorytm fraktalny Plasma (Midpoint Displacement).
         // Parametry: rozmiar siatki (256x256), współczynnik chropowatości (1.2).
-        terrain.generatePlasma(256, 1.2f);
-        terrain.smoothEdges(); // Wygładzenie krawędzi do poziomu 0, aby teren płynnie przechodził w wodę
-        terrain.buildMesh();
-        terrain.uploadTo(*engine.getMeshManager());
-        LOG_INFO("Terrain (plasma): {}x{} layers={} mesh={}", terrain.sizeX, terrain.sizeZ, terrain.layers.size(), terrain.meshName());
+        terrain->generatePlasma(256, 1.2f);
+        terrain->smoothEdges(); // Wygładzenie krawędzi do poziomu 0, aby teren płynnie przechodził w wodę
+        terrain->buildMesh();
+        terrain->uploadTo(*engine.getMeshManager());
+        terrain->setScale(5.0f, 2.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+        LOG_INFO("Terrain (plasma): {}x{} layers={} mesh={}", terrain->sizeX, terrain->sizeZ, terrain->layers.size(), terrain->meshName());
     }
 
     // KROK 4: REJESTROWANIE SPECJALNEGO MATERIAŁU TERENU
@@ -129,31 +138,31 @@ int main() {
     terrainMaterial.cullMode = CullMode::Back;
     terrainMaterial.depthWrite = true;
     terrainMaterial.depthTest = true;
-    if (!terrain.layers.empty() && !terrain.layers[0].texturePath.empty()) {
-        TextureHandle texture = renderer->loadTexture("terrain_scene_mat_tex", terrain.layers[0].texturePath);
+    if (!terrain->layers.empty() && !terrain->layers[0].texturePath.empty()) {
+        TextureHandle texture = renderer->loadTexture("terrain_scene_mat_tex", terrain->layers[0].texturePath);
         terrainMaterial.textureHandle = texture;
     }
     const MaterialHandle terrainMaterialHandle = mats->add(terrainMaterial);
 
     Entity* terrainEntity = scene->createEntity("terrain_mesh_entity");
-    terrainEntity->transform().position = terrain.worldOffset();
-    auto* terrainMesh = terrainEntity->addComponent<MeshComponent>(terrain.meshName());
-    terrainMesh->materialHandle = terrainMaterialHandle;
-    terrainMesh->castShadows = true;
+    terrainEntity->transform().position = terrain->worldOffset();
+    auto* terrainComp = terrainEntity->addComponent<TerrainComponent>(terrain);
+    terrainComp->materialHandle = terrainMaterialHandle;
+    terrainComp->castShadows = true;
     
     // Konfiguracja mieszania warstw (Texture Splatting) na komponencie siatki
-    terrainMesh->layerBlendEnabled = true;
-    terrainMesh->layerCount = std::min<uint32_t>(
-        static_cast<uint32_t>(terrain.layers.size()), kMaxTerrainLayers);
-    terrainMesh->layerWorldSize = terrain.worldSizeXZ();
+    terrainComp->layerBlendEnabled = true;
+    terrainComp->layerCount = std::min<uint32_t>(
+        static_cast<uint32_t>(terrain->layers.size()), kMaxTerrainLayers);
+    terrainComp->layerWorldSize = terrain->worldSizeXZ();
     
     // Ładowanie tekstur warstwowych i opcjonalnych masek przejść
-    for (uint32_t i = 0; i < terrainMesh->layerCount; ++i) {
+    for (uint32_t i = 0; i < terrainComp->layerCount; ++i) {
         const std::string texName = "terrain_layer_06_tex_" + std::to_string(i);
-        terrainMesh->layerTextureHandles[i] = renderer->loadTexture(texName, terrain.layers[i].texturePath);
-        if (i > 0 && !terrain.layers[i].maskPath.empty()) {
+        terrainComp->layerTextureHandles[i] = renderer->loadTexture(texName, terrain->layers[i].texturePath);
+        if (i > 0 && !terrain->layers[i].maskPath.empty()) {
             const std::string maskName = "terrain_layer_06_mask_" + std::to_string(i);
-            terrainMesh->layerMaskHandles[i] = renderer->loadTexture(maskName, terrain.layers[i].maskPath);
+            terrainComp->layerMaskHandles[i] = renderer->loadTexture(maskName, terrain->layers[i].maskPath);
         }
     }
 
@@ -194,7 +203,7 @@ int main() {
         escWasDown = escDown;
 
         if (cc && cam) {
-            cc->moveSpeed = 50.0f;
+            cc->moveSpeed = 150.0f;
             float ts = cc->mouseSensitivity;
             cc->rotateYaw(-static_cast<float>(snap.mouseDeltaX) * ts);
             cc->rotatePitch(-static_cast<float>(snap.mouseDeltaY) * ts);
@@ -208,17 +217,21 @@ int main() {
             cc->update(dt, *cam);
             
             // Przyklejenie kamery do powierzchni terenu po kliknięciu klawisza 'G'.
-            // Funkcja terrain.getHeight(x, z) interpoluje biliniowo wysokość siatki
+            // Funkcja terrain->getHeight(x, z) interpoluje biliniowo wysokość siatki
             // pod współrzędnymi świata kamery i dodaje offset oczu gracza (+3.0f).
             if (e.actionDown(kActionSnapToGround))
-                cam->getOwner()->transform().position.y = terrain.getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
+                cam->getOwner()->transform().position.y = terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
         }
 
-        // KROK 5: AKTUALIZACJA DYNAMICZNEGO GEOMETRYCZNEGO LOD (LOD system update)
-        // Dzieli teren na kwadratowe węzły (Quadtree / Chunks). Węzły znajdujące się blisko
-        // kamery są renderowane z gęstym podziałem trójkątów, podczas gdy węzły odległe są
-        // upraszczane, drastycznie redukując liczbę trójkątów przesyłanych do potoku renderowania.
-        terrain.update(cam, *engine.getMeshManager(), terrain.meshName());
+        // KROK 5: Przełączanie tekstu debugującego za pomocą klawisza 'B'
+        static bool bWasDown = false;
+        static bool showDebugText = true;
+        const bool bDown = snap.keys[SDL_SCANCODE_B];
+        if (bDown && !bWasDown) {
+            showDebugText = !showDebugText;
+            LOG_INFO("Toggled terrain debug text: {}", showDebugText);
+        }
+        bWasDown = bDown;
 
         // KROK 6: PROCEDURALNE GENEROWANIE NOWEGO TERENU (Klawisze 1, 2, 3)
         bool regen = false;
@@ -229,23 +242,25 @@ int main() {
         if (regen) {
             if (generatorMode == 0) {
                 // Algorytm 1: Osocze (Plasma/Midpoint displacement) – fraktalny szum tworzący naturalne góry.
-                terrain.generatePlasma(256, 1.2f);
+                terrain->generatePlasma(256, 1.2f);
+                terrain->setScale(15.0f, 4.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
             }
             else if (generatorMode == 1) {
                 // Algorytm 2: Uskoki tektoniczne (Fault Formation) – przecina teren losowymi liniami 
                 // i podnosi jedną ze stron uskoku, tworząc strome zbocza i doliny.
-                terrain.generateFault(256, 160, 100, 1, 5, 0.5f);
+                terrain->generateFault(256, 160, 100, 1, 5, 0.5f);
+                terrain->setScale(15.0f, 2.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
             }
             else {
                 // Algorytm 3: Erozja/Depozycja (Particle Deposition) – symuluje spływanie cząsteczek
                 // piasku/ziemi ze wzniesień, co naturalnie wygładza strome szczyty.
-                terrain.generateDeposition(256, 100, 30, 10, 20, 0.8f);
+                terrain->generateDeposition(256, 100, 30, 10, 20, 0.8f);
+                terrain->setScale(15.0f, 7.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
             }
-            terrain.smoothEdges();
-            terrain.buildMesh();
             
-            // Aktualizacja dynamiczna siatki w buforach Vulkana bez niszczenia i tworzenia na nowo potoku
-            engine.getMeshManager()->updateMesh(terrain.meshName(), terrain.mesh);
+            terrain->smoothEdges();
+            terrain->buildMesh();
+            terrain->uploadTo(*engine.getMeshManager());
             LOG_INFO("Regenerated: {}", modeNames[generatorMode]);
         }
 
@@ -259,17 +274,33 @@ int main() {
         oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
         e.setTextLabel(oss.str(), "times", 10, 20, 0.7f, {1, 1, 0.3f, 1});
         
-        std::ostringstream mode;
-        mode << "[" << modeNames[generatorMode] << "]  nodes:" << terrain.visibleCount
-             << "  1=Plasma 2=Fault 3=Deposition";
-        e.setTextLabel(mode.str(), "times", 10, 50, 0.5f, {0.7f, 0.7f, 1.0f, 1.0f});
+        std::ostringstream controls;
+        controls << "1=Plasma 2=Fault 3=Deposition | B=Toggle Debug Info";
+        e.setTextLabel(controls.str(), "times", 10, 50, 0.45f, {0.5f, 0.9f, 0.5f, 1.0f});
+        
+        if (showDebugText) {
+            // Obliczamy liczbę węzłów na każdym poziomie LOD
+            std::array<int, 5> lodCounts{};
+            for (const auto* node : terrain->getVisibleNodes()) {
+                int lod = std::max(0, std::min(4, node->lodLevel));
+                lodCounts[lod]++;
+            }
+            
+            std::ostringstream mode;
+            mode << "[" << modeNames[generatorMode] << "]  Total Boxes: " << terrain->getTotalLeafCount()
+                 << "  Visible: " << terrain->visibleCount
+                 << " (LOD0:" << lodCounts[0] << " LOD1:" << lodCounts[1]
+                 << " LOD2:" << lodCounts[2] << " LOD3:" << lodCounts[3]
+                 << " LOD4:" << lodCounts[4] << ")";
+            e.setTextLabel(mode.str(), "times", 10, 72, 0.45f, {0.7f, 0.7f, 1.0f, 1.0f});
+        }
         
         if (cam) {
             std::ostringstream pos;
             pos << "pos: " << std::fixed << std::setprecision(0)
                 << cam->getOwner()->transform().position.x << " " << cam->getOwner()->transform().position.y << " " << cam->getOwner()->transform().position.z
-                << "  h: " << std::setprecision(1) << terrain.getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z);
-            e.setTextLabel(pos.str(), "times", 10, 75, 0.6f, {0.7f, 0.7f, 1.0f, 1.0f});
+                << "  h: " << std::setprecision(1) << terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z);
+            e.setTextLabel(pos.str(), "times", 10, 95, 0.5f, {0.7f, 0.7f, 1.0f, 1.0f});
         }
     };
 

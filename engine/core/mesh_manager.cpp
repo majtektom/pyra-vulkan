@@ -10,11 +10,13 @@ void MeshManager::loadMesh(const std::string& name, const MeshData& meshData) {
     auto gpuMesh = std::make_shared<GpuMesh>();
     
     VkDeviceSize vertexBufferSize = sizeof(Vertex) * meshData.vertices.size();
-    gpuMesh->vertexBuffer = std::make_unique<VulkanBuffer>(
-        context_, vertexBufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    gpuMesh->vertexBuffer->upload(meshData.vertices.data(), vertexBufferSize);
+    if (vertexBufferSize > 0) {
+        gpuMesh->vertexBuffer = std::make_unique<VulkanBuffer>(
+            context_, vertexBufferSize,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        gpuMesh->vertexBuffer->upload(meshData.vertices.data(), vertexBufferSize);
+    }
 
     gpuMesh->indexCount = static_cast<uint32_t>(meshData.indices.size());
     if (!meshData.indices.empty()) {
@@ -40,11 +42,23 @@ void MeshManager::updateMesh(const std::string& name, const MeshData& meshData) 
     
     VkDeviceSize vSize = sizeof(Vertex) * meshData.vertices.size();
     if (vSize > 0) {
+        if (!gpuMesh->vertexBuffer) {
+            gpuMesh->vertexBuffer = std::make_unique<VulkanBuffer>(
+                context_, vSize,
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
         gpuMesh->vertexBuffer->upload(meshData.vertices.data(), vSize);
     }
 
     if (!meshData.indices.empty()) {
         VkDeviceSize iSize = sizeof(uint32_t) * meshData.indices.size();
+        if (!gpuMesh->indexBuffer) {
+            gpuMesh->indexBuffer = std::make_unique<VulkanBuffer>(
+                context_, iSize,
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
         gpuMesh->indexBuffer->upload(meshData.indices.data(), iSize);
         gpuMesh->indexCount = static_cast<uint32_t>(meshData.indices.size());
     }

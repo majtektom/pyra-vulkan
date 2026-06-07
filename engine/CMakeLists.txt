@@ -29,11 +29,16 @@ add_library(engine3d SHARED
     object/model_3ds.cpp
     object/model_md2.cpp
     object/gltf/model_gltf.cpp
-    object/terrain.cpp
     object/grid_renderer.cpp
     object/skybox_renderer.cpp
     object/skydome_renderer.cpp
     object/ocean_renderer.cpp
+    object/terrain/terrain.cpp
+    object/terrain/terrain_index_generator.cpp
+    object/terrain/terrain_heightmap_generator.cpp
+    object/terrain/terrain_placement_system.cpp
+    object/terrain/terrain_system.cpp
+    object/terrain/terrain_component.cpp
     feature/particle/particle_event.cpp
     feature/particle/emitter.cpp
     feature/particle/system.cpp
@@ -62,7 +67,6 @@ add_library(engine3d SHARED
     scene/scene_serializer.cpp
     scene/transform_system.cpp
     scene/scene_manager.cpp
-    scene/terrain_placement_system.cpp
 )
 
 add_shader_bundle(

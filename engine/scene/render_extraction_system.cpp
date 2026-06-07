@@ -2,6 +2,7 @@
 
 #include "core/entity.h"
 #include "core/mesh_component.h"
+#include "object/terrain/terrain_component.h"
 #include "core/asset_registry.h"
 #include "core/mesh_manager.h"
 #include "core/job_system.h"
@@ -39,9 +40,12 @@ void RenderExtractionSystem::update(Scene& scene, float /*deltaTime*/) {
     // ------------------------------------------------------------------
     for (const auto& entity : entities) {
         if (!entity->isActive()) continue;
-        auto* mc = entity->getComponent<MeshComponent>();
-        if (!mc) continue;
-        resolveMaterialIfNeeded(*mc);
+        if (auto* mc = entity->getComponent<MeshComponent>()) {
+            resolveMaterialIfNeeded(*mc);
+        }
+        if (auto* tc = entity->getComponent<TerrainComponent>()) {
+            resolveMaterialIfNeeded(*tc);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -80,16 +84,35 @@ void RenderExtractionSystem::update(Scene& scene, float /*deltaTime*/) {
             const auto& entity = entities[i];
             if (!entity->isActive()) continue;
 
-            auto* mc = entity->getComponent<MeshComponent>();
-            if (!mc || !mc->isActive()) continue;
+            if (auto* mc = entity->getComponent<MeshComponent>()) {
+                if (mc->isActive()) {
+                    const size_t prevCount = myBuf.size();
+                    mc->collectRenderPackets(myBuf, meshManager_);
 
-            const size_t prevCount = myBuf.size();
-            mc->collectRenderPackets(myBuf, meshManager_);
+                    for (size_t pi = prevCount; pi < myBuf.size(); ++pi) {
+                        myBuf[pi].materialHandle = mc->materialHandle;
+                        resolvePacketAssetHandles(myBuf[pi]);
+                        renderer_.prepareRenderPacket(myBuf[pi]);
+                    }
+                }
+            }
 
-            for (size_t pi = prevCount; pi < myBuf.size(); ++pi) {
-                myBuf[pi].materialHandle = mc->materialHandle;
-                resolvePacketAssetHandles(myBuf[pi]);
-                renderer_.prepareRenderPacket(myBuf[pi]);
+            if (auto* tc = entity->getComponent<TerrainComponent>()) {
+                if (tc->isActive()) {
+                    const size_t prevCount = myBuf.size();
+                    tc->collectRenderPackets(myBuf, meshManager_);
+
+                    for (size_t pi = prevCount; pi < myBuf.size(); ++pi) {
+                        // For debug packets, we don't overwrite materialHandle unless it's the main terrain packet
+                        if (!myBuf[pi].materialHandle.isValid()) {
+                            // Already set in collectRenderPackets for debug box
+                        } else {
+                            myBuf[pi].materialHandle = tc->materialHandle;
+                        }
+                        resolvePacketAssetHandles(myBuf[pi]);
+                        renderer_.prepareRenderPacket(myBuf[pi]);
+                    }
+                }
             }
         }
     });
@@ -115,6 +138,17 @@ void RenderExtractionSystem::resolveMaterialIfNeeded(MeshComponent& meshComponen
     if (!material) return;
 
     meshComponent.materialInstance = materialSystem_.getOrCreateMaterialInstance(*material);
+}
+
+void RenderExtractionSystem::resolveMaterialIfNeeded(TerrainComponent& tc) {
+    if (!tc.materialInstance) {
+        const Material* material = tc.materialHandle.isValid()
+            ? materialManager_.get(tc.materialHandle)
+            : nullptr;
+        if (material) {
+            tc.materialInstance = materialSystem_.getOrCreateMaterialInstance(*material);
+        }
+    }
 }
 
 void RenderExtractionSystem::resolvePacketAssetHandles(RenderPacket& packet) {

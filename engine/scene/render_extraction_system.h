@@ -8,6 +8,7 @@ namespace engine3d {
 class MaterialManager;
 class MaterialSystem;
 class MeshManager;
+class TerrainComponent;
 class AssetRegistry;
 
 /**
@@ -40,6 +41,7 @@ public:
 
 private:
     void resolveMaterialIfNeeded(class MeshComponent& meshComponent);
+    void resolveMaterialIfNeeded(class TerrainComponent& terrainComponent);
     void resolvePacketAssetHandles(RenderPacket& packet);
 
     MaterialManager& materialManager_;

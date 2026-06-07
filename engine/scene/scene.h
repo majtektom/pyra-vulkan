@@ -130,6 +130,8 @@ public:
     // Dodawanie systemu ECS do sceny. Systemy są wykonywane w kolejności ich dodania.
     void addSystem(std::unique_ptr<ISceneSystem> system);
     bool hasSystem(const std::string& systemName) const;
+    ISceneSystem* getSystem(const std::string& systemName);
+    const ISceneSystem* getSystem(const std::string& systemName) const;
 
     // Uruchamia wszystkie zarejestrowane systemy ECS.
     void updateSystems(float deltaTime);

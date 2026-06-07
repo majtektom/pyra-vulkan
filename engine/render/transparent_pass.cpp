@@ -82,6 +82,10 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
             float layerWorldSize;
             uint32_t layerBaseTextureSets[3][4];
             uint32_t layerMaskTextureSets[3][4];
+            uint32_t heightmapTextureSet;
+            float scaleY;
+            float tessellationFactor;
+            uint32_t heightmapEnabled;
         } push;
         push.model = packet.transform;
         push.baseColorFactor = packet.materialColor;
@@ -104,10 +108,15 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
                 push.layerMaskTextureSets[group][lane] = packet.layerMaskIndices[index];
             }
         }
+        push.heightmapTextureSet = packet.heightmapTextureIndex;
+        push.scaleY = packet.scaleY;
+        push.tessellationFactor = packet.tessellationFactor;
+        push.heightmapEnabled = packet.heightmapEnabled ? 1u : 0u;
 
         // Przesyłamy Push Constants do rejestrów GPU.
         vkCmdPushConstants(commandBuffer, matLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                           VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
                            0, sizeof(PushConstants), &push);
 
         // Krok 7: Wywołanie rysowania (Draw Call).

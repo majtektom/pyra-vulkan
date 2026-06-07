@@ -13,12 +13,14 @@
 #include "scene/scene.h"
 #include "core/entity.h"
 #include "core/logger.h"
-#include "object/terrain.h"
 #include "object/skydome_renderer.h"
 #include "object/ocean_renderer.h"
 #include "object/model_3ds.h"
 #include "object/model_md2.h"
 #include "object/gltf/model_gltf.h"
+#include "object/terrain/terrain.h"
+#include "object/terrain/terrain_component.h"
+#include "object/terrain/terrain_placement_component.h"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <random>
@@ -145,14 +147,12 @@ void Engine::cleanup() {
         renderer->removeFeature("OceanRenderer");
     }
 
-    terrainRoots_.clear();
     currentBrainInstances_.clear();
     currentBrainModel_.reset();
     currentMd2Anim_.reset();
     currentMd2Model_.reset();
     currentOcean_.reset();
     currentSkydome_.reset();
-    currentTerrain_.reset();
 
     if (renderer) {
         renderer->cleanup();
@@ -216,20 +216,6 @@ void Engine::update(TimeDelta deltaTime) {
     }
 
     if (shaderHotReload_) shaderHotReload_->check();
-
-    // Automatyczne przyklejanie obiektów mapy do terenu (tylko w razie przemieszczenia)
-    if (currentTerrain_) {
-        for (auto& root : terrainRoots_) {
-            if (root.entity && root.entity->isActive()) {
-                auto& tr = root.entity->transform();
-                if (tr.position.x != root.lastX || tr.position.z != root.lastZ) {
-                    tr.position.y = currentTerrain_->getHeight(tr.position.x, tr.position.z) + root.yOffset;
-                    root.lastX = tr.position.x;
-                    root.lastZ = tr.position.z;
-                }
-            }
-        }
-    }
 
     // Aktualizacja animacji szkieletowych GLTF + morphingowych MD2 równolegle.
     // GLTF i MD2 działają na niezależnych danych (różne bufory GPU) - brak wyścigów.
@@ -504,16 +490,6 @@ bool Engine::actionReleased(std::string_view action) const {
     return inputActions_.wasReleased(previousInput_, currentInput_, action);
 }
 
-void Engine::registerTerrainRoot(Entity* entity, float yOffset) {
-    if (!entity) return;
-    if (currentTerrain_) {
-        auto& tr = entity->transform();
-        tr.position.y = currentTerrain_->getHeight(tr.position.x, tr.position.z) + yOffset;
-        terrainRoots_.push_back({entity, yOffset, tr.position.x, tr.position.z});
-    } else {
-        terrainRoots_.push_back({entity, yOffset});
-    }
-}
 
 bool Engine::loadMap(const std::string& path, Scene* scene) {
     if (!scene) {
@@ -542,7 +518,6 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
         renderer->removeFeature("OceanRenderer");
     }
 
-    terrainRoots_.clear();
     currentBrainInstances_.clear();
     currentBrainModel_.reset();
     currentMd2Anim_.reset();
@@ -550,7 +525,6 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
     md2Instances_.clear();
     currentOcean_.reset();
     currentSkydome_.reset();
-    currentTerrain_.reset();
 
 
 
@@ -616,55 +590,6 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
         }
     }
 
-    // 4. Teren (Terrain)
-    if (root.contains("terrain")) {
-        auto tnode = root["terrain"];
-        if (tnode.value("enabled", false)) {
-            std::string tpath = tnode.value("path", "");
-            currentTerrain_ = std::make_shared<Terrain>();
-            bool loaded = currentTerrain_->loadFromJson(tpath);
-            if (loaded) {
-                currentTerrain_->buildMesh();
-            } else {
-                LOG_WARN("Could not load terrain, generating plasma");
-                currentTerrain_->generatePlasma(256, 1.2f);
-                currentTerrain_->smoothEdges();
-                currentTerrain_->buildMesh();
-            }
-            currentTerrain_->uploadTo(*meshManager);
-
-            Material terrainMaterial;
-            terrainMaterial.name = "map_terrain_mat";
-            terrainMaterial.shaderProgram = "terrain";
-            terrainMaterial.cullMode = CullMode::Back;
-            terrainMaterial.depthWrite = true;
-            terrainMaterial.depthTest = true;
-            if (!currentTerrain_->layers.empty() && !currentTerrain_->layers[0].texturePath.empty()) {
-                TextureHandle texture = renderer->loadTexture("map_terrain_mat_tex", currentTerrain_->layers[0].texturePath);
-                terrainMaterial.textureHandle = texture;
-            }
-            MaterialHandle terrainMaterialHandle = materialManager.add(terrainMaterial);
-
-            Entity* terrainEntity = scene->createEntity("game_terrain_entity");
-            terrainEntity->transform().position = currentTerrain_->worldOffset();
-            auto* terrainMesh = terrainEntity->addComponent<MeshComponent>(currentTerrain_->meshName());
-            terrainMesh->materialHandle = terrainMaterialHandle;
-            terrainMesh->castShadows = true;
-            terrainMesh->layerBlendEnabled = true;
-            terrainMesh->layerCount = std::min<uint32_t>(
-                static_cast<uint32_t>(currentTerrain_->layers.size()), kMaxTerrainLayers);
-            terrainMesh->layerWorldSize = currentTerrain_->worldSizeXZ();
-            
-            for (uint32_t i = 0; i < terrainMesh->layerCount; ++i) {
-                std::string texName = "map_terrain_layer_tex_" + std::to_string(i);
-                terrainMesh->layerTextureHandles[i] = renderer->loadTexture(texName, currentTerrain_->layers[i].texturePath);
-                if (i > 0 && !currentTerrain_->layers[i].maskPath.empty()) {
-                    std::string maskName = "map_terrain_layer_mask_" + std::to_string(i);
-                    terrainMesh->layerMaskHandles[i] = renderer->loadTexture(maskName, currentTerrain_->layers[i].maskPath);
-                }
-            }
-        }
-    }
 
     // 5. Kamera (Camera)
     if (root.contains("camera")) {
@@ -761,11 +686,18 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
             float offset = item.value("terrain_offset", 0.0f);
 
             std::vector<Vec3> positions;
-            if (item.contains("random_instances") && currentTerrain_) {
+            std::shared_ptr<Terrain> terrain = nullptr;
+            for (const auto& ent : scene->getEntities()) {
+                if (auto* tc = ent->getComponent<TerrainComponent>()) {
+                    terrain = tc->terrain;
+                    break;
+                }
+            }
+            if (item.contains("random_instances") && terrain) {
                 auto randNode = item["random_instances"];
                 int count = randNode.value("count", 0);
                 float minHeight = randNode.value("min_height", -9999.0f);
-                float maxBound = currentTerrain_->worldSizeXZ() / 2.0f;
+                float maxBound = terrain->worldSizeXZ() / 2.0f;
                 float minBound = -maxBound;
 
                 std::random_device rd;
@@ -776,7 +708,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                 while (positions.size() < static_cast<size_t>(count) && attempts < 100000) {
                     float rx = dis(gen);
                     float rz = dis(gen);
-                    float h = currentTerrain_->getHeight(rx, rz);
+                    float h = terrain->getHeight(rx, rz);
                     if (h >= minHeight) {
                         positions.push_back({rx, 0.0f, rz});
                     }
@@ -799,7 +731,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                 rootEnt->transform().position = pos;
                 rootEnt->transform().scale = scale;
                 if (snap) {
-                    registerTerrainRoot(rootEnt, offset);
+                    rootEnt->addComponent<TerrainPlacementComponent>(offset);
                 }
 
                 for (size_t i = 0; i < subMeshes.size(); ++i) {
@@ -868,7 +800,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
             }
 
             if (item.value("snap_to_terrain", false)) {
-                registerTerrainRoot(ent, item.value("terrain_offset", 0.0f));
+                ent->addComponent<TerrainPlacementComponent>(item.value("terrain_offset", 0.0f));
             }
 
             md2Instances_.push_back({name + "_mesh", currentMd2Model_, currentMd2Anim_});
@@ -950,7 +882,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                 }
                 rootEnt->transform().scale = scale;
                 if (snap) {
-                    registerTerrainRoot(rootEnt, offset);
+                    rootEnt->addComponent<TerrainPlacementComponent>(offset);
                 }
 
                 for (size_t i = 0; i < subMeshes.size(); ++i) {
@@ -998,7 +930,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
                     }
                     rootEnt->transform().scale = scale;
                     if (snap) {
-                        registerTerrainRoot(rootEnt, offset);
+                        rootEnt->addComponent<TerrainPlacementComponent>(offset);
                     }
                     inst->setAnimationTime(static_cast<float>(instIdx) * 0.7f);
                     currentBrainInstances_.push_back(std::move(inst));

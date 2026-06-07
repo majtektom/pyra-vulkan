@@ -26,7 +26,6 @@
 #include "core/types.h"
 
 namespace engine3d {
-class Terrain;
 class SkydomeRenderer;
 class OceanRenderer;
 struct Md2ModelData;
@@ -146,21 +145,12 @@ public:
     void setFogDensity(float density);
 
     bool loadMap(const std::string& path, Scene* scene);
-    void registerTerrainRoot(Entity* entity, float yOffset);
-    std::shared_ptr<Terrain> getTerrain() const { return currentTerrain_; }
     std::shared_ptr<SkydomeRenderer> getSkydome() const { return currentSkydome_; }
     std::shared_ptr<OceanRenderer> getOcean() const { return currentOcean_; }
     std::shared_ptr<Md2ModelData> getMd2Model() const { return currentMd2Model_; }
     std::shared_ptr<Md2AnimationState> getMd2Anim() const { return currentMd2Anim_; }
     GltfSkinnedModel* getBrainModel() const { return currentBrainModel_.get(); }
     const std::vector<std::unique_ptr<GltfSkinnedInstance>>& getBrainInstances() const { return currentBrainInstances_; }
-
-    struct TerrainRootRef {
-        Entity* entity;
-        float yOffset;
-        mutable float lastX = -999999.0f;
-        mutable float lastZ = -999999.0f;
-    };
 
     std::function<void(float, Engine&)> onUpdate;
 
@@ -209,14 +199,12 @@ private:
     std::shared_ptr<TextOverlayRenderer> textOverlayRenderer_;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
 
-    std::shared_ptr<Terrain> currentTerrain_;
     std::shared_ptr<SkydomeRenderer> currentSkydome_;
     std::shared_ptr<OceanRenderer> currentOcean_;
     std::shared_ptr<Md2ModelData> currentMd2Model_;
     std::shared_ptr<Md2AnimationState> currentMd2Anim_;
     std::unique_ptr<GltfSkinnedModel> currentBrainModel_;
     std::vector<std::unique_ptr<GltfSkinnedInstance>> currentBrainInstances_;
-    std::vector<TerrainRootRef> terrainRoots_;
 
     struct Md2Instance {
         std::string meshName;

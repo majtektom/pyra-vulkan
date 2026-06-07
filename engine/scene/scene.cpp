@@ -415,6 +415,24 @@ bool Scene::hasSystem(const std::string& systemName) const {
     return false;
 }
 
+ISceneSystem* Scene::getSystem(const std::string& systemName) {
+    for (auto& system : systems_) {
+        if (system && systemName == system->name()) {
+            return system.get();
+        }
+    }
+    return nullptr;
+}
+
+const ISceneSystem* Scene::getSystem(const std::string& systemName) const {
+    for (const auto& system : systems_) {
+        if (system && systemName == system->name()) {
+            return system.get();
+        }
+    }
+    return nullptr;
+}
+
 void Scene::updateSystems(float deltaTime) {
     // Kolejność wykonywania systemów ma kluczowe znaczenie.
     // Przykładowo, TransformSystem musi obliczyć macierze świata zanim RenderExtractionSystem
