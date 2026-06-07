@@ -107,6 +107,8 @@ public:
         engine_.configureDirectionalShadow(220.0f);
         engine_.setAmbientStrength(0.28f);
         engine_.setAmbientColor(0.35f, 0.38f, 0.45f);
+        engine_.setTessellationEnabled(true);
+        // engine_.setTessellationLevel(6.0f);
 
         // Załadowanie sceny Menu (osobna scena od samej gry)
         if (!setupMenuScene()) {
@@ -497,10 +499,12 @@ private:
                         auto terrain = std::make_shared<Terrain>();
                         bool loaded = terrain->loadFromJson(tpath);
                         if (loaded) {
+                            // terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
                             terrain->buildMesh();
                         } else {
                             LOG_WARN("Could not load terrain, generating plasma");
                             terrain->generatePlasma(256, 1.2f);
+                            terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
                             terrain->smoothEdges();
                             terrain->buildMesh();
                         }
@@ -536,6 +540,8 @@ private:
                                 terrainComp->layerMaskHandles[i] = engine_.getRenderer()->loadTexture(maskName, terrain->layers[i].maskPath);
                             }
                         }
+                        terrainComp->heightmapTextureHandle = engine_.getRenderer()->loadTextureFromMemory("map_terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
+                        terrainComp->heightmapEnabled = true;
                         gameTerrain_ = terrain;
                     }
                 }
@@ -688,7 +694,7 @@ private:
 
         auto* controller = e.getCameraController();
         if (controller) {
-            controller->moveSpeed = 52.0f;
+            controller->moveSpeed = 152.0f;
             const float sensitivity = controller->mouseSensitivity;
             controller->rotateYaw(-static_cast<float>(snap.mouseDeltaX) * sensitivity);
             controller->rotatePitch(-static_cast<float>(snap.mouseDeltaY) * sensitivity);

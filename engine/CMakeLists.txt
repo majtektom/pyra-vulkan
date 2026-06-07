@@ -95,6 +95,9 @@ add_shader_bundle(
     terrain
     terrain.vert.hlsl=terrain.hlsl@vertexMain
     terrain.frag.hlsl=terrain.hlsl@fragmentMain
+    terrain.tesc.hlsl=terrain.hlsl@hullMain
+    terrain.tese.hlsl=terrain.hlsl@domainMain
+    terrain_no_tess.vert.hlsl=terrain.hlsl@vertexMainNoTess
 )
 
 add_shader_bundle(

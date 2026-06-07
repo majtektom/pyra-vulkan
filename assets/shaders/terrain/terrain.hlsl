@@ -42,6 +42,10 @@ cbuffer PushConstants
     float layerWorldSize;                   // Szerokość świata terenu (używana przy skalingu UV masek)
     uint4 layerBaseTextureSets[3];          // Spakowane indeksy tekstur warstwowych (3 * 4 = 12 warstw)
     uint4 layerMaskTextureSets[3];          // Spakowane indeksy tekstur masek przejść (12 masek)
+    uint heightmapTextureSet;
+    float scaleY;
+    float tessellationFactor;
+    uint heightmapEnabled;
 };
 
 SamplerState globalSampler : register(s1, space0);
@@ -70,13 +74,45 @@ struct VertexOutput
     [[vk::location(5)]] float2 localPosXZ : TEXCOORD4; // Współrzędne lokalne X i Z (potrzebne do wyznaczenia UV dla masek)
 };
 
+struct HS_INPUT
+{
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float3 color : COLOR;
+    float2 texCoord : TEXCOORD0;
+};
+
+struct HS_CONSTANT_DATA_OUTPUT
+{
+    float EdgeTessFactor[3]  : SV_TessFactor;
+    float InsideTessFactor   : SV_InsideTessFactor;
+};
+
+struct HS_OUTPUT
+{
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float3 color : COLOR;
+    float2 texCoord : TEXCOORD0;
+};
+
 float3x3 inverseTranspose3x3(float4x4 m)
 {
     float3x3 a = float3x3(m[0].xyz, m[1].xyz, m[2].xyz);
     return a;
 }
 
-VertexOutput vertexMain(VertexInput input)
+HS_INPUT vertexMain(VertexInput input)
+{
+    HS_INPUT output;
+    output.position = input.position;
+    output.normal = input.normal;
+    output.color = input.color;
+    output.texCoord = input.texCoord;
+    return output;
+}
+
+VertexOutput vertexMainNoTess(VertexInput input)
 {
     float4 worldPos4 = mul(model, float4(input.position, 1.0));
     VertexOutput output;
@@ -86,7 +122,89 @@ VertexOutput vertexMain(VertexInput input)
     output.color = input.color;
     output.texCoord = input.texCoord;
     output.matColor = baseColorFactor;
-    output.localPosXZ = input.position.xz; // Zapamiętanie współrzędnych płaskich wierzchołka
+    output.localPosXZ = input.position.xz;
+    return output;
+}
+
+HS_CONSTANT_DATA_OUTPUT ConstantsHS(InputPatch<HS_INPUT, 3> ip, uint PatchID : SV_PrimitiveID)
+{
+    HS_CONSTANT_DATA_OUTPUT output;
+    float tf = tessellationFactor;
+    output.EdgeTessFactor[0] = tf;
+    output.EdgeTessFactor[1] = tf;
+    output.EdgeTessFactor[2] = tf;
+    output.InsideTessFactor  = tf;
+    return output;
+}
+
+[domain("tri")]
+[partitioning("integer")]
+[outputtopology("triangle_cw")]
+[outputcontrolpoints(3)]
+[patchconstantfunc("ConstantsHS")]
+HS_OUTPUT hullMain(InputPatch<HS_INPUT, 3> ip, uint i : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
+{
+    HS_OUTPUT output;
+    output.position = ip[i].position;
+    output.normal = ip[i].normal;
+    output.color = ip[i].color;
+    output.texCoord = ip[i].texCoord;
+    return output;
+}
+
+[domain("tri")]
+VertexOutput domainMain(HS_CONSTANT_DATA_OUTPUT input, float3 barycentricCoords : SV_DomainLocation, const OutputPatch<HS_OUTPUT, 3> patch)
+{
+    VertexOutput output;
+    
+    // Interpolacja wierzchołków za pomocą współrzędnych barycentrycznych
+    float3 position = patch[0].position * barycentricCoords.x +
+                      patch[1].position * barycentricCoords.y +
+                      patch[2].position * barycentricCoords.z;
+                      
+    float3 normal = patch[0].normal * barycentricCoords.x +
+                    patch[1].normal * barycentricCoords.y +
+                    patch[2].normal * barycentricCoords.z;
+                    
+    float3 color = patch[0].color * barycentricCoords.x +
+                   patch[1].color * barycentricCoords.y +
+                   patch[2].color * barycentricCoords.z;
+                   
+    float2 texCoord = patch[0].texCoord * barycentricCoords.x +
+                      patch[1].texCoord * barycentricCoords.y +
+                      patch[2].texCoord * barycentricCoords.z;
+
+    // Przemieszczenie na podstawie mapy wysokości (Heightmap displacement)
+    if (heightmapEnabled != 0)
+    {
+        float2 heightmapUV = position.xz / max(layerWorldSize, 0.0001);
+        // Dobór mip level heightmapy na podstawie odległości: im dalej/drobniejsza siatka, tym wyższy mip
+        float heightmapMip = max(0, 2.0 - log2(max(tessellationFactor, 1.0)));
+        float h = textures[heightmapTextureSet].SampleLevel(globalSampler, heightmapUV, heightmapMip).r * 255.0 * scaleY;
+        position.y = h;
+
+        // Obliczenie szczegółowej normalnej z mapy wysokości za pomocą różnic centralnych
+        float offset = 0.5; // Krok w jednostkach świata
+        float uvOffset = offset / max(layerWorldSize, 0.0001);
+        
+        float hL = textures[heightmapTextureSet].SampleLevel(globalSampler, heightmapUV + float2(-uvOffset, 0), heightmapMip).r * 255.0 * scaleY;
+        float hR = textures[heightmapTextureSet].SampleLevel(globalSampler, heightmapUV + float2(uvOffset, 0), heightmapMip).r * 255.0 * scaleY;
+        float hD = textures[heightmapTextureSet].SampleLevel(globalSampler, heightmapUV + float2(0, -uvOffset), 0).r * 255.0 * scaleY;
+        float hU = textures[heightmapTextureSet].SampleLevel(globalSampler, heightmapUV + float2(0, uvOffset), 0).r * 255.0 * scaleY;
+        
+        normal = normalize(float3(hL - hR, 2.0 * offset, hD - hU));
+    }
+    
+    float4 worldPos4 = mul(model, float4(position, 1.0));
+    
+    output.position = mul(proj, mul(view, worldPos4));
+    output.worldPos = worldPos4.xyz;
+    output.worldNormal = normalize(mul(inverseTranspose3x3(model), normal));
+    output.color = color;
+    output.texCoord = texCoord;
+    output.matColor = baseColorFactor;
+    output.localPosXZ = position.xz;
+    
     return output;
 }
 

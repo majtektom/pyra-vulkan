@@ -55,6 +55,7 @@ public:
     VmaAllocator allocator() const { return allocator_; }
     uint32_t graphicsQueueFamily() const { return graphicsQueueFamily_; }
     uint32_t computeQueueFamily() const { return computeQueueFamily_; }
+    bool isTessellationSupported() const { return tessellationSupported_; }
 
 private:
     // Wewnętrzne kroki inicjalizacji Vulkana:
@@ -79,6 +80,7 @@ private:
     bool validationLayersEnabled_ = true;
     uint32_t graphicsQueueFamily_ = 0;                          // Indeks rodziny kolejek graficznych.
     uint32_t computeQueueFamily_ = 0;                           // Indeks rodziny kolejek obliczeniowych.
+    bool tessellationSupported_ = false;
 };
 
 } // namespace engine3d

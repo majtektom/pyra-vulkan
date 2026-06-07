@@ -75,15 +75,17 @@ void Platform::processEvents() {
             break;
         case SDL_EVENT_KEY_DOWN: {
             SDL_Scancode sc = event.key.scancode;
-            if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
-                input_.keys[static_cast<int>(sc)] = true;
+            const int keyIndex = static_cast<int>(sc);
+            if (keyIndex >= 0 && keyIndex < 256) {
+                input_.keys[keyIndex] = true;
             }
             break;
         }
         case SDL_EVENT_KEY_UP: {
             SDL_Scancode sc = event.key.scancode;
-            if (sc < SDL_SCANCODE_COUNT && static_cast<int>(sc) < 256) {
-                input_.keys[static_cast<int>(sc)] = false;
+            const int keyIndex = static_cast<int>(sc);
+            if (keyIndex >= 0 && keyIndex < 256) {
+                input_.keys[keyIndex] = false;
             }
             break;
         }

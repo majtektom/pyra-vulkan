@@ -174,10 +174,15 @@ struct TextLabel {
     TextHorizontalAlign horizontalAlign = TextHorizontalAlign::Left;
 };
 
-// Filtrowanie tekstury na GPU (Nearest - pikselowy styl retro, Linear - wygładzanie).
+// Filtrowanie tekstury na GPU (Nearest - pikselowy styl retro, Linear - wygładzanie, Anisotropic - najlepsza jakość).
 enum class TextureFilter {
     Nearest,
     Linear,
+    Trilinear,
+    Anisotropic2x,
+    Anisotropic4x,
+    Anisotropic8x,
+    Anisotropic16x,
 };
 
 // Filtrowanie mipmap (redukcja migotania odległych tekstur).

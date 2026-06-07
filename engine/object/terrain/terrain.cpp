@@ -6,6 +6,11 @@
 #include <fstream>
 #include <stdexcept>
 #include <stb_image.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 #include "core/math.h"
 #include "core/entity.h"
 #include "core/mesh_manager.h"
@@ -16,27 +21,24 @@
 
 namespace engine3d {
 
-static std::vector<float> loadHeightmap(const std::string& path, int& w, int& h, int downsample) {
+static std::vector<float> loadHeightmap(const std::string& path, int& w, int& h) {
     int ch;
     unsigned char* data = stbi_load(path.c_str(), &w, &h, &ch, 1);
     if (!data) throw std::runtime_error("Cannot load heightmap: " + path);
-    int dw = w / downsample, dh = h / downsample;
-    std::vector<float> hm(dw * dh);
-    for (int z = 0; z < dh; ++z)
-        for (int x = 0; x < dw; ++x)
-            hm[z * dw + x] = (float)data[(z * downsample) * w + (x * downsample)];
+    std::vector<float> hm(w * h);
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x)
+            hm[z * w + x] = (float)data[(z) * w + (x)];
     stbi_image_free(data);
-    w = dw; h = dh;
     return hm;
 }
 
-// --- Heightmap loading & XML ---
+
 
 bool Terrain::loadFromImage(const std::string& path, float scaleXZ, float scaleY,
                              float texScale, int maxLodLevels) {
     int w, h;
-    int downsample = 4;
-    heightmap_ = loadHeightmap(path, w, h, downsample);
+    heightmap_ = loadHeightmap(path, w, h);
     hmSize_ = w;
     sizeX = w; sizeZ = h;
     scaleXZ_ = scaleXZ;
@@ -62,6 +64,7 @@ bool Terrain::loadFromImage(const std::string& path, float scaleXZ, float scaleY
     buildNodeVertices(root_);
     findNeighbors(root_);
     nodeCount = 0;
+
     return true;
 }
 
@@ -137,7 +140,7 @@ void Terrain::uploadTo(MeshManager& mgr) {
     
     // Upload shared LOD index buffers
     TerrainIndexGenerator indexGen(gridRes_);
-    for (int lod = 0; lod < 5; ++lod) {
+    for (int lod = 0; lod < maxLodLevels_; ++lod) {
         for (int config = 0; config < 16; ++config) {
             std::vector<uint32_t> indices;
             indexGen.generate(lod, config, indices);
@@ -161,7 +164,7 @@ Vec3 Terrain::worldOffset() const {
 void Terrain::buildTree(Node* node) {
     float half = node->sizeXZ / 2.0f;
     int halfHm = (int)(half / scaleXZ_);
-    if (halfHm < gridRes_ || node->lodLevel >= maxLodLevels_) return;
+    if (halfHm < 16 || node->lodLevel >= maxLodLevels_) return;
 
     for (int i = 0; i < 4; ++i) {
         auto* child = new Node{};
@@ -358,15 +361,18 @@ void Terrain::uploadNodeMeshes(Node* node, MeshManager& mgr, const std::string& 
     // Generate vertices using transposed layout: Outer: x, Inner: z
     for (int x = 0; x <= gridRes_; ++x) {
         for (int z = 0; z <= gridRes_; ++z) {
-            int hx = cxHm - hsHm + (x * hsHm * 2) / gridRes_;
-            int hz = czHm - hsHm + (z * hsHm * 2) / gridRes_;
-            hx = std::max(0, std::min(hmSize_ - 1, hx));
-            hz = std::max(0, std::min(hmSize_ - 1, hz));
-            float h = heightmap_[hz * hmSize_ + hx] * scaleY_;
-            float px = hx * scaleXZ_, pz = hz * scaleXZ_;
+            int ix = cxHm - hsHm + (x * hsHm * 2) / gridRes_;
+            int iz = czHm - hsHm + (z * hsHm * 2) / gridRes_;
+            ix = std::max(0, std::min(hmSize_ - 1, ix));
+            iz = std::max(0, std::min(hmSize_ - 1, iz));
+            float h = heightmap_[iz * hmSize_ + ix] * scaleY_;
+            
+            float px = (float)ix * scaleXZ_;
+            float pz = (float)iz * scaleXZ_;
+            
             nodeMesh.vertices.push_back({
                 {px, h, pz}, {0,0,1}, {1,1,1},
-                {hx * texScale_ / hmSize_, hz * texScale_ / hmSize_}
+                {(float)ix * texScale_ / hmSize_, (float)iz * texScale_ / hmSize_}
             });
         }
     }
@@ -379,7 +385,8 @@ void Terrain::uploadNodeMeshes(Node* node, MeshManager& mgr, const std::string& 
             float hR = (x < gridRes_) ? nodeMesh.vertices[idx + (gridRes_ + 1)].position[1] : nodeMesh.vertices[idx].position[1];
             float hD = (z > 0) ? nodeMesh.vertices[idx - 1].position[1] : nodeMesh.vertices[idx].position[1];
             float hU = (z < gridRes_) ? nodeMesh.vertices[idx + 1].position[1] : nodeMesh.vertices[idx].position[1];
-            Vec3 n{hL - hR, 2.0f * scaleXZ_, hD - hU};
+            float Y_comp = 2.0f * (16.0f / (float)gridRes_) * scaleXZ_;
+            Vec3 n{hL - hR, Y_comp, hD - hU};
             n = normalize(n);
             nodeMesh.vertices[idx].normal = {n.x, n.y, n.z};
         }
@@ -434,7 +441,11 @@ void Terrain::collectRenderPackets(
     uint32_t layerCount,
     const std::array<TextureHandle, kMaxTerrainLayers>& layerTextureHandles,
     const std::array<TextureHandle, kMaxTerrainLayers>& layerMaskHandles,
-    float layerWorldSize) 
+    float layerWorldSize,
+    TextureHandle heightmapTextureHandle,
+    bool heightmapEnabled,
+    bool tessellationActive,
+    float tessellationLevel) 
 {
     for (auto* node : visibleNodes_) {
         std::string nodeMeshName = meshName_ + "_node_" + std::to_string(node->meshId);
@@ -470,7 +481,18 @@ void Terrain::collectRenderPackets(
         int stitchConfig = TerrainIndexGenerator::computeStitchConfig(
             needLeftStitch, needRightStitch, needBottomStitch, needTopStitch);
 
-        std::string indexMeshName = meshName_ + "_indices_lod" + std::to_string(node->lodLevel) + "_config" + std::to_string(stitchConfig);
+        int cpuLod = 0;
+        float tessFactor = 1.0f;
+        if (tessellationActive) {
+            cpuLod = (node->lodLevel == 0) ? 0 : (node->lodLevel - 1);
+            tessFactor = tessellationLevel / (1 << node->lodLevel);
+            if (tessFactor < 1.0f) tessFactor = 1.0f;
+        } else {
+            cpuLod = node->lodLevel;
+            tessFactor = 1.0f;
+        }
+
+        std::string indexMeshName = meshName_ + "_indices_lod" + std::to_string(cpuLod) + "_config" + std::to_string(stitchConfig);
         auto gpuIndexMesh = meshManager.getMesh(indexMeshName);
         if (!gpuIndexMesh) continue;
 
@@ -500,6 +522,12 @@ void Terrain::collectRenderPackets(
         packet.layerTextureHandles = layerTextureHandles;
         packet.layerMaskHandles = layerMaskHandles;
         packet.layerWorldSize = layerWorldSize;
+
+        // Tessellation and heightmap parameters
+        packet.heightmapTextureHandle = heightmapTextureHandle;
+        packet.scaleY = scaleY_;
+        packet.tessellationFactor = tessFactor;
+        packet.heightmapEnabled = heightmapEnabled;
 
         packets.push_back(packet);
     }
@@ -613,7 +641,7 @@ bool Terrain::loadFromJson(const std::string& path) {
         }
     }
 done:
-    return loadFromImage(hmFile, sxz, sy, ts, 5);
+    return loadFromImage(hmFile, sxz, sy, ts, 6);
 }
 
 namespace {

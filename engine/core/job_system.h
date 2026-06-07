@@ -96,28 +96,17 @@ public:
             chunkSize = std::max<size_t>(1, (count + nWorkers - 1) / nWorkers);
         }
 
-        std::atomic<size_t> pending{0};
-        std::mutex doneMutex;
-        std::condition_variable doneCond;
-
+        std::vector<std::future<void>> futures;
         for (size_t start = 0; start < count; start += chunkSize) {
             size_t end = std::min(start + chunkSize, count);
-            pending.fetch_add(1, std::memory_order_relaxed);
-            {
-                std::unique_lock<std::mutex> lock(mutex_);
-                jobs_.push([&, start, end]() {
-                    fn(start, end);
-                    if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                        std::unique_lock<std::mutex> dl(doneMutex);
-                        doneCond.notify_one();
-                    }
-                });
-            }
-            cond_.notify_one();
+            futures.push_back(submit([fn, start, end]() {
+                fn(start, end);
+            }));
         }
 
-        std::unique_lock<std::mutex> lock(doneMutex);
-        doneCond.wait(lock, [&] { return pending.load(std::memory_order_acquire) == 0; });
+        for (auto& f : futures) {
+            f.get();
+        }
     }
 
 private:

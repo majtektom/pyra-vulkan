@@ -121,7 +121,7 @@ public:
      * @return true jeśli załadowano pomyślnie.
      */
     bool loadFromImage(const std::string& path, float scaleXZ = 10.0f, float scaleY = 2.0f,
-                       float texScale = 20.0f, int maxLodLevels = 5);
+                       float texScale = 20.0f, int maxLodLevels = 6);
 
     /**
      * @brief Ładuje konfigurację terenu z pliku JSON.
@@ -147,7 +147,7 @@ public:
      * Nie przebudowuje automatycznie siatki - wymaga wywołania buildMesh().
      */
     void setScale(float scaleXZ = 10.0f, float scaleY = 2.0f,
-                  float texScale = 20.0f, int maxLodLevels = 5);
+                  float texScale = 20.0f, int maxLodLevels = 6);
 
     // =========================================================================
     // Generowanie proceduralne
@@ -314,7 +314,11 @@ public:
         uint32_t layerCount,
         const std::array<TextureHandle, kMaxTerrainLayers>& layerTextureHandles,
         const std::array<TextureHandle, kMaxTerrainLayers>& layerMaskHandles,
-        float layerWorldSize);
+        float layerWorldSize,
+        TextureHandle heightmapTextureHandle,
+        bool heightmapEnabled,
+        bool tessellationActive = true,
+        float tessellationLevel = 4.0f);
 
     /**
      * @brief Pobiera wysokość terenu Y w zadanym punkcie świata (X, Z).
@@ -336,6 +340,8 @@ public:
     Vec3 worldOffset() const;
     float worldSizeXZ() const { return static_cast<float>(hmSize_) * scaleXZ_; }
     const std::vector<Node*>& getVisibleNodes() const { return visibleNodes_; }
+    const std::vector<float>& getHeightmapData() const { return heightmap_; }
+    int getHeightmapSize() const { return hmSize_; }
     float getScaleXZ() const { return scaleXZ_; }
     float getScaleY() const { return scaleY_; }
     int getMaxLodLevels() const { return maxLodLevels_; }
@@ -447,7 +453,7 @@ private:
     float scaleXZ_ = 1.0f;             // Skala pozioma: jednostki świata / piksel.
     float scaleY_ = 1.0f;              // Skala pionowa: mnożnik wartości heightmapy.
     float texScale_ = 1.0f;            // Skala teksturowania: kafelki / cały teren.
-    int maxLodLevels_ = 5;             // Maksymalna liczba poziomów LOD.
+    int maxLodLevels_ = 6;             // Maksymalna liczba poziomów LOD.
     int hmSize_ = 0;                   // Rozmiar heightmapy (szerokość = wysokość).
     int gridRes_ = 0;                  // Rozdzielczość siatki węzła (liczba komórek = 16).
 

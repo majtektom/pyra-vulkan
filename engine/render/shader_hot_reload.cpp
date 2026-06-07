@@ -107,18 +107,30 @@ void ShaderHotReload::recompile(const std::string& shaderName) {
     std::string src = shaderDir_ + "/" + shaderName + "/" + shaderName + ".hlsl";
     std::string outVert = outputDir_ + "/" + shaderName + "/" + shaderName + ".vert.spv";
     std::string outFrag = outputDir_ + "/" + shaderName + "/" + shaderName + ".frag.spv";
+    std::string outTesc = outputDir_ + "/" + shaderName + "/" + shaderName + ".tesc.spv";
+    std::string outTese = outputDir_ + "/" + shaderName + "/" + shaderName + ".tese.spv";
 
     std::string outDir = outputDir_ + "/" + shaderName;
     mkdir(outDir.c_str(), 0755); // Upewniamy się, że katalog docelowy na binary istnieje.
 
     // Funkcja lambda kompilująca shader za pomocą zewnętrznych programów systemowych:
     auto compile = [&](const std::string& stage, const std::string& entry, const std::string& out) -> bool {
+        std::string dxcStage = stage;
+        if (stage == "vert") dxcStage = "vs_6_0";
+        else if (stage == "frag") dxcStage = "ps_6_0";
+        else if (stage == "hull") dxcStage = "hs_6_0";
+        else if (stage == "domain") dxcStage = "ds_6_0";
+
         // Podejście 1: Używamy kompilatora dxc (DirectX Shader Compiler - standard dla HLSL) z generowaniem SPIR-V.
-        std::string cmd = "dxc -spirv -T " + stage + " -E " + entry + " \"" + src + "\" -Fo \"" + out + "\" 2>&1";
+        std::string cmd = "dxc -spirv -T " + dxcStage + " -E " + entry + " \"" + src + "\" -Fo \"" + out + "\" 2>&1";
         if (system(cmd.c_str()) == 0) return true;
 
+        std::string glslangStage = stage;
+        if (stage == "hull") glslangStage = "tesc";
+        else if (stage == "domain") glslangStage = "tese";
+
         // Podejście 2 (fallback): Używamy alternatywnego glslangValidator.
-        cmd = "glslangValidator -V -D -e " + entry + " -S " + stage + " \"" + src + "\" -o \"" + out + "\" 2>&1";
+        cmd = "glslangValidator -V -D -e " + entry + " -S " + glslangStage + " \"" + src + "\" -o \"" + out + "\" 2>&1";
         return system(cmd.c_str()) == 0;
     };
 
@@ -132,6 +144,26 @@ void ShaderHotReload::recompile(const std::string& shaderName) {
     if (!compile("frag", "fragmentMain", outFrag)) {
         LOG_ERROR("[ShaderHotReload] fragment compile failed for {}", shaderName);
         return;
+    }
+
+    // Sprawdzamy czy plik zawiera hullMain/domainMain i opcjonalnie kompilujemy shadery teselacji
+    bool hasTess = false;
+    std::ifstream infile(src);
+    if (infile.good()) {
+        std::string content((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+        if (content.find("hullMain") != std::string::npos && content.find("domainMain") != std::string::npos) {
+            hasTess = true;
+        }
+    }
+    if (hasTess) {
+        if (!compile("hull", "hullMain", outTesc)) {
+            LOG_ERROR("[ShaderHotReload] hull compile failed for {}", shaderName);
+            return;
+        }
+        if (!compile("domain", "domainMain", outTese)) {
+            LOG_ERROR("[ShaderHotReload] domain compile failed for {}", shaderName);
+            return;
+        }
     }
     
     LOG_INFO("[ShaderHotReload] recompiled: {}", shaderName);

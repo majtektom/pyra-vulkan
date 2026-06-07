@@ -21,7 +21,7 @@ public:
     TerrainComponent();
     explicit TerrainComponent(std::shared_ptr<Terrain> terrainPtr);
 
-    void collectRenderPackets(std::vector<RenderPacket>& packets, MeshManager& meshManager);
+    void collectRenderPackets(std::vector<RenderPacket>& packets, MeshManager& meshManager, bool tessellationActive = true, float tessellationLevel = 4.0f);
 
     std::shared_ptr<Terrain> terrain;
     MaterialHandle materialHandle{};
@@ -32,6 +32,8 @@ public:
     std::array<TextureHandle, kMaxTerrainLayers> layerTextureHandles{};
     std::array<TextureHandle, kMaxTerrainLayers> layerMaskHandles{};
     float layerWorldSize = 1.0f;
+    TextureHandle heightmapTextureHandle{};
+    bool heightmapEnabled = false;
 };
 
 } // namespace engine3d

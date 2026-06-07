@@ -361,7 +361,42 @@ void transitionImageLayout(
 // SAMPLERY
 // ---------------------------------------------------------------
 
-VkSampler createTextureSampler(VkDevice device, uint32_t mipLevels) {
+namespace {
+
+float supportedAnisotropy(VkPhysicalDevice physicalDevice, float requestedLevel) {
+    if (physicalDevice == VK_NULL_HANDLE || requestedLevel <= 1.0f) {
+        return 1.0f;
+    }
+
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(physicalDevice, &features);
+    if (features.samplerAnisotropy != VK_TRUE) {
+        return 1.0f;
+    }
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    return std::max(1.0f, std::min(requestedLevel, properties.limits.maxSamplerAnisotropy));
+}
+
+float requestedAnisotropy(TextureFilter filter) {
+    switch (filter) {
+        case TextureFilter::Anisotropic2x:
+            return 2.0f;
+        case TextureFilter::Anisotropic4x:
+            return 4.0f;
+        case TextureFilter::Anisotropic8x:
+            return 8.0f;
+        case TextureFilter::Anisotropic16x:
+            return 16.0f;
+        default:
+            return 1.0f;
+    }
+}
+
+}
+
+VkSampler createTextureSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels) {
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR; // Filtrowanie powiększające: interpolacja liniowa
@@ -371,9 +406,10 @@ VkSampler createTextureSampler(VkDevice device, uint32_t mipLevels) {
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    
-    samplerInfo.anisotropyEnable = VK_FALSE; // Brak filtrowania anizotropowego dla uproszczenia
-    samplerInfo.maxAnisotropy = 1.0f;
+
+    const float anisotropy = supportedAnisotropy(physicalDevice, 16.0f);
+    samplerInfo.anisotropyEnable = anisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+    samplerInfo.maxAnisotropy = anisotropy;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE; // Używamy znormalizowanych współrzędnych [0.0, 1.0]
     samplerInfo.compareEnable = VK_FALSE;
@@ -384,6 +420,92 @@ VkSampler createTextureSampler(VkDevice device, uint32_t mipLevels) {
 
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create sampler");
+    }
+    return sampler;
+}
+
+VkSampler createSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels, TextureFilter filter, AddressMode addressMode) {
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+
+    switch (filter) {
+        case TextureFilter::Nearest:
+            info.magFilter = VK_FILTER_NEAREST;
+            info.minFilter = VK_FILTER_NEAREST;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            info.anisotropyEnable = VK_FALSE;
+            info.maxAnisotropy = 1.0f;
+            break;
+        case TextureFilter::Linear:
+            info.magFilter = VK_FILTER_LINEAR;
+            info.minFilter = VK_FILTER_LINEAR;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            info.anisotropyEnable = VK_FALSE;
+            info.maxAnisotropy = 1.0f;
+            break;
+        case TextureFilter::Trilinear:
+            info.magFilter = VK_FILTER_LINEAR;
+            info.minFilter = VK_FILTER_LINEAR;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            info.anisotropyEnable = VK_FALSE;
+            info.maxAnisotropy = 1.0f;
+            break;
+        case TextureFilter::Anisotropic2x:
+            info.magFilter = VK_FILTER_LINEAR;
+            info.minFilter = VK_FILTER_LINEAR;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            info.maxAnisotropy = supportedAnisotropy(physicalDevice, requestedAnisotropy(filter));
+            info.anisotropyEnable = info.maxAnisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+            break;
+        case TextureFilter::Anisotropic4x:
+            info.magFilter = VK_FILTER_LINEAR;
+            info.minFilter = VK_FILTER_LINEAR;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            info.maxAnisotropy = supportedAnisotropy(physicalDevice, requestedAnisotropy(filter));
+            info.anisotropyEnable = info.maxAnisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+            break;
+        case TextureFilter::Anisotropic8x:
+            info.magFilter = VK_FILTER_LINEAR;
+            info.minFilter = VK_FILTER_LINEAR;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            info.maxAnisotropy = supportedAnisotropy(physicalDevice, requestedAnisotropy(filter));
+            info.anisotropyEnable = info.maxAnisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+            break;
+        case TextureFilter::Anisotropic16x:
+            info.magFilter = VK_FILTER_LINEAR;
+            info.minFilter = VK_FILTER_LINEAR;
+            info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            info.maxAnisotropy = supportedAnisotropy(physicalDevice, requestedAnisotropy(filter));
+            info.anisotropyEnable = info.maxAnisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+            break;
+    }
+
+    switch (addressMode) {
+        case AddressMode::Repeat:
+            info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            break;
+        case AddressMode::MirroredRepeat:
+            info.addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+            info.addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+            info.addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+            break;
+        case AddressMode::ClampToEdge:
+            info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            break;
+    }
+
+    info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    info.unnormalizedCoordinates = VK_FALSE;
+    info.compareEnable = VK_FALSE;
+    info.maxLod = static_cast<float>(mipLevels);
+
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) {
         throw std::runtime_error("failed to create sampler");
     }
     return sampler;
@@ -416,7 +538,7 @@ VkSampler createClampSampler(VkDevice device) {
     return sampler;
 }
 
-VkSampler createMirrorRepeatSampler(VkDevice device, uint32_t mipLevels) {
+VkSampler createMirrorRepeatSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels) {
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -427,9 +549,10 @@ VkSampler createMirrorRepeatSampler(VkDevice device, uint32_t mipLevels) {
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
+
+    const float anisotropy = supportedAnisotropy(physicalDevice, 16.0f);
+    samplerInfo.anisotropyEnable = anisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+    samplerInfo.maxAnisotropy = anisotropy;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.compareEnable = VK_FALSE;

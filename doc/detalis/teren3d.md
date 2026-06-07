@@ -43,7 +43,7 @@ struct Node {
     float cx, cz;          // Środek węzła w przestrzeni świata
     float sizeXZ;          // Długość boku kwadratu węzła
     float minY, maxY;      // Min/max wysokość w węźle
-    int lodLevel;          // Aktualny poziom LOD (0-4)
+    int lodLevel;          // Aktualny poziom LOD (0-5)
     Node* children[4];     // Dzieci: [0]=lewo-góra, [1]=prawo-góra, [2]=lewo-dół, [3]=prawo-dół
     Node* parent;          // Rodzic
     Node* neighbor[4];     // Sąsiedzi: [0]=lewo, [1]=góra, [2]=prawo, [3]=dół
@@ -56,15 +56,15 @@ struct Node {
 
 1. **Korzeń** jest tworzony z `sizeXZ = halfWorld` (połowa całego terenu).
 2. `buildTree()` rekurencyjnie dzieli każdy węzeł na 4 dzieci, dopóki:
-   - Rozmiar węzła w pikselach heightmapy jest mniejszy niż `gridRes_` (16), lub
-   - Osiągnięto maksymalną liczbę poziomów (`maxLodLevels_`, domyślnie 5).
+   - Rozmiar węzła w pikselach heightmapy jest mniejszy niż 16, lub
+   - Osiągnięto maksymalną liczbę poziomów (`maxLodLevels_`, domyślnie 6).
 3. Dla każdego dziecka obliczane jest `minY` i `maxY` przez iterację po heightmapie.
 4. `findNeighbors()` znajduje sąsiadów każdego węzła - węzły tego samego rozmiaru na czterech krawędziach.
 
 ### Węzły liściowe
 
 Tylko węzły liściowe (bez dzieci) zawierają siatkę geometryczną:
-- Rozdzielczość: 17×17 wierzchołków (gridRes_ = 16 komórek)
+- Rozdzielczość: 33×33 wierzchołków (gridRes_ = 32 komórki) z interpolacją biliniową heightmapy
 - Każdy liść ma własny bufor wierzchołków w GPU
 - Bufory indeksowe są **współdzielone** między wszystkimi liśćmi
 
@@ -78,15 +78,16 @@ Drzewo czwórkowe jest **statyczne** - nie zmienia się podczas działania progr
 
 ### Poziomy szczegółowości
 
-Każdy węzeł może być renderowany na 5 poziomach LOD:
+Każdy węzeł może być renderowany na 6 poziomach LOD:
 
 | LOD | skok (próbkowanie) | Trójkątów (bez stitchingu) | Opis |
 |-----|-------------------|---------------------------|------|
-| 0 | 1 (każdy wierzchołek) | 512 | Pełna rozdzielczość |
-| 1 | 2 (co drugi) | 128 | Połowa rozdzielczości |
-| 2 | 4 (co czwarty) | 32 | Ćwierć rozdzielczości |
-| 3 | 8 (co ósmy) | 8 | 1/8 rozdzielczości |
-| 4 | 16 (co szesnasty) | 2 | Minimalna rozdzielczość |
+| 0 | 1 (każdy wierzchołek) | 2048 | Teselacja CPU (2x gęściej niż heightmapa) |
+| 1 | 2 (co drugi) | 512 | Pełna rozdzielczość heightmapy |
+| 2 | 4 (co czwarty) | 128 | Połowa rozdzielczości heightmapy |
+| 3 | 8 (co ósmy) | 32 | Ćwierć rozdzielczości heightmapy |
+| 4 | 16 (co szesnasty) | 8 | 1/8 rozdzielczości heightmapy |
+| 5 | 32 (co trzydziesty drugi) | 2 | Minimalna rozdzielczość |
 
 ### Algorytm wyboru LOD
 
@@ -180,7 +181,7 @@ Generowanie indeksów odbywa się w `TerrainIndexGenerator`. Dla każdej konfigu
    - Przeplata wzór (toggle), aby uniknąć nakładania się trójkątów
 3. Dla komórek wewnętrznych generuje standardowe 2 trójkąty
 
-Bufory indeksowe są pre-generowane podczas `uploadTo()` - 80 buforów (5 LOD × 16 konfiguracji), współdzielonych między wszystkimi węzłami.
+Bufory indeksowe są pre-generowane podczas `uploadTo()` - 96 buforów (6 LOD × 16 konfiguracji), współdzielonych między wszystkimi węzłami.
 
 ---
 
@@ -218,10 +219,10 @@ loadFromImage() / loadFromJson()
 uploadTo(meshManager)
   → assignNodeIds() - przydziel ID węzłom
   → uploadNodeMeshes() - dla każdego liścia:
-      generuj 17×17 wierzchołków
+      generuj 33×33 wierzchołków
       oblicz normalne
       wyślij bufor wierzchołków do GPU
-  → Dla 5 LOD × 16 konfiguracji:
+  → Dla 6 LOD × 16 konfiguracji:
       TerrainIndexGenerator::generate()
       wyślij bufor indeksowy do GPU
 ```
@@ -236,20 +237,152 @@ TerrainSystem::update()
     → updateNodes() - sprawdź widoczność
 ```
 
-### Renderowanie
+### Renderowanie z obsługą teselacji GPU
 
 ```
 TerrainComponent::collectRenderPackets()
+  → materiał instancja rozwiązywany w RenderExtractionSystem::resolveMaterialIfNeeded()
   → Dla każdego visibleNodes_:
       pobierz bufor wierzchołków węzła z GPU
       TerrainIndexGenerator::computeStitchConfig() - określ konfigurację zszywania
       pobierz bufor indeksowy (LOD + stitchConfig) z GPU
-      utwórz RenderPacket
+      CPU LOD = (tessellationActive && lodLevel > 0) ? lodLevel - 1 : lodLevel
+      utwórz RenderPacket z tessellationFactor
+      → tessellationFactor = tessellationLevel / (1 << lodLevel), clamped ≥ 1.0
+      → Gdy tessellation wyłączona: tessellationFactor = 1.0, CPU LOD = lodLevel
+  → Wszystkie pakiety terenu mają forwardOpaquePass = true (renderowane w OpaquePass)
 ```
+
+### Shader terrain (assets/shaders/terrain/terrain.hlsl)
+
+Shader terenu występuje w dwóch wariantach wybieranych automatycznie przez `MaterialCompiler`:
+
+| Wariant | Vertex Shader | Tessellation | Warunek |
+|---------|--------------|--------------|---------|
+| **Z teselacją** | `vertexMain` (zwykły pass-through do hull shadera) | Hull + Domain shader (`triangle_cw`) | `tessellationEnabled_ = true` i `isTessellationSupported()` |
+| **Bez teselacji** | `vertexMainNoTess` (pełny vertex shader z projekcją) | Brak | gdytessellation nie jest wspierane lub wyłączone |
+
+**Domain shader** (`domainMain`) wykonuje:
+1. Interpolację barycentryczną pozycji, normalnej i UV z 3 punktów kontrolnych
+2. Heightmap displacement: `SampleLevel(heightmap, uv, 0)` — stały mip level 0 (pełna rozdzielczość)
+3. Obliczenie normalnej przez różnice centralne
+4. Transformację world→view→proj
+
+**Winding order:**
+- Indeksy wierzchołków są generowane jako **CW** (clockwise)
+- Projekcja macierzy `proj` ma Y-flip (`-inverseTanHalfFov` w `math.h`)
+- Hull shader: `[outputtopology("triangle_cw")]` — teselator generuje CW
+- Efekt: CW world → Y-flip → CCW NDC = front face przy `VK_FRONT_FACE_COUNTER_CLOCKWISE`
 
 ---
 
-## 7. Generowanie Proceduralne
+## 7. GPU Tessellation — szczegóły
+
+### Hull Shader Constants
+
+Stałe teselacji są obliczane w `ConstantsHS()` (funkcja stałych przedziału):
+
+```
+gl_TessLevelOuter[0..2] = tessellationFactor  (każda krawędź)
+gl_TessLevelInner[0]    = tessellationFactor  (wnętrze trójkąta)
+```
+
+Gdzie `tessellationFactor` pochodzi z push constant ustawianego w `Terrain::collectRenderPackets`.
+
+### Poziom teselacji
+
+```
+tessFactor = (lodLevel == 0) ? tessellationLevel : tessellationLevel * 0.5f
+```
+(wcześniejsza wersja)
+
+```
+tessFactor = tessellationLevel / (1 << lodLevel), clamped ≥ 1.0
+```
+(obecna wersja — dystansowa redukcja)
+
+Przykład dla `tessellationLevel = 4.0`:
+
+| LOD | tessFactor | Opis |
+|-----|-----------|------|
+| 0 | 4.0 | Wysoka gęstość blisko kamery |
+| 1 | 2.0 | Średnia gęstość |
+| 2 | 1.0 | Brak subpodziału (teselator przepuszcza bez zmian) |
+| 3+ | 1.0 | Brak subpodziału daleko |
+
+Gdy `tessellationActive` i LOD > 0, CPU LOD jest redukowane o 1, aby GPU mogło odtworzyć szczegóły przez teselację. Zmniejszenie tessFactor dla wyższych LOD zapobiega powstawaniu zbyt małych trójkątów w oddali (sub-pixel triangles), które powodują aliasing i migotanie tekstur.
+
+### API Engine
+
+```cpp
+// engine/core/engine.h
+void setTessellationEnabled(bool enabled);
+bool isTessellationEnabled() const;
+bool isTessellationSupported() const;
+void setTessellationLevel(float level);    // domyślnie 4.0
+float getTessellationLevel() const;
+```
+
+Przepływ wartości: `Engine → Renderer → RenderExtractionSystem → TerrainComponent::collectRenderPackets(…, float tessellationLevel) → Terrain::collectRenderPackets(…, float tessellationLevel)`
+
+---
+
+## 8. Teksturowanie i Filtrowanie
+
+### Warstwy tekstur (Texture Splatting)
+
+Terrain obsługuje do 12 warstw tekstur nakładanych przez splat mapy (maski wagowe). Każda warstwa to:
+- Tekstura bazowa (diffuse/albedo)
+- Opcjonalna maska wagowa (splat map)
+- Wszystkie warstwy mają wspólne UV bazujące na pozycji świata: `texCoord = localPosXZ / worldSize`
+
+### Mipmapy
+
+- **Tekstury warstw** (ładowane przez `Renderer::loadTexture`): generowany pełny łańcuch mipmap przez `vkCmdBlitImage` (trilinear filtering)
+- **Heightmapa** (ładowana przez `Renderer::loadTextureFromMemory`): tylko 1 mip level, sampling zawsze `SampleLevel(..., 0)` — celowo, displacement wymaga pełnej rozdzielczości
+
+### TextureFilter — API zmiany filtrowania
+
+```cpp
+// engine/core/types.h
+enum class TextureFilter {
+    Nearest,        // VK_FILTER_NEAREST + VK_SAMPLER_MIPMAP_MODE_NEAREST
+    Linear,         // VK_FILTER_LINEAR + VK_SAMPLER_MIPMAP_MODE_NEAREST
+    Trilinear,      // VK_FILTER_LINEAR + VK_SAMPLER_MIPMAP_MODE_LINEAR
+    Anisotropic2x,  // jw. + anisotropy 2x
+    Anisotropic4x,  // jw. + anisotropy 4x (domyślnie)
+    Anisotropic8x,  // jw. + anisotropy 8x
+    Anisotropic16x, // jw. + anisotropy 16x
+};
+```
+
+```cpp
+// engine/core/engine.h
+void setTextureFilter(TextureFilter filter);
+TextureFilter getTextureFilter() const;
+```
+
+**Domyślnie:** `TextureFilter::Anisotropic4x`.
+
+**Działanie:**
+1. `setTextureFilter(filter)` → `Renderer::setTextureFilter(filter)`
+2. Renderer czeka `waitIdle()` na zakończenie wszystkich operacji GPU
+3. Iteruje wszystkie tekstury w bindless array
+4. Dla każdej: niszczy stary VkSampler, tworzy nowy z wybranym filtrem + zachowanym `AddressMode` i liczbą mip leveli
+5. Aktualizuje deskryptory bindless (dla wszystkich ramek w locie)
+
+**Przykład:**
+```cpp
+engine.setTextureFilter(TextureFilter::Anisotropic16x);
+```
+
+### Sampler per-tekstura
+
+Każda tekstura w bindless array (`VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`) ma swój własny sampler. Shaderowy `SamplerState globalSampler : register(s1, space0)` jest scalany z tablicą tekstur przez DXC — każdy wpis `textures[index]` używa własnego samplera.
+
+---
+
+## 9. Generowanie Proceduralne
 
 Wszystkie algorytmy są zaimplementowane w `TerrainHeightmapGenerator` jako metody statyczne.
 
@@ -316,7 +449,7 @@ Wszystkie algorytmy są zaimplementowane w `TerrainHeightmapGenerator` jako meto
 
 ---
 
-## 8. Zapytania o Wysokość (getHeight)
+## 10. Zapytania o Wysokość (getHeight)
 
 ```cpp
 float Terrain::getHeight(float worldX, float worldZ) const
@@ -346,7 +479,7 @@ float Terrain::getHeight(float worldX, float worldZ) const
 
 ---
 
-## 9. System ECS
+## 11. System ECS
 
 ### TerrainSystem
 
@@ -374,7 +507,7 @@ Dzięki temu obiekty (np. drzewa, kamienie) automatycznie "przyklejają się" do
 
 ---
 
-## 10. Integracja - Przykład Użycia
+## 12. Integracja — Przykład Użycia
 
 ```cpp
 // 1. Tworzenie terenu z pliku JSON
@@ -398,11 +531,16 @@ scene.addSystem(std::make_unique<TerrainPlacementSystem>());
 // 6. Pobranie wysokości
 float h = terrain->getHeight(playerX, playerZ);
 player.position.y = h;
+
+// 7. Konfiguracja teselacji i filtrowania
+engine.setTessellationEnabled(true);
+engine.setTessellationLevel(6.0f);  // wyższa gęstość
+engine.setTextureFilter(TextureFilter::Anisotropic16x);
 ```
 
 ---
 
-## 11. Optymalizacje
+## 13. Optymalizacje
 
 ### Zastosowane techniki
 
@@ -411,9 +549,13 @@ player.position.y = h;
 | **Quadtree LOD** | Redukcja trójkątów dalekich węzłów (do 256× mniej trójkątów) |
 | **Frustum culling** | Nie renderuje węzłów poza ekranem |
 | **Back-face culling** | Nie renderuje węzłów za kamerą |
-| **Współdzielone bufory indeksowe** | 80 buforów dla wszystkich węzłów, nie per-węzeł |
+| **Współdzielone bufory indeksowe** | 96 buforów dla wszystkich węzłów, nie per-węzeł |
 | **Statyczne drzewo** | Brak alokacji/dealokacji co klatkę |
 | **Pre-generowane indeksy** | Indeksy LOD liczone raz podczas uploadTo() |
+| **GPU Tessellation** | Subpodział trójkątów na GPU zamiast CPU (redukcja CPU LOD o 1) |
+| **Dystansowa redukcja lodFactor** | tessellationLevel / (1 << lodLevel) — mniej teselacji daleko |
+| **Depth bias shadow** | `depthBiasConstantFactor=1.0f, slopeFactor=1.0f` — redukcja shadow acne przy CULL_MODE_NONE |
+| **Anisotropic filtering 4x** | Domyślnie włączone dla wszystkich tekstur (zmienialne przez API) |
 
 ### Potencjalne dalsze optymalizacje
 
@@ -424,9 +566,67 @@ player.position.y = h;
 
 ---
 
-## 12. Znane Problemy i Ograniczenia
+## 14. Zarządzanie MaterialInstance (ważne!)
+
+### Problem
+
+Przełączanie wireframe lub teselacji (`Engine::setWireframeEnabled` / `Engine::setTessellationEnabled`) czyści cache materiałów (`materialCache_.clear()`) i niszczy wszystkie pipeline'y (`invalidateAllPipelines()`). Bez odpowiedniego odświeżenia:
+
+1. `TerrainComponent::materialInstance` trzyma stary `shared_ptr` do zniszczonego pipeline'a
+2. `RenderExtractionSystem::resolveMaterialIfNeeded()` pomija go (bo nie jest nullem)
+3. GPU otrzymuje zniszczony VkPipeline → zachowanie nieokreślone
+
+### Rozwiązanie
+
+`Engine::reloadShader("")` iteruje także `TerrainComponent`:
+1. Resetuje `tc->materialInstance.reset()`
+2. Tworzy nową instancję przez `materialSystem->getOrCreateMaterialInstance(*mat)`
+3. Nowa instancja zawiera pipeline skompilowany z aktualnymi flagami (wireframe, tessellation)
+
+Metody wywołujące `reloadShader("")`:
+- `Engine::setWireframeEnabled(bool)` — już wywoływała
+- `Engine::setTessellationEnabled(bool)` — dodano
+
+---
+
+## 15. Cieniowanie (Shadows)
+
+### Konfiguracja shadow pipeline
+
+| Właściwość | Wartość | Uzasadnienie |
+|------------|---------|-------------|
+| `cullMode` | `VK_CULL_MODE_NONE` | Zapobiega dziurawym cieniom przy różnych orientacjach trójkątów względem światła |
+| `frontFace` | `VK_FRONT_FACE_COUNTER_CLOCKWISE` | Zgodność z resztą potoku |
+| `depthBiasEnable` | `VK_TRUE` | Redukcja shadow acne przy podwójnym renderowaniu ścian |
+| `depthBiasConstantFactor` | `1.0f` | Stałe przesunięcie głębi |
+| `depthBiasSlopeFactor` | `1.0f` | Przesunięcie proporcjonalne do nachylenia trójkąta |
+
+Teren jest renderowany w forward opaque pass (nie w GBuffer), więc `VK_CULL_MODE_NONE` w GBuffer nie wpływa na teren. Shadow pipeline używa `VK_CULL_MODE_NONE`, aby uniknąć sytuacji, gdzie trójkąty CW są back-facing z perspektywy światła i nie trafiają do shadow mapy (torn shadows).
+
+---
+
+## 16. Znane Problemy i Ograniczenia
 
 1. **Parser JSON** jest uproszczony i nie obsługuje zagnieżdżonych struktur ani escape'owanych znaków.
 2. **Frustum culling** używa testu sfery, nie właściwego testu AABB - może powodować false positives (renderowanie niewidocznych węzłów), ale nigdy false negatives.
 3. **Brak smooth LOD transitions** - przejścia między LOD są skokowe (pop), brak geomorphingu.
 4. **Wysokość poza granicami** mapy zwraca 0 - może powodować "przyklejanie" obiektów do zera przy krawędziach.
+5. **Heightmap SampleLevel(..., 0)** — zawsze próbkuje mip level 0, co przy bardzo bliskim przybliżeniu może powodować aliasing; przy oddalaniu brak automatycznego filtrowania wysokości, ponieważ displacement wymaga pełnej rozdzielczości.
+6. **Aktualizacja pozycji encji po regeneracji** — w przykładzie 06, po naciśnięciu 1/2/3 (regeneracja terenu), należy jawnie ustawić `terrainEntity->transform().position = terrain->worldOffset()` i zaktualizować pozycję kamery, aby nie znalazła się wewnątrz terenu.
+
+---
+
+## 17. Changelog — ostatnie zmiany
+
+| Data | Zmiana | Autor |
+|------|--------|-------|
+| 2025 | Dodanie teselacji GPU (hull + domain shader) | - |
+| 2025 | Zmiana triangle winding na CW + `triangle_cw` w hull shaderze | - |
+| 2025 | `VK_CULL_MODE_NONE` w shadow/GBuffer pipeline | - |
+| 2025 | `Engine::setTessellationLevel(float)` — API do zmiany gęstości teselacji | - |
+| 2025 | Obsługa `+`/`-` w przykładzie 06 do zmiany poziomu teselacji | - |
+| 2025 | Dystansowa redukcja tessFactor: `tessellationLevel / (1 << lodLevel)` | - |
+| 2025 | Depth bias w shadow pipeline | - |
+| 2025 | Anisotropic filtering 4x domyślnie + `Engine::setTextureFilter()` | - |
+| 2025 | MaterialInstance TerrainComponent odświeżany przy `reloadShader` | - |
+| 2025 | `Engine::setTessellationEnabled` wywołuje `reloadShader("")` | - |

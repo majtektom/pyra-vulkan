@@ -45,4 +45,15 @@ bool MaterialSystem::isWireframe() const {
     return compiler_ ? compiler_->isWireframe() : false;
 }
 
+void MaterialSystem::setTessellationEnabled(bool enabled) {
+    if (compiler_) {
+        compiler_->setTessellationEnabled(enabled);
+    }
+    materialCache_.clear();
+}
+
+bool MaterialSystem::isTessellationEnabled() const {
+    return compiler_ ? compiler_->isTessellationEnabled() : true;
+}
+
 } // namespace engine3d

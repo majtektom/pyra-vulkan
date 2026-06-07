@@ -66,6 +66,11 @@ struct RenderPacket {
     float metallicFactor = 0.0f;
     float roughnessFactor = 1.0f;
     std::array<float,4> materialColor{1,1,1,1};
+    TextureHandle heightmapTextureHandle{};
+    uint32_t heightmapTextureIndex = 0;
+    float scaleY = 1.0f;
+    float tessellationFactor = 1.0f;
+    bool heightmapEnabled = false;
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
     int renderPriority = 0;

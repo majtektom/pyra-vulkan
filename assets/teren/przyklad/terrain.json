@@ -1,7 +1,7 @@
 {
     "heightMap": "przyk.bmp",
     "scaleMap": 10,
-    "scaleHeight": 1.0,
+    "scaleHeight": 4.0,
     "scaleTexture": 10,
     "layers": [
         { "mask": "mask1.bmp", "texture": "../../textures/snieg.bmp" },

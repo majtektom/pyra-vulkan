@@ -41,6 +41,8 @@ public:
     void invalidatePipelinesForShader(const std::string& shaderName);
     void setWireframe(bool enabled);
     bool isWireframe() const;
+    void setTessellationEnabled(bool enabled);
+    bool isTessellationEnabled() const;
 
 private:
     std::unique_ptr<MaterialCompiler> compiler_;             // Kompilator potoków graficznych.

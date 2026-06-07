@@ -11,14 +11,15 @@ TerrainComponent::TerrainComponent() : Component("Terrain") {}
 TerrainComponent::TerrainComponent(std::shared_ptr<Terrain> terrainPtr)
     : Component("Terrain"), terrain(terrainPtr) {}
 
-void TerrainComponent::collectRenderPackets(std::vector<RenderPacket>& packets, MeshManager& meshManager) {
+void TerrainComponent::collectRenderPackets(std::vector<RenderPacket>& packets, MeshManager& meshManager, bool tessellationActive, float tessellationLevel) {
     if (!isActive() || !owner || !terrain) return;
 
     // Zbierz standardowe pakiety terenu
     terrain->collectRenderPackets(packets, meshManager, owner->transform().getWorldMatrix(),
                                  materialHandle, materialInstance, castShadows,
                                  layerBlendEnabled, layerCount, layerTextureHandles,
-                                 layerMaskHandles, layerWorldSize);
+                                 layerMaskHandles, layerWorldSize,
+                                 heightmapTextureHandle, heightmapEnabled, tessellationActive, tessellationLevel);
 
 }
 

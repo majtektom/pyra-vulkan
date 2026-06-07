@@ -62,6 +62,8 @@ int main() {
 
     configureTerrainBindings(engine);
     engine.setWireframeEnabled(false);
+    engine.setTessellationEnabled(true);
+    engine.setTessellationLevel(2.0f);
 
     auto* scene = engine.getSceneManager()->activeScene();
     if (!scene) return 1;
@@ -113,7 +115,7 @@ int main() {
     
     if (useJson) {
         // Parametry: rozmiar komórki siatki (10.0), maksymalna wysokość (2.0), podział LOD (20.0)
-        terrain->setScale(15.0f, 2.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+        // terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
         terrain->buildMesh();
         terrain->uploadTo(*engine.getMeshManager());
         LOG_INFO("Terrain (JSON): {}x{} layers={} mesh={}", terrain->sizeX, terrain->sizeZ, terrain->layers.size(), terrain->meshName());
@@ -124,7 +126,7 @@ int main() {
         terrain->smoothEdges(); // Wygładzenie krawędzi do poziomu 0, aby teren płynnie przechodził w wodę
         terrain->buildMesh();
         terrain->uploadTo(*engine.getMeshManager());
-        terrain->setScale(5.0f, 2.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+        terrain->setScale(5.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
         LOG_INFO("Terrain (plasma): {}x{} layers={} mesh={}", terrain->sizeX, terrain->sizeZ, terrain->layers.size(), terrain->meshName());
     }
 
@@ -165,6 +167,10 @@ int main() {
             terrainComp->layerMaskHandles[i] = renderer->loadTexture(maskName, terrain->layers[i].maskPath);
         }
     }
+    
+    // Ładowanie mapy wysokości bezpośrednio z pamięci na GPU dla potrzeb teselacji
+    terrainComp->heightmapTextureHandle = renderer->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
+    terrainComp->heightmapEnabled = true;
 
     // Kamera startująca nad terenem
     auto* camera = scene->createEntity("main_camera")->addComponent<CameraComponent>();
@@ -233,6 +239,37 @@ int main() {
         }
         bWasDown = bDown;
 
+        // KROK 5b: Przełączanie teselacji za pomocą klawisza 'T'
+        static bool tWasDown = false;
+        const bool tDown = snap.keys[SDL_SCANCODE_T];
+        if (tDown && !tWasDown) {
+            bool current = engine.isTessellationEnabled();
+            engine.setTessellationEnabled(!current);
+            LOG_INFO("Toggled terrain tessellation: {}", !current ? "ENABLED" : "DISABLED");
+        }
+        tWasDown = tDown;
+
+        // KROK 5c: Zmiana poziomu teselacji += / -= 
+        static bool eqWasDown = false;
+        const bool eqDown = snap.keys[SDL_SCANCODE_EQUALS];
+        if (eqDown && !eqWasDown) {
+            float level = engine.getTessellationLevel();
+            level = std::min(level + 2.0f, 32.0f);
+            engine.setTessellationLevel(level);
+            LOG_INFO("Tessellation level: {}", level);
+        }
+        eqWasDown = eqDown;
+
+        static bool minusWasDown = false;
+        const bool minusDown = snap.keys[SDL_SCANCODE_MINUS];
+        if (minusDown && !minusWasDown) {
+            float level = engine.getTessellationLevel();
+            level = std::max(level - 2.0f, 0.0f);
+            engine.setTessellationLevel(level);
+            LOG_INFO("Tessellation level: {}", level);
+        }
+        minusWasDown = minusDown;
+
         // KROK 6: PROCEDURALNE GENEROWANIE NOWEGO TERENU (Klawisze 1, 2, 3)
         bool regen = false;
         if (e.actionPressed(kActionTerrainModePlasma)) { generatorMode = 0; regen = true; }
@@ -243,27 +280,33 @@ int main() {
             if (generatorMode == 0) {
                 // Algorytm 1: Osocze (Plasma/Midpoint displacement) – fraktalny szum tworzący naturalne góry.
                 terrain->generatePlasma(256, 1.2f);
-                terrain->setScale(15.0f, 4.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+                terrain->setScale(15.0f, 7.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
             }
             else if (generatorMode == 1) {
                 // Algorytm 2: Uskoki tektoniczne (Fault Formation) – przecina teren losowymi liniami 
                 // i podnosi jedną ze stron uskoku, tworząc strome zbocza i doliny.
                 terrain->generateFault(256, 160, 100, 1, 5, 0.5f);
-                terrain->setScale(15.0f, 2.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+                terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
             }
             else {
                 // Algorytm 3: Erozja/Depozycja (Particle Deposition) – symuluje spływanie cząsteczek
                 // piasku/ziemi ze wzniesień, co naturalnie wygładza strome szczyty.
                 terrain->generateDeposition(256, 100, 30, 10, 20, 0.8f);
-                terrain->setScale(15.0f, 7.0f, 20.0f, 5); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
+                terrain->setScale(15.0f, 7.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
             }
             
             terrain->smoothEdges();
             terrain->buildMesh();
             terrain->uploadTo(*engine.getMeshManager());
+            terrainComp->heightmapTextureHandle = e.getRenderer()->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
+            terrainComp->layerWorldSize = terrain->worldSizeXZ();
+            terrainEntity->transform().position = terrain->worldOffset();
+            if (cam) {
+                cam->getOwner()->transform().position.y = terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
+            }
             LOG_INFO("Regenerated: {}", modeNames[generatorMode]);
         }
-
+ 
         if (e.actionPressed(kActionTogglePointer)) {
             cursorGrabbed = !cursorGrabbed;
             e.getPlatform()->grabPointer(cursorGrabbed);
@@ -275,14 +318,14 @@ int main() {
         e.setTextLabel(oss.str(), "times", 10, 20, 0.7f, {1, 1, 0.3f, 1});
         
         std::ostringstream controls;
-        controls << "1=Plasma 2=Fault 3=Deposition | B=Toggle Debug Info";
+        controls << "1=Plasma 2=Fault 3=Deposition | B=Debug | T=Tess | +/-=Level";
         e.setTextLabel(controls.str(), "times", 10, 50, 0.45f, {0.5f, 0.9f, 0.5f, 1.0f});
         
         if (showDebugText) {
             // Obliczamy liczbę węzłów na każdym poziomie LOD
-            std::array<int, 5> lodCounts{};
+            std::array<int, 6> lodCounts{};
             for (const auto* node : terrain->getVisibleNodes()) {
-                int lod = std::max(0, std::min(4, node->lodLevel));
+                int lod = std::max(0, std::min(5, node->lodLevel));
                 lodCounts[lod]++;
             }
             
@@ -291,7 +334,14 @@ int main() {
                  << "  Visible: " << terrain->visibleCount
                  << " (LOD0:" << lodCounts[0] << " LOD1:" << lodCounts[1]
                  << " LOD2:" << lodCounts[2] << " LOD3:" << lodCounts[3]
-                 << " LOD4:" << lodCounts[4] << ")";
+                 << " LOD4:" << lodCounts[4] << " LOD5:" << lodCounts[5] << ")";
+            mode << " | Tessellation: ";
+            if (!engine.isTessellationSupported()) {
+                mode << "UNSUPPORTED";
+            } else {
+                mode << (engine.isTessellationEnabled() ? "ACTIVE" : "DISABLED")
+                     << " (level=" << std::fixed << std::setprecision(1) << engine.getTessellationLevel() << ")";
+            }
             e.setTextLabel(mode.str(), "times", 10, 72, 0.45f, {0.7f, 0.7f, 1.0f, 1.0f});
         }
         

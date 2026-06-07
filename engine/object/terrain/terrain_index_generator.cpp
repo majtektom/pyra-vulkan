@@ -36,6 +36,7 @@ void TerrainIndexGenerator::generate(int lodLevel, int stitchConfig, std::vector
     int skok = 1 << lodLevel;
 
     if (skok >= ss) {
+        skok = ss;
         for (int z = 0; z < ss; z += skok) {
             for (int x = 0; x < ss; x += skok) {
                 indices.push_back(z + x * (ss + 1));
@@ -737,6 +738,8 @@ void TerrainIndexGenerator::generate(int lodLevel, int stitchConfig, std::vector
             indices.push_back(z + skok + (x + skok) * (ss + 1));
         }
     }
+
 }
 
 } // namespace engine3d
+

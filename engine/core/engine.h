@@ -128,6 +128,13 @@ public:
 
     void setWireframeEnabled(bool enabled);
     bool isWireframeEnabled() const;
+    void setTessellationEnabled(bool enabled);
+    bool isTessellationEnabled() const;
+    bool isTessellationSupported() const;
+    void setTessellationLevel(float level);
+    float getTessellationLevel() const;
+    void setTextureFilter(TextureFilter filter);
+    TextureFilter getTextureFilter() const;
 
     void configureDirectionalShadow(float halfSize);
 
@@ -212,6 +219,8 @@ private:
         std::shared_ptr<Md2AnimationState> anim;
     };
     std::vector<Md2Instance> md2Instances_;
+
+    float tessellationLevel_ = 4.0f;
 };
 
 } // namespace engine3d

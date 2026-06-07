@@ -89,6 +89,7 @@ public:
      * @param disableAlpha Czy wyłączyć czytanie kanału alfa tekstury (wymusza pełną nieprzezroczystość).
      */
     TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat = false, bool disableAlpha = false);
+    TextureHandle loadTextureFromMemory(const std::string& name, const std::vector<float>& data, uint32_t width, uint32_t height, bool mirroredRepeat = false);
     
     // Konfiguracja koloru tła (czyszczenia ekranu).
     void setClearColor(float r, float g, float b, float a);
@@ -104,6 +105,13 @@ public:
     bool shadowsEnabled() const;
     void setWireframeEnabled(bool enabled);
     bool isWireframeEnabled() const;
+    void setTessellationEnabled(bool enabled);
+    bool isTessellationEnabled() const;
+    bool isTessellationSupported() const;
+    void setTessellationLevel(float level);
+    float getTessellationLevel() const;
+    void setTextureFilter(TextureFilter filter);
+    TextureFilter getTextureFilter() const;
 
     // Konfiguracja ortogonalnej przestrzeni cieniowania światła kierunkowego.
     void configureDirectionalShadow(float halfSize);

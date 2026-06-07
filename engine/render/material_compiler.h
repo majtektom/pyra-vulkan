@@ -62,6 +62,14 @@ public:
     void setWireframe(bool enabled);
     bool isWireframe() const { return wireframe_; }
     void invalidateAllPipelines();
+    
+    void setTessellationEnabled(bool enabled) {
+        if (tessellationEnabled_ != enabled) {
+            tessellationEnabled_ = enabled;
+            invalidateAllPipelines();
+        }
+    }
+    bool isTessellationEnabled() const { return tessellationEnabled_; }
 
 private:
     /**
@@ -117,6 +125,7 @@ private:
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;     // Set 0: UBO + Bindless Samplers + Shadow Map
     VkDescriptorSetLayout boneDescriptorSetLayout_ = VK_NULL_HANDLE; // Set 1: Bone Matrices UBO (opcjonalny)
     bool wireframe_ = false;
+    bool tessellationEnabled_ = true;
 };
 
 } // namespace engine3d

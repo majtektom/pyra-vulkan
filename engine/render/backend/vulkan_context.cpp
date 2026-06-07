@@ -267,6 +267,12 @@ void VulkanContext::pickPhysicalDevice() {
         auto indices = findQueueFamilies(device, surface_);
         if (indices.isComplete()) {
             physicalDevice_ = device;
+            
+            VkPhysicalDeviceFeatures deviceFeatures;
+            vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+            tessellationSupported_ = (deviceFeatures.tessellationShader == VK_TRUE);
+            LOG_INFO("[VulkanContext] Selected GPU. Tessellation support: {}", tessellationSupported_ ? "YES" : "NO");
+            
             break;
         }
     }
@@ -297,6 +303,9 @@ void VulkanContext::createLogicalDevice() {
     // Włączamy filtrowanie anizotropowe (anisotropic filtering) poprawiające wygląd tekstur pod kątem.
     VkPhysicalDeviceFeatures features{};
     features.samplerAnisotropy = VK_TRUE;
+    if (tessellationSupported_) {
+        features.tessellationShader = VK_TRUE;
+    }
 
     // Funkcjonalności z wersji Vulkan 1.2 – kluczowe dla zaawansowanego bindowania tekstur.
     // Descriptor Indexing (Bindless Textures) pozwala nam przechowywać tablice tekstur w pamięci GPU

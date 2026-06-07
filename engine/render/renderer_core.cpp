@@ -61,6 +61,8 @@ struct TextureResources {
     VkDeviceMemory imageMemory = VK_NULL_HANDLE;
     VkImageView imageView = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
+    uint32_t mipLevels = 1;
+    AddressMode addressMode = AddressMode::Repeat;
 };
 
 constexpr int kMaxBindlessTextures = 1024;
@@ -557,6 +559,17 @@ public:
 
     TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat, bool disableAlpha = false) {
         VkDevice device = vulkanContext_->device();
+        
+        // Clean up existing texture with the same name to prevent memory leak on reload
+        auto oldIt = textures_.find(name);
+        if (oldIt != textures_.end()) {
+            vkDestroyImageView(device, oldIt->second.imageView, nullptr);
+            vkDestroyImage(device, oldIt->second.image, nullptr);
+            vkFreeMemory(device, oldIt->second.imageMemory, nullptr);
+            vkDestroySampler(device, oldIt->second.sampler, nullptr);
+            textures_.erase(oldIt);
+        }
+
         VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
         TextureUploadData uploadData = TextureAssetLoader::load(path);
 
@@ -693,11 +706,172 @@ public:
             tex.imageView = vk::createImageView(device, tex.image, uploadData.format,
                                                 VK_IMAGE_ASPECT_COLOR_BIT, uploadData.mipLevels);
         }
-        tex.sampler = mirroredRepeat ? vk::createMirrorRepeatSampler(device, uploadData.mipLevels) : vk::createTextureSampler(device, uploadData.mipLevels);
+        tex.sampler = vk::createSampler(device, vulkanContext_->physicalDevice(), uploadData.mipLevels,
+                        textureFilter_, mirroredRepeat ? AddressMode::MirroredRepeat : AddressMode::Repeat);
+        tex.mipLevels = uploadData.mipLevels;
+        tex.addressMode = mirroredRepeat ? AddressMode::MirroredRepeat : AddressMode::Repeat;
         textures_[name] = tex;
         
         registerTextureInBindless(name, tex.imageView, tex.sampler);
         LOG_INFO("Loaded texture: {} at index {}", name, textureNameToIndex_[name]);
+
+        if (assetRegistry_) {
+            return assetRegistry_->registerTexture(name);
+        }
+        return {};
+    }
+
+    TextureHandle loadTextureFromMemory(const std::string& name, const std::vector<float>& data, uint32_t width, uint32_t height, bool mirroredRepeat) {
+        VkDevice device = vulkanContext_->device();
+        
+        // Clean up existing texture with the same name to prevent memory leak on reload
+        auto oldIt = textures_.find(name);
+        if (oldIt != textures_.end()) {
+            vkDestroyImageView(device, oldIt->second.imageView, nullptr);
+            vkDestroyImage(device, oldIt->second.image, nullptr);
+            vkFreeMemory(device, oldIt->second.imageMemory, nullptr);
+            vkDestroySampler(device, oldIt->second.sampler, nullptr);
+            textures_.erase(oldIt);
+        }
+
+        VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
+
+        // Convert float heightmap data (0..255) to 8-bit unorm values
+        TextureUploadData uploadData{};
+        uploadData.width = width;
+        uploadData.height = height;
+        uploadData.mipLevels = 1;
+        uploadData.format = VK_FORMAT_R8_UNORM;
+        uploadData.pixelBytes.resize(width * height);
+        for (uint32_t i = 0; i < width * height; ++i) {
+            float val = data[i];
+            if (val < 0.0f) val = 0.0f;
+            if (val > 255.0f) val = 255.0f;
+            uploadData.pixelBytes[i] = static_cast<uint8_t>(val);
+        }
+
+        // Compute full mip chain
+        uint32_t maxDim = std::max(width, height);
+        uploadData.mipLevels = 1;
+        while (maxDim > 1) { maxDim /= 2; uploadData.mipLevels++; }
+
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = {width, height, 1};
+        uploadData.copyRegions.push_back(region);
+
+        TextureResources tex;
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        vk::createImage(device, physicalDevice,
+                        uploadData.width, uploadData.height, uploadData.mipLevels,
+                        uploadData.format, usage,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        tex.image, tex.imageMemory);
+
+        vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
+                                  tex.image, uploadData.format,
+                                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  uploadData.mipLevels);
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingMemory;
+        VkDeviceSize dataSize = uploadData.pixelBytes.size();
+        vk::createBuffer(device, physicalDevice, dataSize,
+                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         stagingBuffer, stagingMemory);
+
+        void* mappedMemory;
+        vkMapMemory(device, stagingMemory, 0, dataSize, 0, &mappedMemory);
+        std::memcpy(mappedMemory, uploadData.pixelBytes.data(), dataSize);
+        vkUnmapMemory(device, stagingMemory);
+
+        VkCommandBuffer cmd = beginSingleTimeCommands();
+        vkCmdCopyBufferToImage(cmd, stagingBuffer, tex.image,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(uploadData.copyRegions.size()),
+                               uploadData.copyRegions.data());
+
+        // Generate mip chain via blit
+        {
+            VkImageMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.image = tex.image;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.layerCount = 1;
+
+            int32_t mipW = static_cast<int32_t>(width);
+            int32_t mipH = static_cast<int32_t>(height);
+
+            for (uint32_t i = 1; i < uploadData.mipLevels; i++) {
+                barrier.subresourceRange.baseMipLevel = i - 1;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                     0, nullptr, 0, nullptr, 1, &barrier);
+
+                VkImageBlit blit{};
+                blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                blit.srcSubresource.mipLevel = i-1;
+                blit.srcSubresource.layerCount = 1;
+                blit.srcOffsets[1] = {mipW, mipH, 1};
+                blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                blit.dstSubresource.mipLevel = i;
+                blit.dstSubresource.layerCount = 1;
+                blit.dstOffsets[1] = {mipW>1?mipW/2:1, mipH>1?mipH/2:1, 1};
+                vkCmdBlitImage(cmd, tex.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               1, &blit, VK_FILTER_LINEAR);
+
+                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                     0, nullptr, 0, nullptr, 1, &barrier);
+
+                if (mipW > 1) mipW /= 2;
+                if (mipH > 1) mipH /= 2;
+            }
+
+            barrier.subresourceRange.baseMipLevel = uploadData.mipLevels - 1;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &barrier);
+        }
+
+        endSingleTimeCommands(cmd);
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+
+        tex.imageView = vk::createImageView(device, tex.image, uploadData.format,
+                                            VK_IMAGE_ASPECT_COLOR_BIT, uploadData.mipLevels);
+        tex.sampler = vk::createSampler(device, vulkanContext_->physicalDevice(), uploadData.mipLevels,
+                        textureFilter_, mirroredRepeat ? AddressMode::MirroredRepeat : AddressMode::Repeat);
+        tex.mipLevels = uploadData.mipLevels;
+        tex.addressMode = mirroredRepeat ? AddressMode::MirroredRepeat : AddressMode::Repeat;
+        textures_[name] = tex;
+        
+        registerTextureInBindless(name, tex.imageView, tex.sampler);
+        LOG_INFO("Loaded memory texture: {} at index {} (mipLevels={})", name, textureNameToIndex_[name], uploadData.mipLevels);
 
         if (assetRegistry_) {
             return assetRegistry_->registerTexture(name);
@@ -758,6 +932,37 @@ public:
     VkCommandPool commandPool() const { return vulkanContext_->commandPool(); }
     VkQueue graphicsQueue() const { return vulkanContext_->graphicsQueue(); }
     VkExtent2D extent() const { return swapchain_ ? swapchain_->extent() : VkExtent2D{0,0}; }
+    void setTessellationEnabled(bool enabled) { tessellationEnabled_ = enabled; }
+    bool isTessellationEnabled() const { return tessellationEnabled_; }
+    bool isTessellationSupported() const { return vulkanContext_ && vulkanContext_->isTessellationSupported(); }
+    void setTessellationLevel(float level) { tessellationLevel_ = level; }
+    float getTessellationLevel() const { return tessellationLevel_; }
+    void setTextureFilter(TextureFilter filter) {
+        if (textureFilter_ == filter) return;
+        textureFilter_ = filter;
+        VkDevice device = vulkanContext_->device();
+        for (auto& [name, tex] : textures_) {
+            vkDestroySampler(device, tex.sampler, nullptr);
+            tex.sampler = vk::createSampler(device, vulkanContext_->physicalDevice(), tex.mipLevels, filter, tex.addressMode);
+            uint32_t index = getTextureIndex(name);
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView = tex.imageView;
+            imageInfo.sampler = tex.sampler;
+            for (int i = 0; i < kMaxFrames; i++) {
+                VkWriteDescriptorSet write{};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet = descriptorSets_[i];
+                write.dstBinding = 1;
+                write.dstArrayElement = index;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.descriptorCount = 1;
+                write.pImageInfo = &imageInfo;
+                vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            }
+        }
+    }
+    TextureFilter getTextureFilter() const { return textureFilter_; }
     
     uint32_t getTextureIndex(const std::string& name) const {
         auto it = textureNameToIndex_.find(name);
@@ -831,6 +1036,9 @@ public:
                 }
             }
         }
+        packet.heightmapTextureIndex = packet.heightmapTextureHandle.isValid()
+            ? getTextureIndex(packet.heightmapTextureHandle)
+            : 0;
     }
 
     VkDescriptorSet getDescriptorSet(uint32_t frame) const {
@@ -1212,7 +1420,7 @@ private:
                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
         defaultImageView_ = vk::createImageView(device, defaultImage_, VK_FORMAT_R8G8B8A8_UNORM,
                             VK_IMAGE_ASPECT_COLOR_BIT, 1);
-        defaultSampler_ = vk::createTextureSampler(device, 1);
+        defaultSampler_ = vk::createSampler(device, vulkanContext_->physicalDevice(), 1, textureFilter_, AddressMode::Repeat);
     }
 
     void createDefaultNormalTexture() {
@@ -1342,12 +1550,13 @@ private:
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         bindings[0].descriptorCount = 1;
-        bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                                  VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
         
         bindings[1].binding = 1;
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[1].descriptorCount = kMaxBindlessTextures;
-        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
         bindings[2].binding = 2;
         bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -2041,6 +2250,9 @@ private:
         rasterizer.cullMode = VK_CULL_MODE_NONE;
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.lineWidth = 1.0f;
+        rasterizer.depthBiasEnable = VK_TRUE;
+        rasterizer.depthBiasConstantFactor = 1.0f;
+        rasterizer.depthBiasSlopeFactor = 1.0f;
 
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -2424,6 +2636,9 @@ private:
     float ambientColor_[3] = {1.0f, 1.0f, 1.0f};
     bool shadowsEnabled_ = false;
     bool wireframeEnabled_ = false;
+    bool tessellationEnabled_ = true;
+    float tessellationLevel_ = 4.0f;
+    TextureFilter textureFilter_ = TextureFilter::Anisotropic16x;
     float dirShadowHalfSize_ = 100.0f;
     bool cleanedUp_ = false;
     bool fogEnabled_ = false;
@@ -2502,6 +2717,8 @@ uint32_t Renderer::height() const { return impl_->extent().height; }
 VkFormat Renderer::colorFormat() const { return impl_->colorFormat(); }
 VkFormat Renderer::depthFormat() const { return impl_->depthFormat(); }
 TextureHandle Renderer::loadTexture(const std::string& n, const std::string& p, bool m, bool disableAlpha) { return impl_->loadTexture(n, p, m, disableAlpha); }
+TextureHandle Renderer::loadTextureFromMemory(const std::string& n, const std::vector<float>& d, uint32_t w, uint32_t h, bool m) { return impl_->loadTextureFromMemory(n, d, w, h, m); }
+uint32_t Renderer::getTextureIndex(TextureHandle handle) const { return impl_->getTextureIndex(handle); }
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
 void Renderer::setSynchronizationMode(SynchronizationMode mode) { impl_->setSynchronizationMode(mode); }
 SynchronizationMode Renderer::synchronizationMode() const { return impl_->synchronizationMode(); }
@@ -2511,6 +2728,13 @@ void Renderer::setShadowsEnabled(bool enabled) { impl_->setShadowsEnabled(enable
 bool Renderer::shadowsEnabled() const { return impl_->shadowsEnabled(); }
 void Renderer::setWireframeEnabled(bool enabled) { impl_->setWireframeEnabled(enabled); }
 bool Renderer::isWireframeEnabled() const { return impl_->isWireframeEnabled(); }
+void Renderer::setTessellationEnabled(bool enabled) { impl_->setTessellationEnabled(enabled); }
+bool Renderer::isTessellationEnabled() const { return impl_->isTessellationEnabled(); }
+bool Renderer::isTessellationSupported() const { return impl_->isTessellationSupported(); }
+void Renderer::setTessellationLevel(float level) { impl_->setTessellationLevel(level); }
+float Renderer::getTessellationLevel() const { return impl_->getTessellationLevel(); }
+void Renderer::setTextureFilter(TextureFilter filter) { impl_->setTextureFilter(filter); }
+TextureFilter Renderer::getTextureFilter() const { return impl_->getTextureFilter(); }
 void Renderer::configureDirectionalShadow(float halfSize) { impl_->setDirectionalShadowConfig(halfSize, false); }
 void Renderer::setLightingEnabled(bool e) { impl_->setLightingEnabled(e); }
 bool Renderer::isLightingEnabled() const { return impl_->isLightingEnabled(); }
@@ -2525,7 +2749,6 @@ void Renderer::setFogStart(float start) { if (impl_) impl_->setFogStart(start); 
 void Renderer::setFogEnd(float end) { if (impl_) impl_->setFogEnd(end); }
 void Renderer::setFogDensity(float density) { if (impl_) impl_->setFogDensity(density); }
 
-uint32_t Renderer::getTextureIndex(TextureHandle handle) const { return impl_->getTextureIndex(handle); }
 void Renderer::prepareRenderPacket(RenderPacket& packet) const {
     impl_->prepareRenderPacket(packet);
 }

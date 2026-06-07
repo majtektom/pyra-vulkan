@@ -353,14 +353,20 @@ void Engine::reloadShader(const std::string&) {
         if (!scene) continue;
         for (const auto& entity : scene->getEntities()) {
             auto* mc = entity->getComponent<MeshComponent>();
-            if (!mc || !mc->materialInstance || !mc->materialHandle.isValid()) {
-                continue;
+            if (mc && mc->materialInstance && mc->materialHandle.isValid()) {
+                const Material* mat = materialManager.get(mc->materialHandle);
+                if (mat) {
+                    mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
+                }
             }
 
-            const Material* mat = materialManager.get(mc->materialHandle);
-
-            if (mat) {
-                mc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
+            auto* tc = entity->getComponent<TerrainComponent>();
+            if (tc && tc->materialHandle.isValid()) {
+                tc->materialInstance.reset();
+                const Material* mat = materialManager.get(tc->materialHandle);
+                if (mat) {
+                    tc->materialInstance = materialSystem->getOrCreateMaterialInstance(*mat);
+                }
             }
         }
     }
@@ -428,6 +434,47 @@ void Engine::setWireframeEnabled(bool enabled) {
 
 bool Engine::isWireframeEnabled() const {
     return materialSystem ? materialSystem->isWireframe() : false;
+}
+
+void Engine::setTessellationEnabled(bool enabled) {
+    if (renderer) {
+        renderer->waitIdle();
+        renderer->setTessellationEnabled(enabled);
+    }
+    if (materialSystem) {
+        materialSystem->setTessellationEnabled(enabled);
+    }
+    reloadShader("");
+}
+
+bool Engine::isTessellationEnabled() const {
+    return renderer ? renderer->isTessellationEnabled() : true;
+}
+
+bool Engine::isTessellationSupported() const {
+    return renderer ? renderer->isTessellationSupported() : false;
+}
+
+void Engine::setTessellationLevel(float level) {
+    tessellationLevel_ = level;
+    if (renderer) {
+        renderer->setTessellationLevel(level);
+    }
+}
+
+float Engine::getTessellationLevel() const {
+    return tessellationLevel_;
+}
+
+void Engine::setTextureFilter(TextureFilter filter) {
+    if (renderer) {
+        renderer->waitIdle();
+        renderer->setTextureFilter(filter);
+    }
+}
+
+TextureFilter Engine::getTextureFilter() const {
+    return renderer ? renderer->getTextureFilter() : TextureFilter::Anisotropic16x;
 }
 
 void Engine::configureDirectionalShadow(float halfSize) {

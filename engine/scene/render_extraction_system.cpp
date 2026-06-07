@@ -100,7 +100,9 @@ void RenderExtractionSystem::update(Scene& scene, float /*deltaTime*/) {
             if (auto* tc = entity->getComponent<TerrainComponent>()) {
                 if (tc->isActive()) {
                     const size_t prevCount = myBuf.size();
-                    tc->collectRenderPackets(myBuf, meshManager_);
+                    const bool tessActive = renderer_.isTessellationEnabled() && renderer_.isTessellationSupported();
+                    const float tessLevel = renderer_.getTessellationLevel();
+                    tc->collectRenderPackets(myBuf, meshManager_, tessActive, tessLevel);
 
                     for (size_t pi = prevCount; pi < myBuf.size(); ++pi) {
                         // For debug packets, we don't overwrite materialHandle unless it's the main terrain packet

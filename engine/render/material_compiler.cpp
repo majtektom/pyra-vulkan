@@ -38,7 +38,8 @@ void MaterialCompiler::createDescriptorSetLayout() {
     uboLayoutBinding.binding = 0;
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                                  VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
     // Binding 1: Tablica samplerów tekstur (tzw. "Bindless Texturing").
     // Alokujemy dużą tablicę deskryptorów (1024), co pozwala na indeksowanie tekstur bezpośrednio 
@@ -47,7 +48,7 @@ void MaterialCompiler::createDescriptorSetLayout() {
     samplerLayoutBinding.binding = 1;
     samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     samplerLayoutBinding.descriptorCount = 1024;
-    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
     // Binding 2: Tekstura mapy cieni (Shadow Map) z samplerem porównującym.
     VkDescriptorSetLayoutBinding shadowLayoutBinding{};
@@ -110,25 +111,74 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
     std::string shaderName = materialData.shaderProgram.empty() ? "default" : materialData.shaderProgram;
     std::string shaderDir = "bin/assets/shaders/" + shaderName + "/";
     
+    std::string tescPath = shaderDir + shaderName + ".tesc.spv";
+    std::string tesePath = shaderDir + shaderName + ".tese.spv";
+    bool hasTessellation = false;
+    std::vector<char> tescCode, teseCode;
+    
+    bool tryTessellation = tessellationEnabled_ && context_->isTessellationSupported();
+    if (tryTessellation) {
+        try {
+            tescCode = vk::readFile(tescPath);
+            teseCode = vk::readFile(tesePath);
+            hasTessellation = true;
+        } catch (...) {}
+    }
+
+    std::string vertShaderFile = shaderName;
+    if (shaderName == "terrain" && !hasTessellation) {
+        vertShaderFile = "terrain_no_tess";
+    }
+    
     // Odczyt binarnych plików SPIR-V shaderów skompilowanych przez offline-owy kompilator
-    auto vertCode = vk::readFile(shaderDir + shaderName + ".vert.spv");
+    auto vertCode = vk::readFile(shaderDir + vertShaderFile + ".vert.spv");
     auto fragCode = vk::readFile(shaderDir + shaderName + ".frag.spv");
     
     // Tworzenie modułów shaderów (Shader Modules) w Vulkanie
     VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
     VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
 
-    // Definiowanie etapów shadera (Shader Stages) w potoku graficznym
-    VkPipelineShaderStageCreateInfo shaderStages[2] = {};
-    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStages[0].pName = materialData.vertexEntryPoint.c_str(); // Zwykle "main"
-    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderStages[0].module = vertModule;
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
     
-    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderStages[1].module = fragModule;
-    shaderStages[1].pName = materialData.fragmentEntryPoint.c_str();
+    // Przechowujemy punkt wejścia w zmiennej o czasie życia równym funkcji
+    std::string vertEntryPoint = materialData.vertexEntryPoint;
+    if (shaderName == "terrain" && !hasTessellation) {
+        vertEntryPoint = "vertexMainNoTess";
+    }
+    
+    VkPipelineShaderStageCreateInfo vertStage{};
+    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertStage.pName = vertEntryPoint.c_str(); 
+    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertStage.module = vertModule;
+    shaderStages.push_back(vertStage);
+
+    VkShaderModule tescModule = VK_NULL_HANDLE;
+    VkShaderModule teseModule = VK_NULL_HANDLE;
+    if (hasTessellation) {
+        tescModule = vk::createShaderModule(device, tescCode);
+        VkPipelineShaderStageCreateInfo tescStage{};
+        tescStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        tescStage.stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+        tescStage.module = tescModule;
+        tescStage.pName = "hullMain";
+        shaderStages.push_back(tescStage);
+
+        teseModule = vk::createShaderModule(device, teseCode);
+        VkPipelineShaderStageCreateInfo teseStage{};
+        teseStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        teseStage.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+        teseStage.module = teseModule;
+        teseStage.pName = "domainMain";
+        shaderStages.push_back(teseStage);
+    }
+
+    VkPipelineShaderStageCreateInfo fragStage{};
+    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragStage.module = fragModule;
+    fragStage.pName = materialData.fragmentEntryPoint.c_str();
+    shaderStages.push_back(fragStage);
 
     // Pobranie układu formatu wierzchołków statycznych (pozycja, normalna, UV, kolor wierzchołka)
     auto bindingDesc = Vertex::bindingDescription();
@@ -228,10 +278,14 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(allAttrs.size());
     vertexInput.pVertexAttributeDescriptions = allAttrs.data();
 
-    // Definiowanie topologii prymitywów (lista trójkątów)
+    // Definiowanie topologii prymitywów
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    if (hasTessellation) {
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+    } else {
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    }
 
     // viewport i scissor są deklarowane jako dynamiczne, więc nie musimy ich tu konfigurować na sztywno
     VkPipelineViewportStateCreateInfo viewportState{};
@@ -319,7 +373,8 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
     VkPushConstantRange pushConstant{};
     pushConstant.offset = 0;
     pushConstant.size = 256;
-    pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                              VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
     // Tworzenie Layoutu Potoku (Pipeline Layout) określającego układ wejść
     VkPipelineLayoutCreateInfo layoutInfo{};
@@ -336,8 +391,15 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
     // Konfiguracja potoku graficznego
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    pipelineInfo.pStages = shaderStages.data();
+    
+    VkPipelineTessellationStateCreateInfo tessellationState{};
+    tessellationState.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+    tessellationState.patchControlPoints = 3;
+    if (hasTessellation) {
+        pipelineInfo.pTessellationState = &tessellationState;
+    }
     pipelineInfo.pVertexInputState = &vertexInput;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
     pipelineInfo.pViewportState = &viewportState;
@@ -365,6 +427,8 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
     // Moduły shaderów można bezpiecznie skasować po utworzeniu potoku (Vulkan kopiuje wewnętrznie kod SPIR-V)
     vkDestroyShaderModule(device, vertModule, nullptr);
     vkDestroyShaderModule(device, fragModule, nullptr);
+    if (tescModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, tescModule, nullptr);
+    if (teseModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, teseModule, nullptr);
 
     // Zapisanie nowo utworzonego potoku do pamięci podręcznej i jego zwrócenie
     pipelineCache_[key] = pipeline;

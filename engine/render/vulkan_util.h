@@ -5,6 +5,8 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include "core/types.h"
+
 namespace engine3d {
 
 /**
@@ -144,7 +146,12 @@ void transitionImageLayout(
 /**
  * @brief Tworzy standardowy sampler tekstur z liniowym filtrowaniem i trybem powtarzania (REPEAT).
  */
-[[nodiscard]] VkSampler createTextureSampler(VkDevice device, uint32_t mipLevels);
+[[nodiscard]] VkSampler createTextureSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels);
+
+/**
+ * @brief Tworzy sampler z konfigurowalnym filtrowaniem (TextureFilter).
+ */
+[[nodiscard]] VkSampler createSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels, TextureFilter filter, AddressMode addressMode = AddressMode::Repeat);
 
 /**
  * @brief Tworzy sampler z ucinaniem krawędzi (CLAMP_TO_EDGE) - przydatny przy fontach i skyboxach.
@@ -154,7 +161,7 @@ void transitionImageLayout(
 /**
  * @brief Tworzy sampler z odbiciem lustrzanym (MIRRORED_REPEAT) – łączenie krawędzi bez szwów.
  */
-[[nodiscard]] VkSampler createMirrorRepeatSampler(VkDevice device, uint32_t mipLevels);
+[[nodiscard]] VkSampler createMirrorRepeatSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels);
 
 }  // namespace vk
 }  // namespace engine3d
