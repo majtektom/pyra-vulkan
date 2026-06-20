@@ -100,7 +100,7 @@ VkDescriptorSetLayout MaterialCompiler::createBoneDescriptorSetLayout() {
     return boneLayout;
 }
 
-VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialData) {
+const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& materialData) {
     // Generowanie unikalnego klucza na podstawie stanu materiału
     PipelineKey key{materialData.shaderProgram, materialData.blendMode, materialData.depthTest, materialData.depthWrite, materialData.cullMode};
     
@@ -432,11 +432,12 @@ VulkanPipeline MaterialCompiler::getOrCreatePipeline(const Material& materialDat
 
     // Zapisanie nowo utworzonego potoku do pamięci podręcznej i jego zwrócenie
     pipelineCache_[key] = pipeline;
-    return pipeline;
+    return pipelineCache_[key];
 }
 
 void MaterialCompiler::invalidatePipelinesForShader(const std::string& shaderName) {
     VkDevice device = context_->device();
+    vkDeviceWaitIdle(device); // Wait for GPU to finish using resources
     auto it = pipelineCache_.begin();
     while (it != pipelineCache_.end()) {
         // Jeśli nazwa shadera zgadza się ze zmienioną, usuwamy go z cache, zmuszając do rekompilacji przy następnym rysowaniu
@@ -459,6 +460,7 @@ void MaterialCompiler::setWireframe(bool enabled) {
 
 void MaterialCompiler::invalidateAllPipelines() {
     VkDevice device = context_->device();
+    vkDeviceWaitIdle(device); // Wait for GPU to finish using resources
     for (auto& pair : pipelineCache_) {
         vkDestroyPipeline(device, pair.second.pipeline, nullptr);
         vkDestroyPipelineLayout(device, pair.second.layout, nullptr);

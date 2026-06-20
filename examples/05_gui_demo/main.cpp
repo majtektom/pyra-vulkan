@@ -53,7 +53,7 @@ int main() {
     auto* camera = scene->createEntity("camera")->addComponent<CameraComponent>();
     camera->getOwner()->transform().position = {0, 3, -8};
     camera->fieldOfViewDegrees = 50;
-    camera->farPlane = 1000;
+    camera->farPlane = 16000;
     scene->setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, {0, 0, 0});
 

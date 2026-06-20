@@ -141,7 +141,8 @@ VertexOutput vertexMain(VertexInput input)
         input.position.x * domeScale,
         input.position.y,
         input.position.z * domeScale);
-    float3 worldPos = localPos + float3(cameraPosition.x, 0.0, cameraPosition.z);
+    // Obniżamy niebo o 1500 jednostek w pionie, aby dół kopuły schodził pod horyzont (unikamy czarnej dziury przy wchodzeniu na góry)
+    float3 worldPos = localPos + float3(cameraPosition.x, -500.0, cameraPosition.z);
 
     output.position = mul(proj, mul(view, float4(worldPos, 1.0)));
 
@@ -150,8 +151,11 @@ VertexOutput vertexMain(VertexInput input)
     float distZ = input.position.z / max(cloudScale0, 1.0);
     output.tc = float2(distX, distZ);
 
-    // Zmapowanie wysokości w pionie w celu wyznaczenia gradientu horyzont-zenit
-    output.heightFrac = saturate((input.position.y + 200.0) / 1200.0);
+    // Zmapowanie wysokości w pionie w celu wyznaczenia gradientu horyzont-zenit.
+    // Początek nieba (gradientu) ma być dokładnie na Y = 0 w świecie.
+    // Skoro worldPos.y = localPos.y - 1500.0, to worldPos.y = 0 oznacza localPos.y = 1500.0.
+    // Od worldPos.y = 0 (Y=0 w świecie) gradient rośnie do worldPos.y = 3500.0 (top kopuły, local Y = 5000.0).
+    output.heightFrac = saturate(worldPos.y / 5000.0);
     output.worldPos = worldPos;
 
     return output;

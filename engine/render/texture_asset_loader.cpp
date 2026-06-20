@@ -299,9 +299,205 @@ namespace {
     file.seekg(128, std::ios::beg);
     const std::size_t dataSize = static_cast<std::size_t>(endPosition - static_cast<std::streamoff>(128));
     texture.pixelBytes.resize(dataSize);
-    file.read(reinterpret_cast<char*>(texture.pixelBytes.data()), static_cast<std::streamsize>(texture.pixelBytes.size()));
+    file.read(reinterpret_cast<char*>(texture.pixelBytes.data()), static_cast<std::streamsize>(dataSize));
     if (!file) {
         throw std::runtime_error("failed to read DDS pixel data: " + path);
+    }
+
+    if (texture.mipLevels <= 1) {
+        // Decompress to RGBA8 on CPU
+        std::vector<std::uint8_t> decompressedPixels(width * height * 4);
+        
+        uint32_t numBlocksX = (width + 3u) / 4u;
+        uint32_t numBlocksY = (height + 3u) / 4u;
+        
+        for (uint32_t by = 0; by < numBlocksY; ++by) {
+            for (uint32_t bx = 0; bx < numBlocksX; ++bx) {
+                std::size_t fileOffset = (by * numBlocksX + bx) * blockSize;
+                if (fileOffset + blockSize > texture.pixelBytes.size()) {
+                    throw std::runtime_error("DDS file is truncated during decompression: " + path);
+                }
+                const std::uint8_t* blockData = &texture.pixelBytes[fileOffset];
+                
+                // Decode colors and alphas for the 4x4 block
+                std::uint8_t blockColors[4][4]; // 4 colors, RGBA
+                std::uint8_t blockAlphas[16];
+                std::memset(blockAlphas, 255, 16);
+                
+                if (fourCC == makeFourCC('D', 'X', 'T', '1')) {
+                    std::uint16_t color0 = blockData[0] | (blockData[1] << 8);
+                    std::uint16_t color1 = blockData[2] | (blockData[3] << 8);
+                    std::uint32_t code = blockData[4] | (blockData[5] << 8) | (blockData[6] << 16) | (blockData[7] << 24);
+                    
+                    std::uint8_t r0 = ((color0 >> 11) & 31) * 255 / 31;
+                    std::uint8_t g0 = ((color0 >> 5) & 63) * 255 / 63;
+                    std::uint8_t b0 = (color0 & 31) * 255 / 31;
+                    
+                    std::uint8_t r1 = ((color1 >> 11) & 31) * 255 / 31;
+                    std::uint8_t g1 = ((color1 >> 5) & 63) * 255 / 63;
+                    std::uint8_t b1 = (color1 & 31) * 255 / 31;
+                    
+                    blockColors[0][0] = r0; blockColors[0][1] = g0; blockColors[0][2] = b0; blockColors[0][3] = 255;
+                    blockColors[1][0] = r1; blockColors[1][1] = g1; blockColors[1][2] = b1; blockColors[1][3] = 255;
+                    
+                    if (color0 > color1) {
+                        blockColors[2][0] = (2 * r0 + r1) / 3;
+                        blockColors[2][1] = (2 * g0 + g1) / 3;
+                        blockColors[2][2] = (2 * b0 + b1) / 3;
+                        blockColors[2][3] = 255;
+                        
+                        blockColors[3][0] = (r0 + 2 * r1) / 3;
+                        blockColors[3][1] = (g0 + 2 * g1) / 3;
+                        blockColors[3][2] = (b0 + 2 * b1) / 3;
+                        blockColors[3][3] = 255;
+                    } else {
+                        blockColors[2][0] = (r0 + r1) / 2;
+                        blockColors[2][1] = (g0 + g1) / 2;
+                        blockColors[2][2] = (b0 + b1) / 2;
+                        blockColors[2][3] = 255;
+                        
+                        blockColors[3][0] = 0;
+                        blockColors[3][1] = 0;
+                        blockColors[3][2] = 0;
+                        blockColors[3][3] = 0;
+                    }
+                    
+                    for (int y_local = 0; y_local < 4; ++y_local) {
+                        for (int x_local = 0; x_local < 4; ++x_local) {
+                            std::uint32_t px = bx * 4 + x_local;
+                            std::uint32_t py = by * 4 + y_local;
+                            if (px < width && py < height) {
+                                int pixel_index = y_local * 4 + x_local;
+                                std::uint8_t color_index = (code >> (2 * pixel_index)) & 3;
+                                std::size_t destOffset = (py * width + px) * 4;
+                                decompressedPixels[destOffset + 0] = blockColors[color_index][0];
+                                decompressedPixels[destOffset + 1] = blockColors[color_index][1];
+                                decompressedPixels[destOffset + 2] = blockColors[color_index][2];
+                                decompressedPixels[destOffset + 3] = blockColors[color_index][3];
+                            }
+                        }
+                    }
+                } else if (fourCC == makeFourCC('D', 'X', 'T', '3')) {
+                    for (int i = 0; i < 16; ++i) {
+                        std::uint8_t a = (blockData[i / 2] >> (4 * (i % 2))) & 15;
+                        blockAlphas[i] = a * 17;
+                    }
+                    
+                    const std::uint8_t* colorData = blockData + 8;
+                    std::uint16_t color0 = colorData[0] | (colorData[1] << 8);
+                    std::uint16_t color1 = colorData[2] | (colorData[3] << 8);
+                    std::uint32_t code = colorData[4] | (colorData[5] << 8) | (colorData[6] << 16) | (colorData[7] << 24);
+                    
+                    std::uint8_t r0 = ((color0 >> 11) & 31) * 255 / 31;
+                    std::uint8_t g0 = ((color0 >> 5) & 63) * 255 / 63;
+                    std::uint8_t b0 = (color0 & 31) * 255 / 31;
+                    
+                    std::uint8_t r1 = ((color1 >> 11) & 31) * 255 / 31;
+                    std::uint8_t g1 = ((color1 >> 5) & 63) * 255 / 63;
+                    std::uint8_t b1 = (color1 & 31) * 255 / 31;
+                    
+                    blockColors[0][0] = r0; blockColors[0][1] = g0; blockColors[0][2] = b0;
+                    blockColors[1][0] = r1; blockColors[1][1] = g1; blockColors[1][2] = b1;
+                    blockColors[2][0] = (2 * r0 + r1) / 3; blockColors[2][1] = (2 * g0 + g1) / 3; blockColors[2][2] = (2 * b0 + b1) / 3;
+                    blockColors[3][0] = (r0 + 2 * r1) / 3; blockColors[3][1] = (g0 + 2 * g1) / 3; blockColors[3][2] = (b0 + 2 * b1) / 3;
+                    
+                    for (int y_local = 0; y_local < 4; ++y_local) {
+                        for (int x_local = 0; x_local < 4; ++x_local) {
+                            std::uint32_t px = bx * 4 + x_local;
+                            std::uint32_t py = by * 4 + y_local;
+                            if (px < width && py < height) {
+                                int pixel_index = y_local * 4 + x_local;
+                                std::uint8_t color_index = (code >> (2 * pixel_index)) & 3;
+                                std::size_t destOffset = (py * width + px) * 4;
+                                decompressedPixels[destOffset + 0] = blockColors[color_index][0];
+                                decompressedPixels[destOffset + 1] = blockColors[color_index][1];
+                                decompressedPixels[destOffset + 2] = blockColors[color_index][2];
+                                decompressedPixels[destOffset + 3] = blockAlphas[pixel_index];
+                            }
+                        }
+                    }
+                } else if (fourCC == makeFourCC('D', 'X', 'T', '5')) {
+                    std::uint8_t alpha0 = blockData[0];
+                    std::uint8_t alpha1 = blockData[1];
+                    std::uint64_t alpha_indices = 0;
+                    for (int k = 0; k < 6; ++k) {
+                        alpha_indices |= (static_cast<std::uint64_t>(blockData[2 + k]) << (8 * k));
+                    }
+                    
+                    std::uint8_t alphas[8];
+                    alphas[0] = alpha0;
+                    alphas[1] = alpha1;
+                    if (alpha0 > alpha1) {
+                        alphas[2] = (6 * alpha0 + 1 * alpha1) / 7;
+                        alphas[3] = (5 * alpha0 + 2 * alpha1) / 7;
+                        alphas[4] = (4 * alpha0 + 3 * alpha1) / 7;
+                        alphas[5] = (3 * alpha0 + 4 * alpha1) / 7;
+                        alphas[6] = (2 * alpha0 + 5 * alpha1) / 7;
+                        alphas[7] = (1 * alpha0 + 6 * alpha1) / 7;
+                    } else {
+                        alphas[2] = (4 * alpha0 + 1 * alpha1) / 5;
+                        alphas[3] = (3 * alpha0 + 2 * alpha1) / 5;
+                        alphas[4] = (2 * alpha0 + 3 * alpha1) / 5;
+                        alphas[5] = (1 * alpha0 + 4 * alpha1) / 5;
+                        alphas[6] = 0;
+                        alphas[7] = 255;
+                    }
+                    
+                    for (int i = 0; i < 16; ++i) {
+                        blockAlphas[i] = alphas[(alpha_indices >> (3 * i)) & 7];
+                    }
+                    
+                    const std::uint8_t* colorData = blockData + 8;
+                    std::uint16_t color0 = colorData[0] | (colorData[1] << 8);
+                    std::uint16_t color1 = colorData[2] | (colorData[3] << 8);
+                    std::uint32_t code = colorData[4] | (colorData[5] << 8) | (colorData[6] << 16) | (colorData[7] << 24);
+                    
+                    std::uint8_t r0 = ((color0 >> 11) & 31) * 255 / 31;
+                    std::uint8_t g0 = ((color0 >> 5) & 63) * 255 / 63;
+                    std::uint8_t b0 = (color0 & 31) * 255 / 31;
+                    
+                    std::uint8_t r1 = ((color1 >> 11) & 31) * 255 / 31;
+                    std::uint8_t g1 = ((color1 >> 5) & 63) * 255 / 63;
+                    std::uint8_t b1 = (color1 & 31) * 255 / 31;
+                    
+                    blockColors[0][0] = r0; blockColors[0][1] = g0; blockColors[0][2] = b0;
+                    blockColors[1][0] = r1; blockColors[1][1] = g1; blockColors[1][2] = b1;
+                    blockColors[2][0] = (2 * r0 + r1) / 3; blockColors[2][1] = (2 * g0 + g1) / 3; blockColors[2][2] = (2 * b0 + b1) / 3;
+                    blockColors[3][0] = (r0 + 2 * r1) / 3; blockColors[3][1] = (g0 + 2 * g1) / 3; blockColors[3][2] = (b0 + 2 * b1) / 3;
+                    
+                    for (int y_local = 0; y_local < 4; ++y_local) {
+                        for (int x_local = 0; x_local < 4; ++x_local) {
+                            std::uint32_t px = bx * 4 + x_local;
+                            std::uint32_t py = by * 4 + y_local;
+                            if (px < width && py < height) {
+                                int pixel_index = y_local * 4 + x_local;
+                                std::uint8_t color_index = (code >> (2 * pixel_index)) & 3;
+                                std::size_t destOffset = (py * width + px) * 4;
+                                decompressedPixels[destOffset + 0] = blockColors[color_index][0];
+                                decompressedPixels[destOffset + 1] = blockColors[color_index][1];
+                                decompressedPixels[destOffset + 2] = blockColors[color_index][2];
+                                decompressedPixels[destOffset + 3] = blockAlphas[pixel_index];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        texture.pixelBytes = std::move(decompressedPixels);
+        texture.format = VK_FORMAT_R8G8B8A8_UNORM;
+        texture.mipLevels = 1;
+        
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = {width, height, 1};
+        texture.copyRegions.push_back(region);
+        
+        return texture;
     }
 
     std::size_t offset = 0;

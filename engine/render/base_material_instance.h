@@ -2,22 +2,25 @@
 
 #include <array>
 #include "render/render_types.h"
+#include "render/material_compiler.h"
 
 namespace engine3d {
 
 class BaseMaterialInstance : public MaterialInstance {
 public:
-    BaseMaterialInstance(const Material& data, const VulkanPipeline& pipeline, VkDescriptorSet descriptorSet)
-        : data_(data), pipeline_(pipeline), descriptorSet_(descriptorSet) {}
+    BaseMaterialInstance(const Material& data, MaterialCompiler* compiler, VkDescriptorSet descriptorSet)
+        : data_(data), compiler_(compiler), descriptorSet_(descriptorSet) {}
 
     void bind(VkCommandBuffer commandBuffer, uint32_t currentFrame) override {
         if (descriptorSet_ != VK_NULL_HANDLE) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipeline_.layout, 0, 1, &descriptorSet_, 0, nullptr);
+                                    getPipeline().layout, 0, 1, &descriptorSet_, 0, nullptr);
         }
     }
 
-    const VulkanPipeline& getPipeline() const override { return pipeline_; }
+    const VulkanPipeline& getPipeline() const override {
+        return compiler_->getOrCreatePipeline(data_);
+    }
     
     bool isTransparent() const override { 
         return data_.blendMode != BlendMode::Disabled; 
@@ -65,7 +68,7 @@ public:
 
 private:
     Material data_;
-    VulkanPipeline pipeline_;
+    MaterialCompiler* compiler_;
     VkDescriptorSet descriptorSet_;
 };
 

@@ -202,7 +202,7 @@ int main() {
     auto* camera = cameraEntity->addComponent<CameraComponent>();
     cameraEntity->transform().position = {0, 8, -15};
     camera->fieldOfViewDegrees = 55;
-    camera->farPlane = 200;
+    camera->farPlane = 1200;
     activeScene->setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(cameraEntity->transform().position, {0, 1, 0});
 

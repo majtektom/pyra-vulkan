@@ -15,6 +15,7 @@
 #include "object/terrain/terrain_placement_system.h"
 #include "object/ocean_renderer.h"
 #include "object/skydome_renderer.h"
+#include "object/skybox_renderer.h"
 
 using namespace engine3d;
 
@@ -106,6 +107,26 @@ int main() {
     skydome->setEnabled(true);
     renderer->addFeature(skydome);
 
+    //alternatywnie  skybox
+     // KROK 1: ŁADOWANIE SKYBOXA (Nieba otaczającego scenę)
+    // Ładujemy 3 tekstury w formacie DDS (box_12 to bok 1 i 2, box_34 to 3 i 4, box_5 to góra)
+    // const std::string skyboxDir = "assets/skybox/noc";
+    // const auto skyboxFbHandle = renderer->loadTexture("skybox_fb", skyboxDir + "/box_12.dds");
+    // const auto skyboxLrHandle = renderer->loadTexture("skybox_lr", skyboxDir + "/box_34.dds");
+    // const auto skyboxTopHandle = renderer->loadTexture("skybox_top", skyboxDir + "/box_5.dds");
+
+    // auto skybox = std::make_shared<SkyboxRenderer>();
+    // SkyboxConfig skyboxCfg;
+    // skyboxCfg.enabled = true;
+    // skyboxCfg.directory = skyboxDir;
+    // skyboxCfg.size = 3500;
+    // skyboxCfg.verticalOffset = 100;
+    // skybox->configure(skyboxCfg, "bin/assets/shaders/skybox");
+    // skybox->setTextureHandles(skyboxFbHandle, skyboxLrHandle, skyboxTopHandle);
+    // skybox->setEnabled(true);
+    // skybox->setExposure(0.5f);
+    // renderer->addFeature(skybox); // Dodanie skyboxa do potoku renderowania
+
     // KROK 3: ŁADOWANIE LUB GENEROWANIE DANYCH TERENU
     // Klasa Terrain reprezentuje siatkę wysokościową (Heightfield).
     // Może zostać wczytana z konfiguracji JSON (wraz z warstwami tekstur) lub
@@ -178,7 +199,7 @@ int main() {
     camera->target = {1.0f, 0.0f, 0.0f};
     camera->fieldOfViewDegrees = 60.0f;
     camera->nearPlane = 0.5f;
-    camera->farPlane = 8000.0f;
+    camera->farPlane = 18000.0f;
     scene->setActiveCamera(camera);
     engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
     engine.enableShaderHotReload(true);
@@ -193,6 +214,32 @@ int main() {
         animTime += dt;
         skydome->setTime(animTime);
         ocean->setTime(animTime);
+
+        // Zmiana zachmurzenia i czasu dobowego (dynamiczne chmury)
+        static float timeOfDay = 10.0f;
+        static float cloudCov = 0.4f;
+        static float cloudDir = 1.0f;
+        const float dayNightSpeed = 0.05f; // prędkość cyklu dobowego
+        const float weatherSpeed = 0.02f;  // prędkość zmian zachmurzenia
+
+        timeOfDay += dt * dayNightSpeed;
+        if (timeOfDay > 24.0f) timeOfDay -= 24.0f;
+
+        cloudCov += dt * weatherSpeed * cloudDir;
+        if (cloudCov >= 0.7f) { cloudCov = 0.7f; cloudDir = -1.0f; }
+        else if (cloudCov <= 0.15f) { cloudCov = 0.15f; cloudDir = 1.0f; }
+
+        float dayProgress = (timeOfDay - 6.0f) / 12.0f;
+        dayProgress = std::max(0.0f, std::min(1.0f, dayProgress));
+        float sunEl = std::sin(dayProgress * PI) * 65.0f;
+        float sunAz = 90.0f + dayProgress * 180.0f;
+
+        auto cfg = skydome->getConfig();
+        cfg.timeOfDay = timeOfDay;
+        cfg.cloudCoverage = cloudCov;
+        cfg.sunElevation = sunEl;
+        cfg.sunAzimuth = sunAz;
+        skydome->setConfig(cfg);
         
         auto* cc = e.getCameraController();
         auto* activeScene = e.getSceneManager()->activeScene();

@@ -50,7 +50,7 @@ public:
      * już istnieje w pamięci podręcznej, zostanie natychmiast zwrócony. 
      * W przeciwnym razie następuje wczytanie shaderów z dysku i kompilacja nowego potoku.
      */
-    VulkanPipeline getOrCreatePipeline(const Material& materialData);
+    const VulkanPipeline& getOrCreatePipeline(const Material& materialData);
 
     /**
      * @brief Usuwa z pamięci podręcznej potoki korzystające ze wskazanego shadera.

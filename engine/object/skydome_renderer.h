@@ -61,6 +61,8 @@ public:
     float getAmbientStrength() const;
     Vec3 getAmbientColor() const;
     float getTimeOfDay() const { return config_.timeOfDay; }
+    const SkydomeConfig& getConfig() const { return config_; }
+    void setConfig(const SkydomeConfig& config) { config_ = config; }
 
     VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
 

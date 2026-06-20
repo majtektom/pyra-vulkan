@@ -25,8 +25,8 @@ float sunHeightFromTime(float tod) {
 
 void generateDomeGeometry(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) {
     constexpr int n = 30;
-    constexpr float r = 100.0f;
-    constexpr float rh = 1000.0f;
+    constexpr float r = 500.0f;
+    constexpr float rh = 10000.0f;
     constexpr double theta1 = 0.0;
     constexpr double theta2 = PI;
     constexpr double phi1 = -PI / 2.0;

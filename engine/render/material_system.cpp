@@ -17,11 +17,9 @@ void MaterialSystem::setFormats(VkFormat colorFormat, VkFormat depthFormat) {
 
 std::shared_ptr<MaterialInstance> MaterialSystem::getOrCreateMaterialInstance(const Material& materialData) {
     // Sprawdzamy w cache'u, czy instancja materiału o danej nazwie została już skompilowana.
-    // Jeśli nie – kompilujemy potok (pipeline) na GPU przy pomocy lambdy przekazanej do load().
+    // Jeśli nie – tworzymy nową instancję klasy BaseMaterialInstance powiązaną z kompilatorem.
     return materialCache_.load(materialData.name, [&]() {
-        VulkanPipeline pipeline = compiler_->getOrCreatePipeline(materialData);
-        // Tworzymy instancję klasy BaseMaterialInstance powiązaną ze skompilowanym potokiem.
-        return std::make_shared<BaseMaterialInstance>(materialData, pipeline, VK_NULL_HANDLE);
+        return std::make_shared<BaseMaterialInstance>(materialData, compiler_.get(), VK_NULL_HANDLE);
     });
 }
 

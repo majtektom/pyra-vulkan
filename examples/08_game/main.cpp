@@ -176,7 +176,7 @@ private:
         menuCamera_->target = {0.0f, 0.0f, 0.0f};
         menuCamera_->fieldOfViewDegrees = 50.0f;
         menuCamera_->nearPlane = 0.1f;
-        menuCamera_->farPlane = 10000.0f;
+        menuCamera_->farPlane = 18000.0f;
         menuScene_->setActiveCamera(menuCamera_);
 
         sceneManager_->setActiveScene("menu");
@@ -713,6 +713,16 @@ private:
 
         if (skydome_) {
             skydome_->setTime(worldTime_);
+
+            // Dynamiczna zmiana zachmurzenia (pogody)
+            auto cfg = skydome_->getConfig();
+            static float cloudDir = 1.0f;
+            const float weatherSpeed = 0.015f; // powolne zmiany pogody
+            cfg.cloudCoverage += dt * weatherSpeed * cloudDir;
+            if (cfg.cloudCoverage >= 0.72f) { cfg.cloudCoverage = 0.72f; cloudDir = -1.0f; }
+            else if (cfg.cloudCoverage <= 0.12f) { cfg.cloudCoverage = 0.12f; cloudDir = 1.0f; }
+            skydome_->setConfig(cfg);
+
             if (skydome_->isSunLightEnabled()) {
                 Vec3 sunDir = skydome_->getSunDirection();
                 Vec3 sunCol = skydome_->getSunColor();
