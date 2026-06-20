@@ -40,6 +40,7 @@ struct LightData {
 struct GlobalUBO {
     Matrix4 view;
     Matrix4 proj;
+    Matrix4 invViewProj;
     float camRight[4];
     float camUp[4];
     float cameraPos[4];
@@ -120,6 +121,7 @@ public:
             createShadowPipeline();
             createShadowSkinnedPipeline();
             createGBufferResources();
+            createSceneColorResources();
             LOG_INFO("Deferred PBR Renderer initialized.");
             return true;
         } catch (const std::exception& e) {
@@ -460,45 +462,174 @@ public:
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        // Skybox / BeforeOpaque features (render directly to swapchain)
-        RenderOrchestrator::Callbacks callbacks;
-        callbacks.onFeaturesBeforeOpaque = [&]() {
-            executeFeatures(cmd, view, IRenderFeature::Stage::BeforeOpaque);
-        };
-        callbacks.onFeaturesAfterOpaque = [&]() {
-            executeFeatures(cmd, view, IRenderFeature::Stage::AfterOpaque);
-        };
-        callbacks.onDeferredLighting = [&]() {
-            // Deferred lighting pass (fullscreen, reads GBuffer)
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline_);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 1, 1, &deferredDescriptorSets_[currentFrame_], 0, nullptr);
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-        };
-        callbacks.onOpaquePass = [&]() {
-            for (auto& pass : passes_) {
-                if (pass->getName() == "OpaquePass") {
-                    pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
-                }
-            }
-        };
-        callbacks.onFeaturesAfterTransparent = [&]() {
-            executeFeatures(cmd, view, IRenderFeature::Stage::AfterTransparent);
-        };
-        callbacks.onTransparentPass = [&]() {
-            for (auto& pass : passes_) {
-                if (pass->getName() == "TransparentPass") {
-                    pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
-                }
-            }
-        };
-        callbacks.onFeaturesOverlay = [&]() {
-            executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
-        };
+        // PART 1: Render scene (without ocean) to swapchain
+        // ===================================================
+        executeFeatures(cmd, view, IRenderFeature::Stage::BeforeOpaque);
 
-        orchestrator_.execute(renderPlan_, callbacks);
+        // Deferred lighting pass (fullscreen, reads GBuffer)
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 1, 1, &deferredDescriptorSets_[currentFrame_], 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        for (auto& pass : passes_) {
+            if (pass->getName() == "OpaquePass") {
+                pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+            }
+        }
+
+        executeFeatures(cmd, view, IRenderFeature::Stage::AfterOpaque);
+
+        // End first pass — scene render to swapchain is done
+        vkCmdEndRendering(cmd);
+
+        // Copy swapchain content to scene color texture for ocean reflection/refraction
+        VkImageMemoryBarrier sceneBarriers[4] = {};
+
+        // Swapchain: COLOR_ATTACHMENT → TRANSFER_SRC
+        sceneBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        sceneBarriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        sceneBarriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        sceneBarriers[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        sceneBarriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        sceneBarriers[0].image = swapchain_->images()[imageIndex];
+        sceneBarriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        sceneBarriers[0].subresourceRange.levelCount = 1;
+        sceneBarriers[0].subresourceRange.layerCount = 1;
+
+        // Scene color: SHADER_READ_ONLY → TRANSFER_DST
+        sceneBarriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        sceneBarriers[1].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        sceneBarriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        sceneBarriers[1].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneBarriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        sceneBarriers[1].image = sceneColorImages_[currentFrame_];
+        sceneBarriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        sceneBarriers[1].subresourceRange.levelCount = 1;
+        sceneBarriers[1].subresourceRange.layerCount = 1;
+
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 2, sceneBarriers);
+
+        // Copy swapchain → scene color
+        VkImageCopy copyRegion{};
+        copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copyRegion.srcSubresource.layerCount = 1;
+        copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copyRegion.dstSubresource.layerCount = 1;
+        copyRegion.extent = {swapchain_->extent().width, swapchain_->extent().height, 1};
+        vkCmdCopyImage(cmd,
+            swapchain_->images()[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            sceneColorImages_[currentFrame_], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1, &copyRegion);
+
+        // Scene color: TRANSFER_DST → SHADER_READ_ONLY
+        sceneBarriers[2].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        sceneBarriers[2].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        sceneBarriers[2].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        sceneBarriers[2].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        sceneBarriers[2].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneBarriers[2].image = sceneColorImages_[currentFrame_];
+        sceneBarriers[2].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        sceneBarriers[2].subresourceRange.levelCount = 1;
+        sceneBarriers[2].subresourceRange.layerCount = 1;
+
+        // Swapchain: TRANSFER_SRC → COLOR_ATTACHMENT
+        sceneBarriers[3].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        sceneBarriers[3].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        sceneBarriers[3].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        sceneBarriers[3].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        sceneBarriers[3].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        sceneBarriers[3].image = swapchain_->images()[imageIndex];
+        sceneBarriers[3].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        sceneBarriers[3].subresourceRange.levelCount = 1;
+        sceneBarriers[3].subresourceRange.layerCount = 1;
+
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            0, 0, nullptr, 0, nullptr, 2, &sceneBarriers[2]);
+
+        // Update bindless descriptors for this frame
+        registerSceneColorForFrame(currentFrame_);
+
+        // Transition swapchain depth from ATTACHMENT to READ_ONLY for SSR sampling
+        VkImageMemoryBarrier depthReadBarrier{};
+        depthReadBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthReadBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthReadBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthReadBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthReadBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthReadBarrier.image = swapchain_->depthImage(imageIndex);
+        depthReadBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthReadBarrier.subresourceRange.levelCount = 1;
+        depthReadBarrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depthReadBarrier);
+
+        registerSceneDepthForFrame(currentFrame_, imageIndex);
+
+        // PART 2: Continue rendering on swapchain — ocean + transparent + overlay
+        // =====================================================================
+        VkRenderingAttachmentInfo swColorAttachment2{};
+        swColorAttachment2.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        swColorAttachment2.imageView = swapchain_->imageView(imageIndex);
+        swColorAttachment2.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        swColorAttachment2.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        swColorAttachment2.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        // Depth in READ_ONLY layout — can be sampled by shaders while still used for depth test
+        VkRenderingAttachmentInfo swDepthAttachment2{};
+        swDepthAttachment2.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        swDepthAttachment2.imageView = swapchain_->depthImageView(imageIndex);
+        swDepthAttachment2.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        swDepthAttachment2.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        swDepthAttachment2.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkRenderingInfo renderingInfo2{};
+        renderingInfo2.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        renderingInfo2.renderArea = {{0, 0}, swapchain_->extent()};
+        renderingInfo2.layerCount = 1;
+        renderingInfo2.colorAttachmentCount = 1;
+        renderingInfo2.pColorAttachments = &swColorAttachment2;
+        renderingInfo2.pDepthAttachment = &swDepthAttachment2;
+
+        vkCmdBeginRendering(cmd, &renderingInfo2);
+
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        executeFeatures(cmd, view, IRenderFeature::Stage::AfterTransparent);
+
+        for (auto& pass : passes_) {
+            if (pass->getName() == "TransparentPass") {
+                pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+            }
+        }
+
+        executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
 
         vkCmdEndRendering(cmd);
+
+        // Transition depth back to ATTACHMENT for next frame
+        VkImageMemoryBarrier depthWriteBarrier{};
+        depthWriteBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthWriteBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthWriteBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthWriteBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthWriteBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthWriteBarrier.image = swapchain_->depthImage(imageIndex);
+        depthWriteBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthWriteBarrier.subresourceRange.levelCount = 1;
+        depthWriteBarrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depthWriteBarrier);
 
         VkImageMemoryBarrier presentBarrier{};
         presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1104,6 +1235,7 @@ public:
         features_.clear();
         passes_.clear();
 
+        destroySceneColorResources();
         cleanupGBuffer();
         if (shadowMapView_) { vkDestroyImageView(device, shadowMapView_, nullptr); shadowMapView_ = VK_NULL_HANDLE; }
         for (auto view : shadowMapLayerViews_) {
@@ -1317,6 +1449,7 @@ private:
         GlobalUBO ubo{};
         ubo.view = view.view;
         ubo.proj = view.projection;
+        ubo.invViewProj = inverse(multiply(ubo.proj, ubo.view));
         std::memcpy(ubo.camRight, &view.cameraRight, sizeof(Vec3));
         std::memcpy(ubo.camUp, &view.cameraUp, sizeof(Vec3));
         std::memcpy(ubo.cameraPos, &view.cameraPosition, sizeof(Vec3));
@@ -1640,9 +1773,11 @@ private:
     void recreateSwapChain() {
         VkDevice device = vulkanContext_->device();
         vkDeviceWaitIdle(device);
+        destroySceneColorResources();
         cleanupGBuffer();
         swapchain_->recreate(platform_->width(), platform_->height());
         createGBufferResources();
+        createSceneColorResources();
     }
 
     VkCommandBuffer beginSingleTimeCommands() {
@@ -2322,6 +2457,116 @@ private:
         vkDestroyShaderModule(device, fragModule, nullptr);
     }
 
+    void createSceneColorResources() {
+        VkDevice device = vulkanContext_->device();
+        VkPhysicalDevice pd = vulkanContext_->physicalDevice();
+        VkExtent2D ext = swapchain_->extent();
+        VkFormat colorFmt = swapchain_->imageFormat();
+
+        sceneColorSampler_ = vk::createSampler(device, pd, 1, TextureFilter::Linear, AddressMode::ClampToEdge);
+
+        for (int f = 0; f < kMaxFrames; f++) {
+            VkImageCreateInfo ci{};
+            ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            ci.imageType = VK_IMAGE_TYPE_2D;
+            ci.extent = {ext.width, ext.height, 1};
+            ci.mipLevels = 1; ci.arrayLayers = 1;
+            ci.format = colorFmt;
+            ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+            ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            ci.samples = VK_SAMPLE_COUNT_1_BIT;
+            ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            vkCreateImage(device, &ci, nullptr, &sceneColorImages_[f]);
+
+            VkMemoryRequirements mr;
+            vkGetImageMemoryRequirements(device, sceneColorImages_[f], &mr);
+            VkMemoryAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize = mr.size;
+            ai.memoryTypeIndex = vk::findMemoryType(pd, mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            vkAllocateMemory(device, &ai, nullptr, &sceneColorMemories_[f]);
+            vkBindImageMemory(device, sceneColorImages_[f], sceneColorMemories_[f], 0);
+
+            VkImageViewCreateInfo vi{};
+            vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            vi.image = sceneColorImages_[f];
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format = colorFmt;
+            vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            vi.subresourceRange.levelCount = 1;
+            vi.subresourceRange.layerCount = 1;
+            vkCreateImageView(device, &vi, nullptr, &sceneColorViews_[f]);
+
+            vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
+                                      sceneColorImages_[f], colorFmt,
+                                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+        }
+    }
+
+    void registerSceneColorForFrame(uint32_t frameIndex) {
+        VkDevice device = vulkanContext_->device();
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = sceneColorViews_[frameIndex];
+        imageInfo.sampler = sceneColorSampler_;
+
+        uint32_t index = 0;
+        auto it = textureNameToIndex_.find("ocean_scene_color");
+        if (it == textureNameToIndex_.end()) {
+            index = nextTextureIndex_++;
+            textureNameToIndex_["ocean_scene_color"] = index;
+        } else {
+            index = it->second;
+        }
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = descriptorSets_[frameIndex];
+        write.dstBinding = 1;
+        write.dstArrayElement = index;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
+    void destroySceneColorResources() {
+        VkDevice device = vulkanContext_->device();
+        for (int f = 0; f < kMaxFrames; f++) {
+            if (sceneColorViews_[f]) { vkDestroyImageView(device, sceneColorViews_[f], nullptr); sceneColorViews_[f] = VK_NULL_HANDLE; }
+            if (sceneColorImages_[f]) { vkDestroyImage(device, sceneColorImages_[f], nullptr); sceneColorImages_[f] = VK_NULL_HANDLE; }
+            if (sceneColorMemories_[f]) { vkFreeMemory(device, sceneColorMemories_[f], nullptr); sceneColorMemories_[f] = VK_NULL_HANDLE; }
+        }
+        if (sceneColorSampler_) { vkDestroySampler(device, sceneColorSampler_, nullptr); sceneColorSampler_ = VK_NULL_HANDLE; }
+    }
+
+    void registerSceneDepthForFrame(uint32_t frameIndex, uint32_t imageIndex) {
+        VkDevice device = vulkanContext_->device();
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = swapchain_->depthImageView(imageIndex);
+        imageInfo.sampler = sceneColorSampler_;
+
+        uint32_t index = 0;
+        auto it = textureNameToIndex_.find("ocean_scene_depth");
+        if (it == textureNameToIndex_.end()) {
+            index = nextTextureIndex_++;
+            textureNameToIndex_["ocean_scene_depth"] = index;
+        } else {
+            index = it->second;
+        }
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = descriptorSets_[frameIndex];
+        write.dstBinding = 1;
+        write.dstArrayElement = index;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
     void createDeferredPipeline() {
         VkDevice device = vulkanContext_->device();
 
@@ -2683,6 +2928,13 @@ private:
     VkDescriptorSetLayout deferredDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool deferredDescriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet deferredDescriptorSets_[kMaxFrames] = {};
+
+    // Ocean scene color (captured scene before ocean renders)
+    VkImage sceneColorImages_[kMaxFrames] = {};
+    VkDeviceMemory sceneColorMemories_[kMaxFrames] = {};
+    VkImageView sceneColorViews_[kMaxFrames] = {};
+    VkSampler sceneColorSampler_ = VK_NULL_HANDLE;
+
 };
 
 // Facade
@@ -2718,7 +2970,13 @@ VkFormat Renderer::colorFormat() const { return impl_->colorFormat(); }
 VkFormat Renderer::depthFormat() const { return impl_->depthFormat(); }
 TextureHandle Renderer::loadTexture(const std::string& n, const std::string& p, bool m, bool disableAlpha) { return impl_->loadTexture(n, p, m, disableAlpha); }
 TextureHandle Renderer::loadTextureFromMemory(const std::string& n, const std::vector<float>& d, uint32_t w, uint32_t h, bool m) { return impl_->loadTextureFromMemory(n, d, w, h, m); }
-uint32_t Renderer::getTextureIndex(TextureHandle handle) const { return impl_->getTextureIndex(handle); }
+uint32_t Renderer::getTextureIndex(TextureHandle handle) const {
+    return impl_->getTextureIndex(handle);
+}
+
+uint32_t Renderer::getTextureIndex(const std::string& name) const {
+    return impl_->getTextureIndex(name);
+}
 void Renderer::setClearColor(float r, float g, float b, float a) { impl_->clearColor_ = {{r,g,b,a}}; }
 void Renderer::setSynchronizationMode(SynchronizationMode mode) { impl_->setSynchronizationMode(mode); }
 SynchronizationMode Renderer::synchronizationMode() const { return impl_->synchronizationMode(); }

@@ -5,6 +5,7 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
 {
     column_major float4x4 view;
     column_major float4x4 proj;
+    column_major float4x4 invViewProj;
     float4 camRight;
     float4 camUp;
     float4 cameraPos;

@@ -245,6 +245,48 @@ struct Matrix4 {
     return matrix;
 }
 
+[[nodiscard]] inline Matrix4 inverse(const Matrix4& m) {
+    const auto& v = m.values;
+    float s[6];
+    s[0] = v[0]*v[5] - v[4]*v[1];
+    s[1] = v[0]*v[6] - v[4]*v[2];
+    s[2] = v[0]*v[7] - v[4]*v[3];
+    s[3] = v[1]*v[6] - v[5]*v[2];
+    s[4] = v[1]*v[7] - v[5]*v[3];
+    s[5] = v[2]*v[7] - v[6]*v[3];
+
+    float c[6];
+    c[0] = v[8]*v[13] - v[12]*v[9];
+    c[1] = v[8]*v[14] - v[12]*v[10];
+    c[2] = v[8]*v[15] - v[12]*v[11];
+    c[3] = v[9]*v[14] - v[13]*v[10];
+    c[4] = v[9]*v[15] - v[13]*v[11];
+    c[5] = v[10]*v[15] - v[14]*v[11];
+
+    float det = s[0]*c[5] - s[1]*c[4] + s[2]*c[3] + s[3]*c[2] - s[4]*c[1] + s[5]*c[0];
+    if (std::abs(det) < 1e-30f) return Matrix4::identity();
+    float inv = 1.0f / det;
+
+    Matrix4 r;
+    r.values[0] = ( v[5]*c[5] - v[6]*c[4] + v[7]*c[3]) * inv;
+    r.values[1] = (-v[1]*c[5] + v[2]*c[4] - v[3]*c[3]) * inv;
+    r.values[2] = ( v[13]*s[5] - v[14]*s[4] + v[15]*s[3]) * inv;
+    r.values[3] = (-v[9]*s[5] + v[10]*s[4] - v[11]*s[3]) * inv;
+    r.values[4] = (-v[4]*c[5] + v[6]*c[2] - v[7]*c[1]) * inv;
+    r.values[5] = ( v[0]*c[5] - v[2]*c[2] + v[3]*c[1]) * inv;
+    r.values[6] = (-v[12]*s[5] + v[14]*s[2] - v[15]*s[1]) * inv;
+    r.values[7] = ( v[8]*s[5] - v[10]*s[2] + v[11]*s[1]) * inv;
+    r.values[8] = ( v[4]*c[4] - v[5]*c[2] + v[7]*c[0]) * inv;
+    r.values[9] = (-v[0]*c[4] + v[1]*c[2] - v[3]*c[0]) * inv;
+    r.values[10] = ( v[12]*s[4] - v[13]*s[2] + v[15]*s[0]) * inv;
+    r.values[11] = (-v[8]*s[4] + v[9]*s[2] - v[11]*s[0]) * inv;
+    r.values[12] = (-v[4]*c[3] + v[5]*c[1] - v[6]*c[0]) * inv;
+    r.values[13] = ( v[0]*c[3] - v[1]*c[1] + v[2]*c[0]) * inv;
+    r.values[14] = (-v[12]*s[3] + v[13]*s[1] - v[14]*s[0]) * inv;
+    r.values[15] = ( v[8]*s[3] - v[9]*s[1] + v[10]*s[0]) * inv;
+    return r;
+}
+
 [[nodiscard]] inline Matrix4 removeTranslation(const Matrix4& matrix) {
     Matrix4 result = matrix;
     result.values[12] = 0.0f;

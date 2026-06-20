@@ -19,8 +19,9 @@ struct PushConstants {
     float waveSpeed;
     float waveFrequency;
     float foamThreshold;
-    float _pad0;
-    float _pad1;
+    float sceneColorIndex;   // Bindless index for ocean_scene_color texture
+    float sceneDepthIndex;   // Bindless index for ocean_scene_depth texture
+    float dudvMapIndex;      // Bindless index for water_dudv texture
     float lightDir[4];
 };
 
@@ -230,6 +231,10 @@ void OceanRenderer::init(Renderer* renderer) {
     vkDestroyShaderModule(device, fragModule, nullptr);
     vkDestroyShaderModule(device, vertModule, nullptr);
 
+    // Load water textures for reflection/refraction distortion
+    renderer_->loadTexture("water_dudv", "assets/woda/water_dudv.bmp", true);
+    renderer_->loadTexture("water_bump", "assets/woda/water_bump.bmp", true);
+
     std::vector<Vertex> verts;
     std::vector<uint32_t> inds;
     generateOceanMesh(verts, inds);
@@ -324,6 +329,9 @@ void OceanRenderer::recordDrawCommands(
     push.waveSpeed = config.waveSpeed;
     push.waveFrequency = config.waveFrequency;
     push.foamThreshold = config.foamThreshold;
+    push.sceneColorIndex = static_cast<float>(renderer_->getTextureIndex("ocean_scene_color"));
+    push.sceneDepthIndex = static_cast<float>(renderer_->getTextureIndex("ocean_scene_depth"));
+    push.dudvMapIndex = static_cast<float>(renderer_->getTextureIndex("water_dudv"));
     push.lightDir[0] = 0.5f;
     push.lightDir[1] = 1.0f;
     push.lightDir[2] = 0.3f;

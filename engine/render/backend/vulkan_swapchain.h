@@ -32,6 +32,7 @@ public:
     // Zwraca widok obrazu (ImageView) koloru i głębokości o danym indeksie w buforze.
     VkImageView imageView(uint32_t index) const { return imageViews_[index]; }
     VkImageView depthImageView(uint32_t index) const { return depthImageViews_[index]; }
+    VkImage depthImage(uint32_t index) const { return depthImages_[index]; }
     
     // Pobiera formaty tekstur koloru i głębokości.
     VkFormat imageFormat() const { return imageFormat_; }

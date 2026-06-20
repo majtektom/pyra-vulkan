@@ -137,6 +137,7 @@ public:
 
     // Pobiera wewnętrzny indeks deskryptora tekstury na GPU na podstawie uchwytu.
     uint32_t getTextureIndex(TextureHandle handle) const;
+    uint32_t getTextureIndex(const std::string& name) const;
     
     // Przygotowuje dane geometryczne paczki renderowania (np. tworzy i binuje bufory wierzchołków na GPU).
     void prepareRenderPacket(RenderPacket& packet) const;
