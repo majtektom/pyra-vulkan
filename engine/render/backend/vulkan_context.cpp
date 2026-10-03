@@ -301,10 +301,18 @@ void VulkanContext::createLogicalDevice() {
     }
 
     // Włączamy filtrowanie anizotropowe (anisotropic filtering) poprawiające wygląd tekstur pod kątem.
+    // Włączamy tylko funkcje, które GPU faktycznie wspiera (inaczej vkCreateDevice jest niepoprawne).
+    VkPhysicalDeviceFeatures supported{};
+    vkGetPhysicalDeviceFeatures(physicalDevice_, &supported);
     VkPhysicalDeviceFeatures features{};
-    features.samplerAnisotropy = VK_TRUE;
+    features.samplerAnisotropy = supported.samplerAnisotropy;
+    // fillModeNonSolid jest wymagany przez VK_POLYGON_MODE_LINE (tryb wireframe).
+    features.fillModeNonSolid = supported.fillModeNonSolid;
     if (tessellationSupported_) {
         features.tessellationShader = VK_TRUE;
+    }
+    if (!supported.fillModeNonSolid) {
+        LOG_WARN("[VulkanContext] fillModeNonSolid not supported - wireframe mode unavailable");
     }
 
     // Funkcjonalności z wersji Vulkan 1.2 – kluczowe dla zaawansowanego bindowania tekstur.

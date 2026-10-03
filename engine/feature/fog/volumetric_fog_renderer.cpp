@@ -103,7 +103,8 @@ static void executeOneTimeCommand(VkDevice device, VkCommandPool pool, VkQueue q
 }
 
 void VolumetricFogRenderer::createVolumeTexture(VkDevice device, VkPhysicalDevice physicalDevice) {
-    VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    // Musi odpowiadać formatowi storage image w fog_volume.hlsl (RWTexture3D<float4> -> Rgba32f).
+    VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
 
     VkImageCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -420,6 +421,7 @@ void VolumetricFogRenderer::createCompositePipeline(VkDevice device) {
     renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     renderingInfo.colorAttachmentCount = 1;
     renderingInfo.pColorAttachmentFormats = &colorFormat;
+    renderingInfo.depthAttachmentFormat = renderer_->depthFormat();
     pipelineInfo.pNext = &renderingInfo;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &compositePipeline_) != VK_SUCCESS) {

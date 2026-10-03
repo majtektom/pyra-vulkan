@@ -67,6 +67,11 @@ void Platform::processEvents() {
             height_ = static_cast<uint32_t>(event.window.data2);
             resized_ = true;
             break;
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_RESTORED:
+            // Rozmiar w pikselach (HiDPI) lub powrót z minimalizacji — swapchain do przebudowy.
+            resized_ = true;
+            break;
         case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
             fullscreen_ = true;
             break;
@@ -141,6 +146,9 @@ void Platform::grabPointer(bool grab) {
 
 bool Platform::shouldClose() const { return shouldClose_; }
 bool Platform::wasResized() const { return resized_; }
+bool Platform::isMinimized() const {
+    return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_MINIMIZED) != 0;
+}
 void Platform::clearResizeFlag() { resized_ = false; }
 uint32_t Platform::width() const { return width_; }
 uint32_t Platform::height() const { return height_; }

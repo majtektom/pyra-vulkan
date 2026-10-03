@@ -410,6 +410,11 @@ int main() {
     VkBuffer brainBoneBuffer = VK_NULL_HANDLE;
     VkDeviceMemory brainBoneMemory = VK_NULL_HANDLE;
     VkDevice brainDev = VK_NULL_HANDLE;
+    // Zasoby Vulkana tworzone ręcznie w tym przykładzie — zwalniane po engine.run(),
+    // zanim silnik zniszczy urządzenie.
+    VkDescriptorPool bonePool = VK_NULL_HANDLE;
+    VkDescriptorSetLayout boneLayout = VK_NULL_HANDLE;
+    std::vector<std::pair<VkBuffer, VkDeviceMemory>> skinBuffers;
     {
         *brainModel = loadGltfModel("assets/models/gLTF/BrainStem.glb");
         std::cout << "Loaded BrainStem: " << brainModel->primitives.size() << " prims, "
@@ -433,7 +438,6 @@ int main() {
         bonePoolInfo.maxSets = 1;
         bonePoolInfo.poolSizeCount = 1;
         bonePoolInfo.pPoolSizes = &bonePoolSize;
-        VkDescriptorPool bonePool;
         vkCreateDescriptorPool(dev, &bonePoolInfo, nullptr, &bonePool);
 
         VkDescriptorSetLayoutBinding boneBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
@@ -441,7 +445,6 @@ int main() {
         boneLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         boneLayoutInfo.bindingCount = 1;
         boneLayoutInfo.pBindings = &boneBinding;
-        VkDescriptorSetLayout boneLayout;
         vkCreateDescriptorSetLayout(dev, &boneLayoutInfo, nullptr, &boneLayout);
 
         VkDescriptorSetAllocateInfo boneAlloc{};
@@ -509,6 +512,7 @@ int main() {
                 memcpy(mapped, skinData.data(), skinSize);
                 vkUnmapMemory(dev, sm);
                 mc->skinVertexBuffer = svb; // Drugi bufor wierzchołków bindowany podczas renderowania
+                skinBuffers.emplace_back(svb, sm);
             }
 
             e->transform().position = {-40.0f, 0.0f, 20.0f};
@@ -645,6 +649,17 @@ int main() {
     };
 
     // Uruchomienie głównej pętli gry
-    engine.run();
+    engine.run(); // kończy się waitIdle — GPU nie używa już poniższych zasobów
+
+    if (brainDev != VK_NULL_HANDLE) {
+        for (auto [buffer, memory] : skinBuffers) {
+            vkDestroyBuffer(brainDev, buffer, nullptr);
+            vkFreeMemory(brainDev, memory, nullptr);
+        }
+        vkDestroyBuffer(brainDev, brainBoneBuffer, nullptr);
+        vkFreeMemory(brainDev, brainBoneMemory, nullptr);
+        vkDestroyDescriptorPool(brainDev, bonePool, nullptr);
+        vkDestroyDescriptorSetLayout(brainDev, boneLayout, nullptr);
+    }
     return 0;
 }

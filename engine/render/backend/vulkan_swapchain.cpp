@@ -63,8 +63,12 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surf, &fmtCount, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surf, &fmtCount, fmts.data());
-    imageFormat_ = VK_FORMAT_B8G8R8A8_SRGB;
-    for (auto& f : fmts) { if (f.format == VK_FORMAT_B8G8R8A8_SRGB) { imageFormat_ = f.format; break; } }
+    // Preferujemy BGRA8 sRGB; jeśli niedostępny, bierzemy pierwszy format zgłoszony przez powierzchnię.
+    VkSurfaceFormatKHR chosen = fmts.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR} : fmts[0];
+    for (auto& f : fmts) {
+        if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { chosen = f; break; }
+    }
+    imageFormat_ = chosen.format;
 
     // Triple buffering: 3 obrazy swapchain - GPU prezentuje jeden, CPU renderuje do drugiego,
     // trzeci jest buforem zapasowym. Eliminuje stall na vkAcquireNextImageKHR.
@@ -93,7 +97,7 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
     ci.surface = surf;
     ci.minImageCount = imgCount;
     ci.imageFormat = imageFormat_;
-    ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    ci.imageColorSpace = chosen.colorSpace;
     ci.imageExtent = extent_;
     ci.imageArrayLayers = 1;
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -183,10 +187,12 @@ void VulkanSwapchain::createDepthResources() {
 uint32_t VulkanSwapchain::acquireNextImage(VkSemaphore s) {
     uint32_t idx = 0;
     VkResult result = vkAcquireNextImageKHR(context_->device(), swapchain_, UINT64_MAX, s, VK_NULL_HANDLE, &idx);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         throw std::runtime_error("swapchain out of date");
     }
-    if (result != VK_SUCCESS) {
+    // VK_SUBOPTIMAL_KHR: obraz JEST pozyskany, a semafor zostanie zasygnalizowany — trzeba
+    // tę klatkę wyrenderować i zaprezentować. Przebudowa nastąpi po present().
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swapchain image");
     }
     return idx;

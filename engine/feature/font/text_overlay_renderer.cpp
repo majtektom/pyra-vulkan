@@ -370,6 +370,9 @@ void TextOverlayRenderer::ensureGlyphs() {
     }
     if (!needRebuild) return;
 
+    // Stary atlas i jego descriptor set mogą być używane przez klatki w locie.
+    // Przebudowa jest rzadka (tylko przy nowych znakach), więc proste czekanie na GPU wystarcza.
+    vkDeviceWaitIdle(device_);
     releaseFontResources();
 
     std::vector<uint32_t> allGlyphs(wantedCodepoints_.begin(), wantedCodepoints_.end());
@@ -434,8 +437,8 @@ void TextOverlayRenderer::ensureGlyphs() {
 }
 
 void TextOverlayRenderer::releaseFontResources() {
-    if (descriptorSet_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE)
-        vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet_);
+    // Zniszczenie puli zwalnia jej sety (pula nie ma FREE_DESCRIPTOR_SET_BIT).
+    descriptorSet_ = VK_NULL_HANDLE;
     if (descriptorPool_ != VK_NULL_HANDLE) { vkDestroyDescriptorPool(device_, descriptorPool_, nullptr); descriptorPool_ = VK_NULL_HANDLE; }
     if (fontSampler_ != VK_NULL_HANDLE) { vkDestroySampler(device_, fontSampler_, nullptr); fontSampler_ = VK_NULL_HANDLE; }
     if (fontImageView_ != VK_NULL_HANDLE) { vkDestroyImageView(device_, fontImageView_, nullptr); fontImageView_ = VK_NULL_HANDLE; }
@@ -459,9 +462,8 @@ void TextOverlayRenderer::cleanup() {
     for (uint32_t i = 0; i < kTxtMaxFrames; i++) {
         deleteVertexBuffer(i);
     }
-    if (descriptorSet_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) {
-        vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet_);
-    }
+    // Zniszczenie puli zwalnia jej sety (pula nie ma FREE_DESCRIPTOR_SET_BIT).
+    descriptorSet_ = VK_NULL_HANDLE;
     if (descriptorPool_ != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
         descriptorPool_ = VK_NULL_HANDLE;

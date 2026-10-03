@@ -13,6 +13,7 @@ cbuffer FogPushConstants
     float fogRadius;
 };
 
+// RWTexture3D<float4> kompiluje się do formatu Rgba32f — obraz po stronie C++ musi mieć R32G32B32A32_SFLOAT.
 [[vk::binding(0, 0)]] RWTexture3D<float4> fogVolume;
 
 struct LocalFogVolume

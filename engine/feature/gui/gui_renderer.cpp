@@ -196,7 +196,7 @@ void GuiRenderer::cleanup() {
     for (uint32_t i = 0; i < kGuiMaxFrames; i++) {
         if (vb_[i]) { vkDestroyBuffer(device_, vb_[i], nullptr); vkFreeMemory(device_, vbm_[i], nullptr); vb_[i] = VK_NULL_HANDLE; }
     }
-    if (ds_) { vkFreeDescriptorSets(device_, dp_, 1, &ds_); }
+    ds_ = VK_NULL_HANDLE; // zwalniany razem z pulą
     if (dp_) { vkDestroyDescriptorPool(device_, dp_, nullptr); dp_ = VK_NULL_HANDLE; }
     if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
     if (whiteView_) { vkDestroyImageView(device_, whiteView_, nullptr); whiteView_ = VK_NULL_HANDLE; }

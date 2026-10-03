@@ -20,6 +20,9 @@ void GuiWidget::update(int, int, bool, bool, int) {}
 GuiMgr::~GuiMgr() {
     windowOrder_.clear();
     windows_.clear();
+    // Zasoby GPU (pipeline, bufory, tekstura) muszą zniknąć przed zniszczeniem urządzenia.
+    // Renderer niszczy feature'y po vkDeviceWaitIdle, więc nic ich już nie używa.
+    if (renderer_) guiRenderer_.cleanup();
 }
 
 void GuiMgr::init(Renderer* renderer) {

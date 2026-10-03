@@ -7,7 +7,7 @@ namespace engine3d {
 OpaquePass::OpaquePass() : name_("OpaquePass") {}
 
 void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
-                         VkPipelineLayout pipelineLayout) {
+                         VkDescriptorSet globalDescriptorSet) {
     const auto& packets = scene.getOpaquePackets();
     std::vector<const RenderPacket*> sortedPackets;
     sortedPackets.reserve(packets.size());
@@ -26,12 +26,22 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
     });
     
     // Rysowanie każdej nieprzezroczystej paczki geometrii:
+    VkPipelineLayout boundLayout = VK_NULL_HANDLE;
     for (const auto* packetPtr : sortedPackets) {
         const auto& packet = *packetPtr;
         if (!packet.forwardOpaquePass) continue;
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
         
         VkPipelineLayout matLayout = packet.material->getPipeline().layout;
+
+        // Set 0 (UBO + bindless) musi być zbindowany layoutem zgodnym z potokiem materiału.
+        // Layouty są zgodne tylko przy identycznych zakresach push constants, więc set
+        // zbindowany wcześniej innym layoutem (np. deferred) nie jest tu ważny.
+        if (matLayout != boundLayout) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    matLayout, 0, 1, &globalDescriptorSet, 0, nullptr);
+            boundLayout = matLayout;
+        }
         
         // Krok 1: Bindowanie potoku graficznego (Pipeline) dla materiału (ustawienia shaderów, blendingu, depth testu).
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, packet.material->getPipeline().pipeline);

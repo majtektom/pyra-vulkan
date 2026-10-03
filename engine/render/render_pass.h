@@ -49,7 +49,7 @@ class IRenderPass {
 public:
     virtual ~IRenderPass() = default;
     virtual void execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
-                         VkPipelineLayout pipelineLayout) = 0;
+                         VkDescriptorSet globalDescriptorSet) = 0;
     virtual const std::string& getName() const = 0;
 };
 

@@ -142,6 +142,9 @@ public:
     void render(const RenderScene& scene, const RenderView& view) {
         if (!vulkanContext_ || !vulkanContext_->device()) return;
 
+        // Zminimalizowane okno ma powierzchnię 0x0 — swapchaina nie da się utworzyć ani użyć.
+        if (platform_->isMinimized()) return;
+
         if (platform_->wasResized()) {
             platform_->clearResizeFlag();
             recreateSwapChain();
@@ -280,7 +283,7 @@ public:
             shadowBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             shadowBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             shadowBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                  0, 0, nullptr, 0, nullptr, 1, &shadowBarrier);
         }
@@ -307,6 +310,23 @@ public:
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                              0, 0, nullptr, 0, nullptr, 4, gbToColorBarriers);
+
+        // Depth swapchaina: zawartość z poprzedniego użycia nie jest potrzebna (loadOp = CLEAR),
+        // więc przechodzimy z UNDEFINED. Obsługuje to też pierwsze użycie obrazu po (re)kreacji.
+        VkImageMemoryBarrier depthInitBarrier{};
+        depthInitBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthInitBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthInitBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthInitBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthInitBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthInitBarrier.image = swapchain_->depthImage(imageIndex);
+        depthInitBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthInitBarrier.subresourceRange.levelCount = 1;
+        depthInitBarrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depthInitBarrier);
 
         VkRenderingAttachmentInfo gbColorAttachments[4] = {};
         for (int a = 0; a < kGBufferAttachments; a++) {
@@ -449,7 +469,9 @@ public:
         colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         colorBarrier.subresourceRange.levelCount = 1;
         colorBarrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        // srcStage musi być COLOR_ATTACHMENT_OUTPUT (etap, na którym czeka semafor acquire),
+        // inaczej przejście layoutu może się wykonać, zanim silnik prezentacji zwolni obraz.
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                              0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
 
         // During GBuffer pass, depth was written (from clear=1.0, then opaque depths < 1.0).
@@ -494,7 +516,7 @@ public:
 
         for (auto& pass : passes_) {
             if (pass->getName() == "OpaquePass") {
-                pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+                pass->execute(cmd, currentFrame_, scene, descriptorSets_[currentFrame_]);
             }
         }
 
@@ -628,29 +650,47 @@ public:
 
         for (auto& pass : passes_) {
             if (pass->getName() == "TransparentPass") {
-                pass->execute(cmd, currentFrame_, scene, pipelineLayout_);
+                pass->execute(cmd, currentFrame_, scene, descriptorSets_[currentFrame_]);
             }
         }
 
-        executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
-
         vkCmdEndRendering(cmd);
 
-        // Transition depth back to ATTACHMENT for next frame
-        VkImageMemoryBarrier depthWriteBarrier{};
-        depthWriteBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthWriteBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        depthWriteBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthWriteBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthWriteBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthWriteBarrier.image = swapchain_->depthImage(imageIndex);
-        depthWriteBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        depthWriteBarrier.subresourceRange.levelCount = 1;
-        depthWriteBarrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &depthWriteBarrier);
+        // PART 3: Overlay (GUI, tekst) — własny przebieg z wyczyszczonym, zapisywalnym depth.
+        // Część 2 ma depth w layoucie READ_ONLY (próbkowany przez ocean), więc nie wolno w niej
+        // ani czyścić depth, ani do niego pisać.
+        if (hasActiveFeature(IRenderFeature::Stage::Overlay)) {
+            VkImageMemoryBarrier overlayDepthBarrier{};
+            overlayDepthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            overlayDepthBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            overlayDepthBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            overlayDepthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            overlayDepthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            overlayDepthBarrier.image = swapchain_->depthImage(imageIndex);
+            overlayDepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            overlayDepthBarrier.subresourceRange.levelCount = 1;
+            overlayDepthBarrier.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &overlayDepthBarrier);
+
+            VkRenderingAttachmentInfo overlayDepthAttachment{};
+            overlayDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            overlayDepthAttachment.imageView = swapchain_->depthImageView(imageIndex);
+            overlayDepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            overlayDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            overlayDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            overlayDepthAttachment.clearValue.depthStencil = {1.0f, 0};
+
+            VkRenderingInfo overlayInfo = renderingInfo2;
+            overlayInfo.pDepthAttachment = &overlayDepthAttachment;
+            vkCmdBeginRendering(cmd, &overlayInfo);
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            executeFeatures(cmd, view, IRenderFeature::Stage::Overlay);
+            vkCmdEndRendering(cmd);
+        }
 
         VkImageMemoryBarrier presentBarrier{};
         presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -681,7 +721,7 @@ public:
             uint64_t timelineValue = ++globalTimelineCounter_;
             timelineCounters_[currentFrame_] = timelineValue;
 
-            VkSemaphore signalSemaphores[] = {presentReadySemaphores_[currentFrame_], renderTimelineSemaphores_[currentFrame_]};
+            VkSemaphore signalSemaphores[] = {presentReadySemaphores_[imageIndex], renderTimelineSemaphores_[currentFrame_]};
             submitInfo.signalSemaphoreCount = 2;
             submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -697,13 +737,13 @@ public:
 
             vkQueueSubmit(vulkanContext_->graphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
         } else {
-            VkSemaphore signalSemaphores[] = {renderFinishedSemaphores_[currentFrame_]};
+            VkSemaphore signalSemaphores[] = {renderFinishedSemaphores_[imageIndex]};
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores = signalSemaphores;
             vkQueueSubmit(vulkanContext_->graphicsQueue(), 1, &submitInfo, inFlightFences_[currentFrame_]);
         }
         VkSemaphore presentWaitSemaphore = (synchronizationMode_ == SynchronizationMode::Timeline)
-            ? presentReadySemaphores_[currentFrame_] : renderFinishedSemaphores_[currentFrame_];
+            ? presentReadySemaphores_[imageIndex] : renderFinishedSemaphores_[imageIndex];
         if (!swapchain_->present(imageIndex, presentWaitSemaphore))
             recreateSwapChain();
         currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
@@ -1282,10 +1322,9 @@ public:
             }
         }
         textures_.clear();
+        destroyPresentSemaphores();
         for (int i = 0; i < kMaxFrames; i++) {
             if (imageAvailableSemaphores_[i]) { vkDestroySemaphore(device, imageAvailableSemaphores_[i], nullptr); imageAvailableSemaphores_[i] = VK_NULL_HANDLE; }
-            if (renderFinishedSemaphores_[i]) { vkDestroySemaphore(device, renderFinishedSemaphores_[i], nullptr); renderFinishedSemaphores_[i] = VK_NULL_HANDLE; }
-            if (presentReadySemaphores_[i]) { vkDestroySemaphore(device, presentReadySemaphores_[i], nullptr); presentReadySemaphores_[i] = VK_NULL_HANDLE; }
             if (renderTimelineSemaphores_[i]) { vkDestroySemaphore(device, renderTimelineSemaphores_[i], nullptr); renderTimelineSemaphores_[i] = VK_NULL_HANDLE; }
             if (inFlightFences_[i]) { vkDestroyFence(device, inFlightFences_[i], nullptr); inFlightFences_[i] = VK_NULL_HANDLE; }
             if (uniformBuffersMapped_[i]) { vkUnmapMemory(device, uniformBuffersMemory_[i]); uniformBuffersMapped_[i] = nullptr; }
@@ -1329,6 +1368,10 @@ public:
     }
 
     void setSynchronizationMode(SynchronizationMode mode) {
+        if (synchronizationMode_ == mode) return;
+        // Klatki w locie zostały zgłoszone ze starym mechanizmem (fence albo timeline);
+        // nowy tryb by na nie nie czekał i nadpisałby bufory komend używane przez GPU.
+        waitIdle();
         synchronizationMode_ = mode;
     }
 
@@ -1343,7 +1386,7 @@ public:
             swapchain_->setPresentMode(mode == PresentMode::Immediate ? VK_PRESENT_MODE_IMMEDIATE_KHR :
                                        mode == PresentMode::Mailbox ? VK_PRESENT_MODE_MAILBOX_KHR :
                                        VK_PRESENT_MODE_FIFO_KHR);
-            swapchain_->recreate(platform_->width(), platform_->height());
+            recreateSwapChain();
         }
     }
 
@@ -1363,6 +1406,15 @@ public:
             if (gbufferSkinnedPipeline_) {
                 vkDestroyPipeline(device, gbufferSkinnedPipeline_, nullptr);
                 gbufferSkinnedPipeline_ = VK_NULL_HANDLE;
+            }
+            // create*Pipeline() tworzą też nowe layouty — stare trzeba zniszczyć, inaczej wyciekają.
+            if (gbufferPipelineLayout_) {
+                vkDestroyPipelineLayout(device, gbufferPipelineLayout_, nullptr);
+                gbufferPipelineLayout_ = VK_NULL_HANDLE;
+            }
+            if (gbufferSkinnedPipelineLayout_) {
+                vkDestroyPipelineLayout(device, gbufferSkinnedPipelineLayout_, nullptr);
+                gbufferSkinnedPipelineLayout_ = VK_NULL_HANDLE;
             }
             createGBufferPipeline();
             createGBufferSkinnedPipeline();
@@ -1896,6 +1948,8 @@ private:
         destroySceneColorResources();
         cleanupGBuffer();
         swapchain_->recreate(platform_->width(), platform_->height());
+        destroyPresentSemaphores();
+        createPresentSemaphores();
         createGBufferResources();
         createSceneColorResources();
     }
@@ -1992,11 +2046,10 @@ private:
             vkUpdateDescriptorSets(device, 1, &shadowWrite, 0, nullptr);
         }
 
-        transitionShadowMapLayout(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
-        shadowMapLayout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        transitionShadowMapLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
-    void transitionShadowMapLayout(VkImageLayout newLayout, VkImageLayout afterShadow, bool initial) {
+    void transitionShadowMapLayout(VkImageLayout newLayout) {
         VkDevice device = vulkanContext_->device();
         VkCommandBuffer cmd = beginSingleTimeCommands();
 
@@ -2034,7 +2087,7 @@ private:
 
         vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         endSingleTimeCommands(cmd);
-        shadowMapLayout_ = initial ? afterShadow : newLayout;
+        shadowMapLayout_ = newLayout;
     }
 
     void createShadowPipeline() {
@@ -2856,6 +2909,8 @@ private:
         renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
         renderingInfo.colorAttachmentCount = 1;
         renderingInfo.pColorAttachmentFormats = &colorFormat;
+        // Przebieg, w którym rysujemy oświetlenie, ma podpięty depth — format musi się zgadzać.
+        renderingInfo.depthAttachmentFormat = swapchain_->depthFormat();
 
         VkGraphicsPipelineCreateInfo pipelineInfo{};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -2898,13 +2953,33 @@ private:
 
         for (int i = 0; i < kMaxFrames; i++) {
             vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores_[i]);
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores_[i]);
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &presentReadySemaphores_[i]);
             vkCreateSemaphore(device, &timelineInfo, nullptr, &renderTimelineSemaphores_[i]);
             vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences_[i]);
             timelineCounters_[i] = 0;
         }
         globalTimelineCounter_ = 0;
+        createPresentSemaphores();
+    }
+
+    void createPresentSemaphores() {
+        VkDevice device = vulkanContext_->device();
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        const size_t imageCount = swapchain_->images().size();
+        renderFinishedSemaphores_.assign(imageCount, VK_NULL_HANDLE);
+        presentReadySemaphores_.assign(imageCount, VK_NULL_HANDLE);
+        for (size_t i = 0; i < imageCount; i++) {
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores_[i]);
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &presentReadySemaphores_[i]);
+        }
+    }
+
+    void destroyPresentSemaphores() {
+        VkDevice device = vulkanContext_->device();
+        for (VkSemaphore sem : renderFinishedSemaphores_) if (sem) vkDestroySemaphore(device, sem, nullptr);
+        for (VkSemaphore sem : presentReadySemaphores_) if (sem) vkDestroySemaphore(device, sem, nullptr);
+        renderFinishedSemaphores_.clear();
+        presentReadySemaphores_.clear();
     }
 
     void createCommandBuffers() {
@@ -2918,20 +2993,15 @@ private:
     }
 
 private:
+    bool hasActiveFeature(IRenderFeature::Stage stage) const {
+        for (const auto& feature : features_) {
+            if (feature->isActive() && feature->getStage() == stage) return true;
+        }
+        return false;
+    }
+
     void executeFeatures(VkCommandBuffer cmd, const RenderView& view, IRenderFeature::Stage stage) {
         if (stage == IRenderFeature::Stage::Overlay) {
-            VkClearAttachment clearAttachment{};
-            clearAttachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            clearAttachment.clearValue.depthStencil = {1.0f, 0};
-
-            VkClearRect clearRect{};
-            clearRect.rect.offset = {0, 0};
-            clearRect.rect.extent = swapchain_->extent();
-            clearRect.baseArrayLayer = 0;
-            clearRect.layerCount = 1;
-
-            vkCmdClearAttachments(cmd, 1, &clearAttachment, 1, &clearRect);
-
             auto rit = features_.rbegin();
             auto rend = features_.rend();
             for (; rit != rend; ++rit) {
@@ -3010,8 +3080,10 @@ private:
     uint32_t defaultMaskIndex_ = 0;
 
     std::array<VkSemaphore, kMaxFrames> imageAvailableSemaphores_;
-    std::array<VkSemaphore, kMaxFrames> renderFinishedSemaphores_;
-    std::array<VkSemaphore, kMaxFrames> presentReadySemaphores_;
+    // Semafory sygnalizowane dla prezentacji są per OBRAZ swapchaina, nie per klatkę w locie:
+    // fence klatki nie gwarantuje, że silnik prezentacji przestał już używać semafora.
+    std::vector<VkSemaphore> renderFinishedSemaphores_;
+    std::vector<VkSemaphore> presentReadySemaphores_;
     std::array<VkSemaphore, kMaxFrames> renderTimelineSemaphores_;
     std::array<uint64_t, kMaxFrames> timelineCounters_{};
     uint64_t globalTimelineCounter_ = 0;

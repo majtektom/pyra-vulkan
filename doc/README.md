@@ -29,7 +29,18 @@ Witamy w dokumentacji technicznej silnika `engine3d`. Silnik jest nowoczesną, e
 
 ## Szybki Start
 
+### wymagania
+
+obsługa vulkana razem z paczką validacji
+
+```bash
+sudo dnf install vulkan-validation-layers
+```
+
+instalacja SDL3 do zarządzania oknem i inputem
+
 ### Kompilacja
+
 Wymagany kompilator wspierający C++20 (np. GCC 13+) oraz zainstalowane Vulkan SDK i biblioteki SDL3.
 
 ```bash

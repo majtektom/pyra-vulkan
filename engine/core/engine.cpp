@@ -44,7 +44,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
         }
 
         vulkanContext = std::make_shared<VulkanContext>();
-        if (!vulkanContext->initialize(appName)) {
+        if (!vulkanContext->initialize(appName, enableValidationLayers)) {
             LOG_ERROR("Failed to initialize Vulkan Context");
             return false;
         }

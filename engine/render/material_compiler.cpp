@@ -328,7 +328,10 @@ const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& mate
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = materialData.depthTest ? VK_TRUE : VK_FALSE;
-    depthStencil.depthWriteEnable = materialData.depthWrite ? VK_TRUE : VK_FALSE;
+    // Materiały z blendingiem trafiają do TransparentPass, gdzie depth jest w layoucie READ_ONLY
+    // (równocześnie próbkowany przez ocean) — zapis głębi jest tam niedozwolony.
+    const bool transparent = materialData.blendMode != BlendMode::Disabled;
+    depthStencil.depthWriteEnable = (materialData.depthWrite && !transparent) ? VK_TRUE : VK_FALSE;
     // W przypadku obiektów przezroczystych (blendMode != Disabled) używamy operacji LESS_OR_EQUAL
     // aby zapobiec artefaktom z-fightingu na stykających się krawędziach.
     depthStencil.depthCompareOp = (materialData.blendMode != BlendMode::Disabled) ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;

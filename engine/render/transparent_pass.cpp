@@ -6,7 +6,7 @@ namespace engine3d {
 TransparentPass::TransparentPass() : name_("TransparentPass") {}
 
 void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
-                              VkPipelineLayout pipelineLayout) {
+                              VkDescriptorSet globalDescriptorSet) {
     const auto& packets = scene.getTransparentPackets();
     std::vector<const RenderPacket*> sortedPackets;
     sortedPackets.reserve(packets.size());
@@ -29,11 +29,21 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
     });
 
     // Rysowanie każdej półprzezroczystej paczki geometrii:
+    VkPipelineLayout boundLayout = VK_NULL_HANDLE;
     for (const auto* packetPtr : sortedPackets) {
         const auto& packet = *packetPtr;
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
 
         VkPipelineLayout matLayout = packet.material->getPipeline().layout;
+
+        // Set 0 (UBO + bindless) musi być zbindowany layoutem zgodnym z potokiem materiału.
+        // Layouty są zgodne tylko przy identycznych zakresach push constants, więc set
+        // zbindowany wcześniej innym layoutem (np. deferred) nie jest tu ważny.
+        if (matLayout != boundLayout) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    matLayout, 0, 1, &globalDescriptorSet, 0, nullptr);
+            boundLayout = matLayout;
+        }
         
         // Krok 1: Bindowanie potoku graficznego (Pipeline) z włączonym blendingiem (Alpha Blend).
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, packet.material->getPipeline().pipeline);

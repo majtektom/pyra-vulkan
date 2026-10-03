@@ -29,6 +29,8 @@ public:
     void clearResizeFlag();
     uint32_t width() const;
     uint32_t height() const;
+    // Okno zminimalizowane — powierzchnia ma rozmiar 0, swapchaina nie da się utworzyć.
+    bool isMinimized() const;
 
     SDL_Window* nativeWindow() const;
 
