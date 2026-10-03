@@ -14,6 +14,9 @@ cbuffer GlobalUniformBufferObject : register(b0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16];
+    float4 directionalShadowSplits;
+    uint directionalShadowCascadeCount;
+    float3 shadowPadding;
     float4 fogColor;
     float fogStart;
     float fogEnd;
@@ -40,6 +43,15 @@ cbuffer OceanPushConstants
 
 SamplerState globalSampler : register(s1, space0);
 Texture2D textures[] : register(t1, space0);
+
+float3 sceneWorldPosition(float2 uv, uint depthTextureIndex, out bool valid)
+{
+    float depth = textures[depthTextureIndex].SampleLevel(globalSampler, uv, 0).r;
+    valid = depth < 0.99999;
+    float2 ndc = uv * 2.0 - 1.0;
+    float4 world = mul(invViewProj, float4(ndc, depth, 1.0));
+    return world.xyz / max(world.w, 0.00001);
+}
 
 struct VertexInput
 {
@@ -149,7 +161,9 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     float NdotV = max(dot(N, V), 0.0);
 
     // KROK 1: EFEKT FRESNELA (Przejście między odbiciem nieba a przezroczystością toni wodnej)
-    float fresnel = pow(1.0 - NdotV, 4.0);
+    // Lekko podbity F0 względem wartości fizycznej daje czytelniejszą taflę
+    // przy typowych kamerach growych, które patrzą na wodę z góry.
+    float fresnel = 0.055 + 0.945 * pow(1.0 - NdotV, 5.0);
 
     // Screen UV of the current water pixel
     float4 clipPos = mul(proj, mul(view, float4(input.worldPos, 1.0)));
@@ -165,105 +179,130 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     float2 dudvUV2 = input.texCoord * 0.1 + float2(time * -0.003, time * 0.005);
     float2 dudv1 = textures[dudvIdx].Sample(globalSampler, dudvUV1).rg;
     float2 dudv2 = textures[dudvIdx].Sample(globalSampler, dudvUV2).rg;
-    float2 dudvOffset = ((dudv1 + dudv2) * 0.5 - 0.5) * 0.06;
-    dudvOffset += ((dudv1 * 2.0 - 1.0) * 0.02 + (dudv2 * 2.0 - 1.0) * 0.015) * input.height * 0.2;
+    float2 dudvOffset = ((dudv1 + dudv2) * 0.5 - 0.5) * 0.035;
+    dudvOffset += (N.xz * 0.012);
 
-    // --- REFLECTION: SSR with fallback ---
-    // Default reflection: perspective-correct fallback using virtual reflection plane
-    float3 viewDir = normalize(input.worldPos - cameraPos.xyz);
-    float3 R_flat = reflect(viewDir, float3(0.0, 1.0, 0.0));
-    
-    float H_cam = max(0.1, cameraPos.y - waterLevel);
-    float H_refl = clamp(H_cam * 0.15, .0, 8.0);
-    
-    float t_refl = (waterLevel + H_refl - input.worldPos.y) / max(0.0001, R_flat.y);
-    float3 P_refl = input.worldPos + max(0.0, t_refl) * R_flat;
-    
-    float4 reflClip = mul(proj, mul(view, float4(P_refl, 1.0)));
-    float2 reflectUV = reflClip.xy / max(0.0001, reflClip.w) * float2(0.5, 0.5) + 0.5;
-    
-    reflectUV += dudvOffset * 0.3;
-    
-    float3 reflectColor = textures[sceneIdx].Sample(globalSampler, saturate(reflectUV)).rgb;
-
-    // SSR: corrects the reflection where the reflected ray hits scene geometry
+    // Refrakcja próbuje zakrzywiony UV, ale wraca do UV bez przesunięcia,
+    // gdy próbka wychodzi ponad taflę (zapobiega wciąganiu brzegu pod wodę).
+    float2 refractUV = saturate(screenUV + dudvOffset * (0.35 + 0.65 * (1.0 - NdotV)));
+    bool validBottom;
+    float3 bottomPos = sceneWorldPosition(refractUV, depthIdx, validBottom);
+    validBottom = validBottom && bottomPos.y < waterLevel;
+    if (!validBottom)
     {
-        float rawDepth = textures[depthIdx].SampleLevel(globalSampler, screenUV, 0).r;
-        // screenUV has Y flipped (from clipPos * float2(0.5, -0.5)), undo for correct NDC
-        float2 ndc = screenUV * float2(2.0, -2.0) + float2(-1.0, 1.0);
-        float4 clipPos = float4(ndc, rawDepth, 1.0);
-        float4 wp = mul(invViewProj, clipPos);
-        float3 worldPos_depth = wp.xyz / wp.w;
+        refractUV = screenUV;
+        bottomPos = sceneWorldPosition(refractUV, depthIdx, validBottom);
+        validBottom = validBottom && bottomPos.y < waterLevel;
+    }
 
-        // View vector should be camera-to-water surface pixel, not bottom of the water
-        float3 V = normalize(input.worldPos - cameraPos.xyz);
-        float3 R = normalize(reflect(V, N));
+    float waterDepth = validBottom ? distance(input.worldPos, bottomPos) : 80.0;
+    waterDepth = clamp(waterDepth, 0.0, 120.0);
+    float3 refractColor = textures[sceneIdx].SampleLevel(globalSampler, refractUV, 0).rgb;
+    float3 absorption = float3(0.018, 0.008, 0.004);
+    float3 transmittance = exp(-absorption * waterDepth);
+    float3 deepScatter = float3(0.008, 0.11, 0.16);
+    float3 refractionFinal = refractColor * transmittance
+        + deepScatter * (1.0 - transmittance);
 
-        const int kMarchSteps = 48;
-        const int kBinarySteps = 8;
-        const float kMaxDist = 800.0;
-        float stepSize = kMaxDist / kMarchSteps;
+    // Odbicie ekranowe: promień odbity jest porównywany bezpośrednio
+    // z pozycją świata zapisaną w G-bufferze.
+    float3 incident = normalize(input.worldPos - cameraPosition.xyz);
+    float3 reflectionRay = normalize(reflect(incident, N));
+    float2 reflectionUV = screenUV;
+    float reflectionConfidence = 0.0;
+    float3 previousRayPosition = input.worldPos + reflectionRay * 0.5;
+    float previousDepthDelta = -100000.0;
 
-        float3 rayPos = input.worldPos;
-        bool found = false;
-        float3 hitPos = (float3)0;
+    [loop] for (int step = 0; step < 72; ++step)
+    {
+        float distanceAlongRay = 2.0 + step * step * 0.22;
+        float3 rayPosition = input.worldPos + reflectionRay * distanceAlongRay;
+        float4 rayClip = mul(proj, mul(view, float4(rayPosition, 1.0)));
+        if (rayClip.w <= 0.0) break;
 
-        [loop] for (int i = 0; i < kMarchSteps; i++) {
-            rayPos += R * stepSize;
-            float4 pp = mul(proj, mul(view, float4(rayPos, 1.0)));
-            float2 ru = pp.xy / pp.w * float2(0.5, 0.5) + 0.5;
-            if (ru.x < 0 || ru.x > 1 || ru.y < 0 || ru.y > 1) break;
+        float2 rayUV = rayClip.xy / rayClip.w * 0.5 + 0.5;
+        if (any(rayUV <= 0.002) || any(rayUV >= 0.998)) break;
 
-            float sd = textures[depthIdx].SampleLevel(globalSampler, ru, 0).r;
-            // Vulkan NDC depth is [0, 1], not OpenGL [-1, 1]
-            float rd = pp.z / pp.w;
-
-            if (rd > sd + 0.0005) {
-                float3 hi = rayPos;
-                float3 lo = rayPos - R * stepSize;
-                [loop] for (int j = 0; j < kBinarySteps; j++) {
-                    float3 mid = (lo + hi) * 0.5;
-                    float4 mp = mul(proj, mul(view, float4(mid, 1.0)));
-                    float2 mu = mp.xy / mp.w * float2(0.5, 0.5) + 0.5;
-                    if (mu.x < 0 || mu.x > 1 || mu.y < 0 || mu.y > 1) { hi = mid; continue; }
-                    float md = textures[depthIdx].SampleLevel(globalSampler, mu, 0).r;
-                    // Vulkan NDC depth is [0, 1]
-                    float mr = mp.z / mp.w;
-                    if (mr > md) hi = mid; else lo = mid;
+        bool validScenePosition;
+        float3 scenePosition = sceneWorldPosition(rayUV, depthIdx, validScenePosition);
+        if (validScenePosition && scenePosition.y > waterLevel + waveAmplitude * 0.25)
+        {
+            float rayViewDepth = -mul(view, float4(rayPosition, 1.0)).z;
+            float sceneViewDepth = -mul(view, float4(scenePosition, 1.0)).z;
+            float depthDelta = rayViewDepth - sceneViewDepth;
+            float hitThickness = 4.0 + distanceAlongRay * 0.035;
+            if (depthDelta >= 0.0 && (previousDepthDelta < 0.0 || depthDelta < hitThickness))
+            {
+                float3 low = previousRayPosition;
+                float3 high = rayPosition;
+                [unroll] for (int refinement = 0; refinement < 7; ++refinement)
+                {
+                    float3 middle = (low + high) * 0.5;
+                    float4 middleClip = mul(proj, mul(view, float4(middle, 1.0)));
+                    float2 middleUV = middleClip.xy / middleClip.w * 0.5 + 0.5;
+                    bool validMiddle;
+                    float3 middleScene = sceneWorldPosition(middleUV, depthIdx, validMiddle);
+                    float middleRayDepth = -mul(view, float4(middle, 1.0)).z;
+                    float middleSceneDepth = -mul(view, float4(middleScene, 1.0)).z;
+                    if (validMiddle && middleRayDepth >= middleSceneDepth)
+                        high = middle;
+                    else
+                        low = middle;
                 }
-                hitPos = hi;
-                found = true;
-                break;
-            }
-        }
 
-        if (found) {
-            float4 fp = mul(proj, mul(view, float4(hitPos, 1.0)));
-            float2 fu = fp.xy / fp.w * float2(0.5, 0.5) + 0.5;
-            if (fu.x >= 0 && fu.x <= 1 && fu.y >= 0 && fu.y <= 1) {
-                float3 ssrColor = textures[sceneIdx].SampleLevel(globalSampler, fu, 0).rgb;
-                float ssrConf = saturate(1.0 - max(abs(fu.x - 0.5), abs(fu.y - 0.5)) * 2.0);
-                reflectColor = lerp(reflectColor, ssrColor, lerp(0.5, 1.0, ssrConf));
+                float4 hitClip = mul(proj, mul(view, float4(high, 1.0)));
+                float2 hitUV = hitClip.xy / hitClip.w * 0.5 + 0.5;
+                bool validHit;
+                float3 hitScene = sceneWorldPosition(hitUV, depthIdx, validHit);
+                if (validHit && hitScene.y > waterLevel + waveAmplitude * 0.25)
+                {
+                    reflectionUV = hitUV + dudvOffset * 0.12;
+                    float edge = max(abs(hitUV.x - 0.5), abs(hitUV.y - 0.5)) * 2.0;
+                    reflectionConfidence = 1.0 - smoothstep(0.68, 0.98, edge);
+                    break;
+                }
+            }
+            previousDepthDelta = depthDelta;
+        }
+        previousRayPosition = rayPosition;
+    }
+
+    float2 fallbackReflectionUV = screenUV;
+    float fallbackReflectionConfidence = 0.0;
+    float4 fallbackClip = mul(proj, mul(view, float4(input.worldPos + reflectionRay * 90.0, 1.0)));
+    if (fallbackClip.w > 0.0)
+    {
+        float2 projectedFallbackUV = fallbackClip.xy / fallbackClip.w * 0.5 + 0.5;
+        bool uvInBounds = all(projectedFallbackUV > 0.01) && all(projectedFallbackUV < 0.99);
+        if (uvInBounds)
+        {
+            bool validFallbackScene;
+            float3 fallbackScenePos = sceneWorldPosition(projectedFallbackUV, depthIdx, validFallbackScene);
+            if (validFallbackScene && fallbackScenePos.y > waterLevel - 0.5)
+            {
+                fallbackReflectionUV = projectedFallbackUV + dudvOffset * 0.08;
+                float shorelineBoost = 1.0 - smoothstep(10.0, 42.0, waterDepth);
+                fallbackReflectionConfidence = shorelineBoost * (1.0 - reflectionConfidence);
             }
         }
     }
 
-    // --- REFRACTION ---
-    float2 refractUV = screenUV + dudvOffset * 0.6;
-    float3 refractColor = textures[sceneIdx].Sample(globalSampler, saturate(refractUV)).rgb;
-
-    // Water body color
-    float3 deepColor   = float3(0.01, 0.05, 0.15);
-    float3 shallowColor = float3(0.04, 0.25, 0.45);
-    float depthFactor = saturate((input.worldPos.y - waterLevel) / 15.0 + 0.5);
-    float3 waterBody = lerp(shallowColor, deepColor, depthFactor);
-
-    // Refraction absorbs into water color with depth
-    float waterOpacity = lerp(0.05, 0.5, depthFactor);
-    float3 refractionFinal = lerp(refractColor, waterBody, waterOpacity);
-    refractionFinal = lerp(refractionFinal, waterBody, fresnel * 0.2);
-
-    float3 result = lerp(refractionFinal, reflectColor, fresnel);
+    float3 skyReflection = lerp(
+        ambientColor.rgb * 0.7,
+        float3(0.32, 0.52, 0.72),
+        saturate(reflectionRay.y));
+    float3 reflectedScene = textures[sceneIdx].SampleLevel(
+        globalSampler, saturate(reflectionUV), 0).rgb;
+    float3 fallbackReflectedScene = textures[sceneIdx].SampleLevel(
+        globalSampler, saturate(fallbackReflectionUV), 0).rgb;
+    float3 sceneReflection = lerp(
+        fallbackReflectedScene,
+        reflectedScene,
+        reflectionConfidence);
+    float sceneReflectionConfidence = saturate(reflectionConfidence + fallbackReflectionConfidence);
+    float3 reflectColor = lerp(skyReflection, sceneReflection, sceneReflectionConfidence);
+    float reflectionAmount = saturate(0.12 + fresnel * 0.9 + reflectionConfidence * 0.2);
+    float3 result = lerp(refractionFinal, reflectColor, reflectionAmount);
 
     // Specular highlights (sun reflections on wave facets)
     float3 H = normalize(L + V);
@@ -273,7 +312,7 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     float3 sunSpec = float3(1.0, 0.9, 0.7) * spec * fresnel;
 
     // KROK 5: PODPOWIERZCHNIOWE ROZPRASZANIE ŚWIATŁA (Sub-surface scattering)
-    float3 subSurf = deepColor * 0.3 * NdotL * (1.0 - fresnel);
+    float3 subSurf = deepScatter * 0.3 * NdotL * (1.0 - fresnel);
 
     // KROK 6: RYSOWANIE PIANY NA GRZBIETACH FAL (Foam rendering)
     // Jeśli fala jest odpowiednio wysoko (displaced.y > foamThreshold), nanosimy pianę
@@ -293,6 +332,5 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
         result = lerp(fogColor.rgb, result, fogFactor);
     }
 
-    float alpha = lerp(0.75, 0.95, fresnel);
-    return float4(result, alpha);
+    return float4(result, 1.0);
 }

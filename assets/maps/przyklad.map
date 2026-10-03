@@ -9,7 +9,16 @@
     "color": { "r": 0.575, "g": 0.68, "b": 0.88 },
     "start": 150.0,
     "end": 3500.0,
-    "density": 0.83
+    "density": 0.83,
+    "radius": 1800.0,
+    "volumes": [
+      {
+        "center": { "x": 0.0, "y": 18.0, "z": 0.0 },
+        "halfExtents": { "x": 360.0, "y": 35.0, "z": 260.0 },
+        "density": 0.006,
+        "edgeFade": 0.35
+      }
+    ]
   },
   "camera": {
     "position": { "x": -110.0, "y": 90.0, "z": -110.0 },

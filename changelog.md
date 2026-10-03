@@ -1,5 +1,25 @@
 # changelog
 
+## 0.6.0
+
+Implementacja Volumetrycznej Mgły (Froxel-based)
+
+assets/shaders/fog/fog_volume.hlsl — Compute shader (160×90×64 froxli):
+Każda grupa wątków (1,1,64) przetwarza jeden tile ekranu we wszystkich 64 wycinkach głębi
+Rekonstrukcja pozycji świata z invViewProj  
+Height-based density z wykładniczym zanikaniem + proceduralny noise 3D (sin)
+Integracja wzdłuż osi Z (near→far) przez groupshared memory: gromadzi rozproszone światło i transmisję
+Wynik: 3D tekstura R16G16B16A16_SFLOAT (RGB = światło rozproszone, A = transmisja)
+assets/shaders/fog/fog_composite.hlsl — Fullscreen triangle:
+Czyta depth z bindless (ocean_scene_depth)
+Próbkuje volume jako Texture3D z set=1
+Output: float4(światło_rozproszone, 1-transmisja) → blend ONE/ONE_MINUS_SRC_ALPHA
+engine/feature/fog/volumetric_fog_renderer.h/.cpp — IRenderFeature:
+Tworzy 3D image (storage + sampled), image view (3D), sampler (linear, clamp)
+Compute pipeline: set=0 → storage image, push constants (124 byte: invViewProj, cameraPos, fogColor, lightDir, params)
+Fullscreen pipeline: set=0 (bindless renderer) + set=1 (combined fog volume), push constant (depth tex index)
+W render(): przejście volume→GENERAL → dispatch compute → barrier GENERAL→SHADER_READ → fullscreen draw
+
 ## 0.5.0
 
  - system oparty na ECS (Entity-Component-System)

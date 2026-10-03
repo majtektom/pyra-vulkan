@@ -22,8 +22,10 @@ struct PushConstants {
     float sceneColorIndex;   // Bindless index for ocean_scene_color texture
     float sceneDepthIndex;   // Bindless index for ocean_scene_depth texture
     float dudvMapIndex;      // Bindless index for water_dudv texture
+    float _padding[3];
     float lightDir[4];
 };
+static_assert(sizeof(PushConstants) == 80);
 
 void generateOceanMesh(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) {
     constexpr int n = 512;
@@ -160,9 +162,11 @@ void OceanRenderer::init(Renderer* renderer) {
     VkPipelineColorBlendAttachmentState blendAttach{};
     blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    blendAttach.blendEnable = VK_TRUE;
-    blendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    blendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    // Shader oceanu sam kompozytuje refrakcję z kolorem sceny. Dodatkowe
+    // mieszanie sprzętowe rozcieńczałoby odbicie po raz drugi.
+    blendAttach.blendEnable = VK_FALSE;
+    blendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
     blendAttach.colorBlendOp = VK_BLEND_OP_ADD;
     blendAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     blendAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;

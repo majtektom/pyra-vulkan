@@ -57,6 +57,7 @@ add_library(engine3d SHARED
     feature/gui/gui_track_bar.cpp
     feature/gui/gui_scroll_bar.cpp
     feature/gui/gui_renderer.cpp
+    feature/fog/volumetric_fog_renderer.cpp
     scene/scene.cpp
     scene/camera_extraction_system.cpp
     scene/layer_manager.cpp
@@ -64,6 +65,7 @@ add_library(engine3d SHARED
     scene/render_frame_prep_system.cpp
     scene/render_extraction_system.cpp
     scene/prefab_serializer.cpp
+    object/vegetation/vegetation_system.cpp
     scene/scene_serializer.cpp
     scene/transform_system.cpp
     scene/scene_manager.cpp
@@ -154,6 +156,19 @@ add_shader_bundle(
     deferred.frag.hlsl=deferred.hlsl@fragmentMain
 )
 
+add_shader_bundle(
+    vegetation
+    vegetation.vert.hlsl=vegetation.hlsl@vertexMain
+    vegetation.frag.hlsl=vegetation.hlsl@fragmentMain
+)
+
+add_shader_bundle(
+    fog
+    fog_volume.comp.hlsl=fog/fog_volume.hlsl@main
+    fog_composite.vert.hlsl=fog/fog_composite.hlsl@vertexMain
+    fog_composite.frag.hlsl=fog/fog_composite.hlsl@fragmentMain
+)
+
 target_compile_definitions(engine3d
     PUBLIC
         ENGINE3D_HAS_TTF=${ENGINE3D_HAS_TTF}
@@ -161,6 +176,7 @@ target_compile_definitions(engine3d
         ENGINE_TEXT_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/text_overlay"
         ENGINE_GRID_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/grid"
         ENGINE_SKYBOX_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/skybox"
+        ENGINE_FOG_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/fog"
 )
 
 target_include_directories(engine3d
@@ -195,4 +211,4 @@ target_link_libraries(engine3d
 )
 
 
-add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders shadow_depth_skinned_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders)
+add_dependencies(engine3d text_overlay_shaders grid_shaders skybox_shaders default_shaders terrain_shaders particle_shaders sprite_shaders skydome_shaders ocean_shaders shadow_depth_shaders shadow_depth_skinned_shaders gbuffer_shaders deferred_shaders gbuffer_skinned_shaders vegetation_shaders fog_shaders)

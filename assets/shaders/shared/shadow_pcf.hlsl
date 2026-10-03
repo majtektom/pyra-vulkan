@@ -17,23 +17,25 @@
  * @param N Wektor normalny powierzchni w tym punkcie.
  * @return Współczynnik oświetlenia (1.0 = brak cienia, 0.0 = pełny cień, wartości pośrednie = półcień).
  */
-float sampleShadowPcf(Texture2DArray<float> shadowMaps,
-                      SamplerComparisonState shadowSampler,
-                      LightData light,
-                      float3 worldPos,
-                      float3 N)
+float sampleShadowCascade(Texture2DArray<float> shadowMaps,
+                          SamplerComparisonState shadowSampler,
+                          LightData light,
+                          float3 worldPos,
+                          float3 N,
+                          uint cascadeIndex)
 {
     // Wyznaczenie kierunku od piksela do światła (L)
     float3 L = (light.direction.w == 1.0)
         ? normalize(light.direction.xyz)
         : normalize(light.position.xyz - worldPos);
 
-    // Dynamiczny bias (przesunięcie wzdłuż wektora normalnego) w celu eliminacji artefaktu "shadow acne"
-    // (nakładania się cienia na geometrię z powodu skończonej precyzji zmiennoprzecinkowej bufora głębokości)
-    float bias = max(0.01 * (1.0 - dot(N, L)), 0.002);
+    // Bias liczymy w przestrzeni głębokości, zamiast przesuwać próbkę po normalnej,
+    // co zmniejsza "peter-panning" i odrywanie cienia od obiektów.
+    float ndotl = saturate(dot(N, L));
+    float bias = max(0.0008, 0.0025 * (1.0 - ndotl));
     
     // Przeliczenie pozycji świata piksela na przestrzeń projekcji światła (Light Space)
-    float4 shadowPos = mul(light.lightViewProj, float4(worldPos + N * bias, 1.0));
+    float4 shadowPos = mul(light.lightViewProj[cascadeIndex], float4(worldPos, 1.0));
     float3 projCoords = shadowPos.xyz / shadowPos.w; // Dzielenie przez w (perspektywa)
     
     // Transformacja współrzędnych NDC [-1.0, 1.0] na zakres tekstury [0.0, 1.0]
@@ -43,25 +45,77 @@ float sampleShadowPcf(Texture2DArray<float> shadowMaps,
     if (projCoords.z > 1.0) return 1.0;
     if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 1.0;
 
-    float shadow = 0.0;
-    float2 texelSize = 1.0 / 2048.0; // Rozmiar teksela mapy cieni (dla tekstury o rozdzielczości 2048x2048)
-    float layer = light.position.w;  // Indeks warstwy w tablicy tekstur przypisany do tego światła
+    uint shadowWidth = 0;
+    uint shadowHeight = 0;
+    uint shadowLayers = 0;
+    shadowMaps.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
 
-    // Pętla pobierająca 9 próbek (siatka 3x3) wokół piksela docelowego
+    float shadow = 0.0;
+    float totalWeight = 0.0;
+    float2 texelSize = 1.0 / float2(shadowWidth, shadowHeight);
+    float filterRadius = 1.5;
+    float layer = light.position.w + cascadeIndex;  // Indeks warstwy w tablicy tekstur przypisany do tego światła
+
+    // 3x3 tent PCF daje miększą krawędź bez dużego wzrostu kosztu.
     for (int x = -1; x <= 1; ++x)
     {
         for (int y = -1; y <= 1; ++y)
         {
-            // SampleCmpLevelZero porównuje projCoords.z z wartością głębokości zapisaną w mapie cieni
+            float2 offset = float2(x, y) * texelSize * filterRadius;
+            float weight = (2.0 - abs((float)x)) * (2.0 - abs((float)y));
             shadow += shadowMaps.SampleCmpLevelZero(
                 shadowSampler,
-                float3(projCoords.xy + float2(x, y) * texelSize, layer),
-                projCoords.z);
+                float3(projCoords.xy + offset, layer),
+                projCoords.z - bias) * weight;
+            totalWeight += weight;
         }
     }
 
-    // Zwrócenie średniego współczynnika oświetlenia
-    return shadow / 9.0;
+    return shadow / max(totalWeight, 0.0001);
+}
+
+float sampleShadowPcf(Texture2DArray<float> shadowMaps,
+                      SamplerComparisonState shadowSampler,
+                      LightData light,
+                      float3 worldPos,
+                      float3 N)
+{
+    uint cascadeIndex = 0u;
+    uint cascadeCount = max(1u, (uint)round(light.params.w));
+    float viewDepth = 0.0;
+
+    if (light.direction.w == 1.0 && directionalShadowCascadeCount > 1u)
+    {
+        viewDepth = abs(mul(view, float4(worldPos, 1.0)).z);
+        cascadeCount = min(cascadeCount, directionalShadowCascadeCount);
+        [unroll]
+        for (uint i = 0u; i + 1u < 4u; ++i)
+        {
+            if (i + 1u >= cascadeCount) break;
+            cascadeIndex += (viewDepth > directionalShadowSplits[i]) ? 1u : 0u;
+        }
+        cascadeIndex = min(cascadeIndex, cascadeCount - 1u);
+    }
+
+    float shadow = sampleShadowCascade(
+        shadowMaps, shadowSampler, light, worldPos, N, cascadeIndex);
+
+    // Mieszanie ostatnich 10% kaskady usuwa widoczne przeskoki rozdzielczości.
+    if (light.direction.w == 1.0 && cascadeIndex + 1u < cascadeCount)
+    {
+        float splitNear = cascadeIndex == 0u ? 0.0 : directionalShadowSplits[cascadeIndex - 1u];
+        float splitFar = directionalShadowSplits[cascadeIndex];
+        float blendStart = lerp(splitNear, splitFar, 0.9);
+        float blend = saturate((viewDepth - blendStart) / max(splitFar - blendStart, 0.0001));
+        if (blend > 0.0)
+        {
+            float nextShadow = sampleShadowCascade(
+                shadowMaps, shadowSampler, light, worldPos, N, cascadeIndex + 1u);
+            shadow = lerp(shadow, nextShadow, blend);
+        }
+    }
+
+    return shadow;
 }
 
 #endif

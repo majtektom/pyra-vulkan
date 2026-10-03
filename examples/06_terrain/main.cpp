@@ -16,6 +16,7 @@
 #include "object/ocean_renderer.h"
 #include "object/skydome_renderer.h"
 #include "object/skybox_renderer.h"
+#include "feature/fog/volumetric_fog_renderer.h"
 
 using namespace engine3d;
 
@@ -34,7 +35,50 @@ constexpr const char* kActionTerrainModePlasma = "terrain.mode_plasma";
 constexpr const char* kActionTerrainModeFault = "terrain.mode_fault";
 constexpr const char* kActionTerrainModeDeposition = "terrain.mode_deposition";
 
+std::vector<LocalFogVolume> findValleyFogVolumes(const Terrain& terrain, float waterLevel) {
+    struct Candidate {
+        Vec3 position;
+    };
 
+    std::vector<Candidate> candidates;
+    const float worldSize = terrain.worldSizeXZ();
+    constexpr int samplesPerAxis = 14;
+    for (int z = 1; z < samplesPerAxis - 1; ++z) {
+        for (int x = 1; x < samplesPerAxis - 1; ++x) {
+            const float worldX = (static_cast<float>(x) / (samplesPerAxis - 1) - 0.5f) * worldSize;
+            const float worldZ = (static_cast<float>(z) / (samplesPerAxis - 1) - 0.5f) * worldSize;
+            const float height = terrain.getHeight(worldX, worldZ);
+            if (height > waterLevel + 2.0f) {
+                candidates.push_back({{worldX, height, worldZ}});
+            }
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.position.y < b.position.y;
+    });
+
+    std::vector<LocalFogVolume> volumes;
+    const float minimumSpacing = worldSize * 0.22f;
+    const float horizontalExtent = std::clamp(worldSize * 0.09f, 140.0f, 450.0f);
+    for (const Candidate& candidate : candidates) {
+        const bool separated = std::all_of(volumes.begin(), volumes.end(), [&](const LocalFogVolume& volume) {
+            const float dx = candidate.position.x - volume.center.x;
+            const float dz = candidate.position.z - volume.center.z;
+            return dx * dx + dz * dz >= minimumSpacing * minimumSpacing;
+        });
+        if (!separated) continue;
+
+        LocalFogVolume volume;
+        volume.center = {candidate.position.x, candidate.position.y + 18.0f, candidate.position.z};
+        volume.halfExtents = {horizontalExtent, 42.0f, horizontalExtent};
+        volume.density = 0.005f;
+        volume.edgeFade = 0.4f;
+        volumes.push_back(volume);
+        if (volumes.size() == 3) break;
+    }
+    return volumes;
+}
 
 /**
  * @brief Mapuje fizyczne klawisze na akcje systemu terenu.
@@ -193,6 +237,14 @@ int main() {
     terrainComp->heightmapTextureHandle = renderer->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
     terrainComp->heightmapEnabled = true;
 
+    // Lokalna mgła osiada w trzech najniższych, oddalonych od siebie dolinach.
+    auto valleyFog = std::make_shared<VolumetricFogRenderer>();
+    valleyFog->configure("bin/assets/shaders/fog");
+    valleyFog->setFogRadius(2200.0f);
+    valleyFog->setLocalVolumes(findValleyFogVolumes(*terrain, oceanCfg.waterLevel));
+    valleyFog->setEnabled(true);
+    renderer->addFeature(valleyFog);
+
     // Kamera startująca nad terenem
     auto* camera = scene->createEntity("main_camera")->addComponent<CameraComponent>();
     camera->getOwner()->transform().position = {0.0f, 120.0f, 0.0f};
@@ -348,6 +400,7 @@ int main() {
             terrainComp->heightmapTextureHandle = e.getRenderer()->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
             terrainComp->layerWorldSize = terrain->worldSizeXZ();
             terrainEntity->transform().position = terrain->worldOffset();
+            valleyFog->setLocalVolumes(findValleyFogVolumes(*terrain, oceanCfg.waterLevel));
             if (cam) {
                 cam->getOwner()->transform().position.y = terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
             }

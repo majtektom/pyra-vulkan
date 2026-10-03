@@ -14,6 +14,9 @@ cbuffer GlobalUniformBufferObject : register(b0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16];
+    float4 directionalShadowSplits;
+    uint directionalShadowCascadeCount;
+    float3 shadowPadding;
     float4 fogColor;
     float fogStart;
     float fogEnd;

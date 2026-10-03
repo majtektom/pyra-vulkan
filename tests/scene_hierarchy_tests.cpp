@@ -7,6 +7,7 @@
 
 #include "core/entity.h"
 #include "core/light_component.h"
+#include "feature/fog/volumetric_fog_renderer.h"
 #include "scene/scene.h"
 #include "scene/prefab_serializer.h"
 
@@ -32,6 +33,26 @@ bool containsEntity(const std::vector<Entity*>& entities, const Entity* needle) 
 
 bool nearlyEqual(float a, float b, float eps = 0.0001f) {
     return std::fabs(a - b) <= eps;
+}
+
+bool testLocalFogVolumesAreBoundedAndSanitized() {
+    VolumetricFogRenderer fog;
+    std::vector<LocalFogVolume> volumes(VolumetricFogRenderer::kMaxLocalVolumes + 1);
+    volumes[0].density = -1.0f;
+    volumes[0].halfExtents = {-2.0f, 0.0f, 5.0f};
+    volumes[0].edgeFade = 2.0f;
+
+    fog.setLocalVolumes(std::move(volumes));
+    const auto& result = fog.localVolumes();
+
+    return expect(result.size() == VolumetricFogRenderer::kMaxLocalVolumes,
+                  "Local fog volume count should be limited") &&
+           expect(nearlyEqual(result[0].density, 0.0f),
+                  "Local fog density should not be negative") &&
+           expect(result[0].halfExtents.x > 0.0f && result[0].halfExtents.y > 0.0f,
+                  "Local fog extents should be positive") &&
+           expect(nearlyEqual(result[0].edgeFade, 1.0f),
+                  "Local fog edge fade should be clamped");
 }
 
 std::filesystem::path makeTempPrefabPath() {
@@ -290,6 +311,7 @@ int main() {
     ok = testReparentChildrenToParentPolicy() && ok;
     ok = testDetachChildrenPolicy() && ok;
     ok = testPrefabRoundtripPreservesHierarchyAndData() && ok;
+    ok = testLocalFogVolumesAreBoundedAndSanitized() && ok;
 
     if (!ok) {
         return 1;

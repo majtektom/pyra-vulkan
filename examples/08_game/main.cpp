@@ -104,7 +104,7 @@ public:
         engine_.loadFont("times", "assets/fonts/times.ttf", 32);
         engine_.setLightingEnabled(true);
         engine_.setShadowsEnabled(true);
-        engine_.configureDirectionalShadow(220.0f);
+        engine_.configureDirectionalShadow(1200.0f);
         engine_.setAmbientStrength(0.28f);
         engine_.setAmbientColor(0.35f, 0.38f, 0.45f);
         engine_.setTessellationEnabled(true);
@@ -452,12 +452,12 @@ private:
         } else if (preset == "Srednia") {
             engine_.setShadowsEnabled(true);
             if (checkShadows_) checkShadows_->setChecked(true);
-            engine_.configureDirectionalShadow(130.0f);
+            engine_.configureDirectionalShadow(650.0f);
             engine_.setAmbientStrength(0.40f);
         } else {
             engine_.setShadowsEnabled(true);
             if (checkShadows_) checkShadows_->setChecked(true);
-            engine_.configureDirectionalShadow(220.0f);
+            engine_.configureDirectionalShadow(1200.0f);
             engine_.setAmbientStrength(0.28f);
         }
     }

@@ -113,7 +113,7 @@ int main() {
     auto* sunLight = sunLightEntity->getComponent<LightComponent>();
 
     // Konfiguracja rzutowania cieni (rozmiar kaskady/obszaru widoczności cieni)
-    engine.configureDirectionalShadow(240.0f);
+    engine.configureDirectionalShadow(1200.0f);
 
     // KROK 1: ŁADOWANIE SKYBOXA (Nieba otaczającego scenę)
     // Ładujemy 3 tekstury w formacie DDS (box_12 to bok 1 i 2, box_34 to 3 i 4, box_5 to góra)

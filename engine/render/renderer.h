@@ -124,6 +124,12 @@ public:
     void setAmbientStrength(float strength);
     void setAmbientColor(float r, float g, float b);
 
+    // Sterowanie animacją wiatru dla wegetacji
+    void setWindTime(float time);
+    float getWindTime() const;
+    void setWindStrength(float strength);
+    float getWindStrength() const;
+
     // Sterowanie mgłą (Fog)
     void setFogEnabled(bool enabled);
     bool isFogEnabled() const;

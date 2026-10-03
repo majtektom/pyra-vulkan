@@ -23,6 +23,7 @@
 #include "core/input_actions.h"
 #include "core/job_system.h"
 #include "feature/font/text_overlay_renderer.h"
+#include "feature/fog/volumetric_fog_renderer.h"
 #include "core/types.h"
 
 namespace engine3d {
@@ -151,9 +152,15 @@ public:
     void setFogEnd(float end);
     void setFogDensity(float density);
 
+    void setWindTime(float time);
+    float getWindTime() const;
+    void setWindStrength(float strength);
+    float getWindStrength() const;
+
     bool loadMap(const std::string& path, Scene* scene);
     std::shared_ptr<SkydomeRenderer> getSkydome() const { return currentSkydome_; }
     std::shared_ptr<OceanRenderer> getOcean() const { return currentOcean_; }
+    std::shared_ptr<VolumetricFogRenderer> getVolumetricFog() const { return volumetricFogRenderer_; }
     std::shared_ptr<Md2ModelData> getMd2Model() const { return currentMd2Model_; }
     std::shared_ptr<Md2AnimationState> getMd2Anim() const { return currentMd2Anim_; }
     GltfSkinnedModel* getBrainModel() const { return currentBrainModel_.get(); }
@@ -204,6 +211,7 @@ private:
     int frameRateLimit_ = 0;
 
     std::shared_ptr<TextOverlayRenderer> textOverlayRenderer_;
+    std::shared_ptr<VolumetricFogRenderer> volumetricFogRenderer_;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
 
     std::shared_ptr<SkydomeRenderer> currentSkydome_;

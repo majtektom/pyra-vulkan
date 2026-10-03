@@ -74,6 +74,8 @@ struct RenderPacket {
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
     int renderPriority = 0;
+    float windTime = 0.0f;
+    float windStrength = 0.0f;
     bool forwardOpaquePass = false;
     bool castShadows = true;
 };

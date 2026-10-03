@@ -1,0 +1,2 @@
+add_executable(09_vegetation main.cpp)
+target_link_libraries(09_vegetation PRIVATE engine3d)

@@ -18,6 +18,7 @@ public:
     virtual ~IRenderFeature() = default;
 
     virtual void init(Renderer* renderer) = 0;
+    virtual void preRender(VkCommandBuffer /*cmd*/, uint32_t /*frameIndex*/, const RenderView& /*view*/) {}
     virtual void render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) = 0;
     virtual bool isActive() const = 0;
     virtual const std::string& getName() const = 0;

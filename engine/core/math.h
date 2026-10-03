@@ -52,6 +52,14 @@ struct Matrix4 {
     return {vec.x * scalar, vec.y * scalar, vec.z * scalar};
 }
 
+[[nodiscard]] inline Vec3 lerp(const Vec3& left, const Vec3& right, float t) {
+    return {
+        left.x + (right.x - left.x) * t,
+        left.y + (right.y - left.y) * t,
+        left.z + (right.z - left.z) * t,
+    };
+}
+
 // Iloczyn skalarny przydaje sie m.in. do projekcji i liczenia dlugosci wektora.
 [[nodiscard]] inline float dot(const Vec3& left, const Vec3& right) {
     return left.x * right.x + left.y * right.y + left.z * right.z;
@@ -293,6 +301,25 @@ struct Matrix4 {
     result.values[13] = 0.0f;
     result.values[14] = 0.0f;
     return result;
+}
+
+[[nodiscard]] inline Vec3 transformPoint(const Matrix4& matrix, const Vec3& point, float w = 1.0f) {
+    return {
+        matrix.values[0] * point.x + matrix.values[4] * point.y + matrix.values[8] * point.z + matrix.values[12] * w,
+        matrix.values[1] * point.x + matrix.values[5] * point.y + matrix.values[9] * point.z + matrix.values[13] * w,
+        matrix.values[2] * point.x + matrix.values[6] * point.y + matrix.values[10] * point.z + matrix.values[14] * w,
+    };
+}
+
+[[nodiscard]] inline Vec3 projectPoint(const Matrix4& matrix, const Vec3& point, float w = 1.0f) {
+    const float clipX = matrix.values[0] * point.x + matrix.values[4] * point.y + matrix.values[8] * point.z + matrix.values[12] * w;
+    const float clipY = matrix.values[1] * point.x + matrix.values[5] * point.y + matrix.values[9] * point.z + matrix.values[13] * w;
+    const float clipZ = matrix.values[2] * point.x + matrix.values[6] * point.y + matrix.values[10] * point.z + matrix.values[14] * w;
+    const float clipW = matrix.values[3] * point.x + matrix.values[7] * point.y + matrix.values[11] * point.z + matrix.values[15] * w;
+    if (std::abs(clipW) < 1e-6f) {
+        return {clipX, clipY, clipZ};
+    }
+    return {clipX / clipW, clipY / clipW, clipZ / clipW};
 }
 
 }  // namespace engine3d

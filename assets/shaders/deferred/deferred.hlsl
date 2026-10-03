@@ -1,5 +1,4 @@
 #include "shared/light_eval.hlsl"
-#include "shared/shadow_pcf.hlsl"
 
 // Globalny bufor jednolity (UBO) - dane widoku i światła
 cbuffer GlobalUniformBufferObject : register(b0, space0)
@@ -16,12 +15,17 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     uint lightCount;
     uint shadowsEnabled;
     LightData lights[16];
+    float4 directionalShadowSplits;
+    uint directionalShadowCascadeCount;
+    float3 shadowPadding;
     float4 fogColor;
     float fogStart;
     float fogEnd;
     float fogDensity;
     uint fogEnabled;
 };
+
+#include "shared/shadow_pcf.hlsl"
 
 // Powiązanie tekstur G-Buffera (Set 1 / space1)
 [[vk::binding(0, 1)]] Texture2D<float4> gbufferAlbedo;             // Albedo + metalness

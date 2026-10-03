@@ -145,6 +145,7 @@ void Engine::cleanup() {
         renderer->waitIdle();
         renderer->removeFeature("SkydomeRenderer");
         renderer->removeFeature("OceanRenderer");
+        renderer->removeFeature("VolumetricFogRenderer");
     }
 
     currentBrainInstances_.clear();
@@ -153,6 +154,7 @@ void Engine::cleanup() {
     currentMd2Model_.reset();
     currentOcean_.reset();
     currentSkydome_.reset();
+    volumetricFogRenderer_.reset();
 
     if (renderer) {
         renderer->cleanup();
@@ -521,6 +523,11 @@ void Engine::setFogDensity(float density) {
     if (renderer) renderer->setFogDensity(density);
 }
 
+void Engine::setWindTime(float time) { if (renderer) renderer->setWindTime(time); }
+float Engine::getWindTime() const { return renderer ? renderer->getWindTime() : 0.0f; }
+void Engine::setWindStrength(float strength) { if (renderer) renderer->setWindStrength(strength); }
+float Engine::getWindStrength() const { return renderer ? renderer->getWindStrength() : 0.3f; }
+
 void Engine::bindActionKey(std::string_view action, int scancode) {
     inputActions_.bindKey(action, scancode);
 }
@@ -563,6 +570,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
         renderer->waitIdle();
         renderer->removeFeature("SkydomeRenderer");
         renderer->removeFeature("OceanRenderer");
+        renderer->removeFeature("VolumetricFogRenderer");
     }
 
     currentBrainInstances_.clear();
@@ -572,6 +580,7 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
     md2Instances_.clear();
     currentOcean_.reset();
     currentSkydome_.reset();
+    volumetricFogRenderer_.reset();
 
 
 
@@ -637,6 +646,43 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
         }
     }
 
+    // 4b. Volumetric Fog (only if enabled in map)
+    if (root.contains("fog") && root["fog"].value("enabled", true)) {
+        const auto& fogNode = root["fog"];
+        volumetricFogRenderer_ = std::make_shared<VolumetricFogRenderer>();
+        volumetricFogRenderer_->configure("bin/assets/shaders/fog");
+        volumetricFogRenderer_->setFogDensity(fogNode.value("volumetricDensity", 0.002f));
+        volumetricFogRenderer_->setHeightFalloff(fogNode.value("heightFalloff", 0.004f));
+        volumetricFogRenderer_->setSeaLevel(fogNode.value("seaLevel", 0.0f));
+        volumetricFogRenderer_->setFogRadius(fogNode.value("radius", 1500.0f));
+
+        std::vector<LocalFogVolume> localVolumes;
+        if (fogNode.contains("volumes") && fogNode["volumes"].is_array()) {
+            for (const auto& volumeNode : fogNode["volumes"]) {
+                LocalFogVolume volume;
+                if (volumeNode.contains("center")) {
+                    const auto& center = volumeNode["center"];
+                    volume.center = {
+                        center.value("x", 0.0f),
+                        center.value("y", 0.0f),
+                        center.value("z", 0.0f)};
+                }
+                if (volumeNode.contains("halfExtents")) {
+                    const auto& extents = volumeNode["halfExtents"];
+                    volume.halfExtents = {
+                        extents.value("x", 100.0f),
+                        extents.value("y", 20.0f),
+                        extents.value("z", 100.0f)};
+                }
+                volume.density = volumeNode.value("density", 0.004f);
+                volume.edgeFade = volumeNode.value("edgeFade", 0.25f);
+                localVolumes.push_back(volume);
+            }
+        }
+        volumetricFogRenderer_->setLocalVolumes(std::move(localVolumes));
+        volumetricFogRenderer_->setEnabled(true);
+        renderer->addFeature(volumetricFogRenderer_);
+    }
 
     // 5. Kamera (Camera)
     if (root.contains("camera")) {
