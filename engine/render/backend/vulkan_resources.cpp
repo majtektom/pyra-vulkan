@@ -10,7 +10,7 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanContext> context,
                            VkDeviceSize size, 
                            VkBufferUsageFlags usage, 
                            VkMemoryPropertyFlags properties)
-    : context_(context), size_(size) {
+    : context_(context), size_(size), usage_(usage) {
     
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;

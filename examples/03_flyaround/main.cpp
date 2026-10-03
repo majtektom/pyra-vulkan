@@ -406,119 +406,23 @@ int main() {
     // Zamiast interpolować położenia wierzchołków CPU (jak w MD2), do shadera przekazujemy
     // macierze kości (Joint Matrices). Wierzchołki posiadają indeksy (Joints) i wagi (Weights)
     // i są przekształcane bezpośrednio na GPU w shaderze wierzchołków.
-    auto brainModel = std::make_shared<GltfModel>();
-    VkBuffer brainBoneBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory brainBoneMemory = VK_NULL_HANDLE;
-    VkDevice brainDev = VK_NULL_HANDLE;
-    // Zasoby Vulkana tworzone ręcznie w tym przykładzie — zwalniane po engine.run(),
-    // zanim silnik zniszczy urządzenie.
-    VkDescriptorPool bonePool = VK_NULL_HANDLE;
-    VkDescriptorSetLayout boneLayout = VK_NULL_HANDLE;
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>> skinBuffers;
-    {
-        *brainModel = loadGltfModel("assets/models/gLTF/BrainStem.glb");
-        std::cout << "Loaded BrainStem: " << brainModel->primitives.size() << " prims, "
-                  << brainModel->animations.size() << " anims, " << brainModel->skins.size() << " skins\n";
+    // GltfSkinnedModel ładuje siatki, materiały i bufory wag/indeksów kości (dane współdzielone),
+    // a GltfSkinnedInstance trzyma macierze kości danej instancji i tworzy jej encje.
+    // Bufor kości instancji ma kilka slotów, więc zapis nie koliduje z klatkami w locie GPU.
+    // Oba obiekty są zadeklarowane po silniku, więc zostaną zniszczone przed nim
+    // (po engine.run(), który kończy się waitIdle).
+    GltfSkinnedModel brainModel;
+    GltfSkinnedInstance brainInstance;
+    if (brainModel.load(renderer, engine.getMeshManager(), mats, engine.getAssetRegistry(),
+                        "assets/models/gLTF/BrainStem.glb") &&
+        brainInstance.initialize(renderer, brainModel)) {
+        const auto& model = brainModel.getModel();
+        std::cout << "Loaded BrainStem: " << model.primitives.size() << " prims, "
+                  << model.animations.size() << " anims, " << model.skins.size() << " skins\n";
 
-        VkDevice dev = renderer->device();
-        brainDev = dev;
-
-        // Tworzenie bufora uniform (UBO) na macierze transformacji kości (maksymalnie 64 kości)
-        constexpr int kMaxBones = 64;
-        VkDeviceSize boneSize = kMaxBones * sizeof(Matrix4);
-        vk::createBuffer(dev, renderer->physicalDevice(), boneSize,
-                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                         brainBoneBuffer, brainBoneMemory);
-
-        // Przydzielenie Descriptor Set dedykowanego pod bufor kości (Set 1, patrz MaterialCompiler)
-        VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
-        VkDescriptorPoolCreateInfo bonePoolInfo{};
-        bonePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        bonePoolInfo.maxSets = 1;
-        bonePoolInfo.poolSizeCount = 1;
-        bonePoolInfo.pPoolSizes = &bonePoolSize;
-        vkCreateDescriptorPool(dev, &bonePoolInfo, nullptr, &bonePool);
-
-        VkDescriptorSetLayoutBinding boneBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
-        VkDescriptorSetLayoutCreateInfo boneLayoutInfo{};
-        boneLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        boneLayoutInfo.bindingCount = 1;
-        boneLayoutInfo.pBindings = &boneBinding;
-        vkCreateDescriptorSetLayout(dev, &boneLayoutInfo, nullptr, &boneLayout);
-
-        VkDescriptorSetAllocateInfo boneAlloc{};
-        boneAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        boneAlloc.descriptorPool = bonePool;
-        boneAlloc.descriptorSetCount = 1;
-        boneAlloc.pSetLayouts = &boneLayout;
-        VkDescriptorSet boneDescSet;
-        vkAllocateDescriptorSets(dev, &boneAlloc, &boneDescSet);
-
-        VkDescriptorBufferInfo boneBufInfo{brainBoneBuffer, 0, boneSize};
-        VkWriteDescriptorSet boneWrite{};
-        boneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        boneWrite.dstSet = boneDescSet;
-        boneWrite.dstBinding = 0;
-        boneWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        boneWrite.descriptorCount = 1;
-        boneWrite.pBufferInfo = &boneBufInfo;
-        vkUpdateDescriptorSets(dev, 1, &boneWrite, 0, nullptr);
-
-        for (size_t i = 0; i < brainModel->primitives.size(); ++i) {
-            auto& prim = brainModel->primitives[i];
-            std::string name = "brain_" + std::to_string(i);
-            engine.getMeshManager()->loadMesh(name, prim.mesh);
-
-            TextureHandle texHandle{};
-            if (!prim.texturePath.empty()) {
-                texHandle = renderer->loadTexture(name + "_tex", prim.texturePath);
-            }
-
-            Material mat;
-            mat.name = name;
-            mat.textureHandle = texHandle;
-            mat.color = prim.baseColor;
-            mat.cullMode = CullMode::Disabled;
-            materialHandles[mat.name] = mats->add(mat);
-
-            auto* e = activeScene->createEntity(name);
-            auto* mc = e->addComponent<MeshComponent>(name);
-            mc->materialHandle = requireMaterialHandle(name);
-            mc->boneDescriptorSet = boneDescSet; // Przypisanie deskryptora kości do komponentu
-
-            // Tworzenie bufora wierzchołków przechowującego wagi i indeksy kości (Skinning Vertex Buffer)
-            if (!prim.joints.empty()) {
-                size_t skinSize = prim.joints.size() * (sizeof(uint32_t)*4 + sizeof(float)*4);
-                VkBuffer svb; VkDeviceMemory sm;
-                vk::createBuffer(dev, renderer->physicalDevice(), skinSize,
-                                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                 svb, sm);
-                std::vector<uint8_t> skinData(skinSize);
-                for (size_t v = 0; v < prim.joints.size(); ++v) {
-                    size_t off = v * (sizeof(uint32_t)*4 + sizeof(float)*4);
-                    uint32_t jointIndices[4] = {
-                        static_cast<uint32_t>(prim.joints[v][0]),
-                        static_cast<uint32_t>(prim.joints[v][1]),
-                        static_cast<uint32_t>(prim.joints[v][2]),
-                        static_cast<uint32_t>(prim.joints[v][3])
-                    };
-                    memcpy(skinData.data() + off, jointIndices, sizeof(uint32_t)*4);
-                    memcpy(skinData.data() + off + sizeof(uint32_t)*4, prim.weights[v].data(), sizeof(float)*4);
-                }
-                void* mapped;
-                vkMapMemory(dev, sm, 0, skinSize, 0, &mapped);
-                memcpy(mapped, skinData.data(), skinSize);
-                vkUnmapMemory(dev, sm);
-                mc->skinVertexBuffer = svb; // Drugi bufor wierzchołków bindowany podczas renderowania
-                skinBuffers.emplace_back(svb, sm);
-            }
-
-            e->transform().position = {-40.0f, 0.0f, 20.0f};
-            e->transform().rotation = {0.0f, 0.0f, 0.0f};
-            e->transform().scale = {10.0f, 10.0f, 10.0f};
-        }
+        Entity* brainRoot = brainInstance.instantiate(activeScene, "brain");
+        brainRoot->transform().position = {-40.0f, 0.0f, 20.0f};
+        brainRoot->transform().scale = {10.0f, 10.0f, 10.0f};
     }
 
     // Ustawienie głównej kamery i jej parametrów
@@ -610,56 +514,14 @@ int main() {
     };
 
     // KROK 10: AKTUALIZACJA ANIMACJI SZKIELETOWEJ GLTF (GPU Skinning updates)
-    // Łączymy logikę z poprzeniego lambda. Dla modelu BrainStem wyliczamy
-    // położenia kości na CPU, a następnie przesyłamy zaktualizowaną tablicę macierzy
-    // do bufora uniform na GPU (Vulkan dynamic uniform buffer mapping).
-    engine.onUpdate = [origUpdate = std::move(engine.onUpdate), model = brainModel,
-                      boneBuffer = brainBoneBuffer, boneMemory = brainBoneMemory,
-                      dev = brainDev](float dt, Engine& e) mutable {
-        static float animTime = 0.0f;
-        animTime += dt;
-        
-        // Pobranie czasu trwania pierwszej animacji GLTF
-        float dur = getAnimationDuration(*model, 0);
-        if (dur > 0.001f) animTime = fmodf(animTime, dur);
-        
-        std::vector<Matrix4> jointMats;
-        // Ewaluacja drzewa hierarchii kości dla danego czasu animacji
-        evaluateAnimation(*model, 0, animTime, jointMats);
-        
-        static int dbgCount = 0;
-        if (dbgCount == 0) {
-            std::cout << "Anim frame: joints=" << jointMats.size() << " time=" << animTime << "\n";
-            if (!jointMats.empty()) {
-                auto& m = jointMats[0].values;
-                std::cout << "  joint[0]: " << m[0] << " " << m[1] << " " << m[2] << " " << m[3] << "\n";
-            }
-        }
-        dbgCount++;
-        
-        // Zaktualizowanie danych w pamięci GPU
-        if (!jointMats.empty()) {
-            void* mapped;
-            vkMapMemory(dev, boneMemory, 0, sizeof(Matrix4) * jointMats.size(), 0, &mapped);
-            memcpy(mapped, jointMats.data(), sizeof(Matrix4) * jointMats.size());
-            vkUnmapMemory(dev, boneMemory);
-        }
-        
+    // Instancja wylicza macierze kości na CPU dla bieżącego czasu animacji
+    // i zapisuje je do wolnego slotu bufora uniform na GPU.
+    engine.onUpdate = [origUpdate = std::move(engine.onUpdate), &brainInstance](float dt, Engine& e) mutable {
+        brainInstance.update(dt);
         if (origUpdate) origUpdate(dt, e);
     };
 
     // Uruchomienie głównej pętli gry
-    engine.run(); // kończy się waitIdle — GPU nie używa już poniższych zasobów
-
-    if (brainDev != VK_NULL_HANDLE) {
-        for (auto [buffer, memory] : skinBuffers) {
-            vkDestroyBuffer(brainDev, buffer, nullptr);
-            vkFreeMemory(brainDev, memory, nullptr);
-        }
-        vkDestroyBuffer(brainDev, brainBoneBuffer, nullptr);
-        vkFreeMemory(brainDev, brainBoneMemory, nullptr);
-        vkDestroyDescriptorPool(brainDev, bonePool, nullptr);
-        vkDestroyDescriptorSetLayout(brainDev, boneLayout, nullptr);
-    }
+    engine.run();
     return 0;
 }

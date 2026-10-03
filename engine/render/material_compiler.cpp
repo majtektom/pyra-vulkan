@@ -62,7 +62,12 @@ void MaterialCompiler::createDescriptorSetLayout() {
     // Konfiguracja flag dla Bindless Texturing:
     // - VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT: Pozwala, aby nie wszystkie 1024 sloty były zajęte (zbindowane).
     // - VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT: Pozwala na modyfikację deskryptorów w locie, po ich przypisaniu do Command Buffera.
-    VkDescriptorBindingFlags bindingFlags[3] = {0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, 0};
+    // - VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT: Pozwala dopisywać nowe tekstury, gdy klatki są w locie.
+    // Flagi muszą być identyczne jak w layoucie set 0 renderera (renderer_core.cpp), inaczej layouty są niezgodne.
+    VkDescriptorBindingFlags bindingFlags[3] = {0,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+            VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+        0};
     
     VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
     flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;

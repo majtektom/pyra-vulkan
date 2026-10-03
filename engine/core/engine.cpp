@@ -212,6 +212,9 @@ void Engine::configureScene(Scene& scene) {
 void Engine::update(TimeDelta deltaTime) {
     float dtSeconds = std::chrono::duration<float>(deltaTime).count();
 
+    // Odliczanie wieku buforów zastąpionych w poprzednich klatkach (bezpieczne ponowne użycie).
+    if (meshManager) meshManager->beginFrame();
+
     // Callback użytkownika (np. skryptowanie w pętli głównej)
     if (onUpdate) {
         onUpdate(dtSeconds, *this);

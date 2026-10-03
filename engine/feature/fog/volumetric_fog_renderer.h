@@ -88,6 +88,7 @@ private:
     float seaLevel_ = 0.0f;
     float fogRadius_ = 1500.0f;
     std::vector<LocalFogVolume> localVolumes_;
+    bool localVolumesDirty_ = true; // bufor GPU wymaga ponownego wypełnienia
 };
 
 } // namespace engine3d

@@ -581,7 +581,8 @@ public:
         // Swapchain: TRANSFER_SRC → COLOR_ATTACHMENT
         sceneBarriers[3].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         sceneBarriers[3].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        sceneBarriers[3].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        // Część 2 wczytuje kolor (loadOp = LOAD) i blenduje, więc potrzebny jest też odczyt.
+        sceneBarriers[3].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         sceneBarriers[3].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         sceneBarriers[3].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         sceneBarriers[3].image = swapchain_->images()[imageIndex];
@@ -601,7 +602,8 @@ public:
         VkImageMemoryBarrier depthReadBarrier{};
         depthReadBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         depthReadBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthReadBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        // Depth jest w części 2 próbkowany przez shadery ORAZ używany do testu głębi (loadOp = LOAD).
+        depthReadBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
         depthReadBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthReadBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         depthReadBarrier.image = swapchain_->depthImage(imageIndex);
@@ -610,7 +612,7 @@ public:
         depthReadBarrier.subresourceRange.layerCount = 1;
         vkCmdPipelineBarrier(cmd,
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
             0, 0, nullptr, 0, nullptr, 1, &depthReadBarrier);
 
         registerSceneDepthForFrame(currentFrame_, imageIndex);
@@ -631,7 +633,8 @@ public:
         swDepthAttachment2.imageView = swapchain_->depthImageView(imageIndex);
         swDepthAttachment2.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         swDepthAttachment2.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        swDepthAttachment2.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        // Depth jest tu tylko do odczytu — STORE_OP_NONE (Vulkan 1.3) nie generuje zapisu na końcu przebiegu.
+        swDepthAttachment2.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
 
         VkRenderingInfo renderingInfo2{};
         renderingInfo2.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -662,7 +665,8 @@ public:
         if (hasActiveFeature(IRenderFeature::Stage::Overlay)) {
             VkImageMemoryBarrier overlayDepthBarrier{};
             overlayDepthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            overlayDepthBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            overlayDepthBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             overlayDepthBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             overlayDepthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
             overlayDepthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -670,6 +674,21 @@ public:
             overlayDepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
             overlayDepthBarrier.subresourceRange.levelCount = 1;
             overlayDepthBarrier.subresourceRange.layerCount = 1;
+            // Kolor: zapisy części 2 muszą być widoczne dla loadOp = LOAD części 3.
+            VkImageMemoryBarrier overlayColorBarrier{};
+            overlayColorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            overlayColorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            overlayColorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            overlayColorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            overlayColorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            overlayColorBarrier.image = swapchain_->images()[imageIndex];
+            overlayColorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            overlayColorBarrier.subresourceRange.levelCount = 1;
+            overlayColorBarrier.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &overlayColorBarrier);
+
             vkCmdPipelineBarrier(cmd,
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
@@ -755,6 +774,9 @@ public:
         // Clean up existing texture with the same name to prevent memory leak on reload
         auto oldIt = textures_.find(name);
         if (oldIt != textures_.end()) {
+            // Stara tekstura może być używana przez klatki w locie. Przeładowanie jest rzadkie,
+            // więc zamiast kolejki opóźnionego niszczenia czekamy na GPU.
+            vkDeviceWaitIdle(device);
             vkDestroyImageView(device, oldIt->second.imageView, nullptr);
             vkDestroyImage(device, oldIt->second.image, nullptr);
             vkFreeMemory(device, oldIt->second.imageMemory, nullptr);
@@ -919,6 +941,9 @@ public:
         // Clean up existing texture with the same name to prevent memory leak on reload
         auto oldIt = textures_.find(name);
         if (oldIt != textures_.end()) {
+            // Stara tekstura może być używana przez klatki w locie. Przeładowanie jest rzadkie,
+            // więc zamiast kolejki opóźnionego niszczenia czekamy na GPU.
+            vkDeviceWaitIdle(device);
             vkDestroyImageView(device, oldIt->second.imageView, nullptr);
             vkDestroyImage(device, oldIt->second.image, nullptr);
             vkFreeMemory(device, oldIt->second.imageMemory, nullptr);
@@ -1133,6 +1158,8 @@ public:
         if (textureFilter_ == filter) return;
         textureFilter_ = filter;
         VkDevice device = vulkanContext_->device();
+        // Niszczymy samplery i nadpisujemy deskryptory, których mogą używać klatki w locie.
+        vkDeviceWaitIdle(device);
         for (auto& [name, tex] : textures_) {
             vkDestroySampler(device, tex.sampler, nullptr);
             tex.sampler = vk::createSampler(device, vulkanContext_->physicalDevice(), tex.mipLevels, filter, tex.addressMode);
@@ -1868,7 +1895,14 @@ private:
         bindings[2].descriptorCount = 1;
         bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorBindingFlags bindingFlags[3] = {0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, 0};
+        // UWAGA: MaterialCompiler tworzy własną kopię tego layoutu — flagi muszą być identyczne,
+        // inaczej set 0 nie jest zgodny z potokami materiałów.
+        // UPDATE_UNUSED_WHILE_PENDING: nowe tekstury są dopisywane do setów, których używają klatki
+        // w locie — wolno to robić tylko dla elementów tablicy, których te klatki nie czytają.
+        VkDescriptorBindingFlags bindingFlags[3] = {0,
+            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+            0};
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
         flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
         flagsInfo.bindingCount = 3;

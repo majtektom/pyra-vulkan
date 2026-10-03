@@ -46,6 +46,7 @@ void VolumetricFogRenderer::setLocalVolumes(std::vector<LocalFogVolume> volumes)
         volume.edgeFade = std::clamp(volume.edgeFade, 0.01f, 1.0f);
     }
     localVolumes_ = std::move(volumes);
+    localVolumesDirty_ = true;
 }
 
 void VolumetricFogRenderer::init(Renderer* renderer) {
@@ -515,20 +516,26 @@ void VolumetricFogRenderer::writeDescriptorSets(VkDevice device) {
 void VolumetricFogRenderer::preRender(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {
     if (!ready_ || !enabled_) return;
 
-    std::array<GpuLocalFogVolume, kMaxLocalVolumes> gpuVolumes{};
-    for (size_t i = 0; i < localVolumes_.size(); ++i) {
-        const auto& source = localVolumes_[i];
-        auto& destination = gpuVolumes[i];
-        destination.centerDensity[0] = source.center.x;
-        destination.centerDensity[1] = source.center.y;
-        destination.centerDensity[2] = source.center.z;
-        destination.centerDensity[3] = source.density;
-        destination.halfExtentsEdgeFade[0] = source.halfExtents.x;
-        destination.halfExtentsEdgeFade[1] = source.halfExtents.y;
-        destination.halfExtentsEdgeFade[2] = source.halfExtents.z;
-        destination.halfExtentsEdgeFade[3] = source.edgeFade;
+    // Bufor wolumenów jest jeden i czytany przez klatki w locie — nadpisujemy go tylko po
+    // zmianie danych (rzadko), po upewnieniu się, że GPU skończyło poprzednie klatki.
+    if (localVolumesDirty_) {
+        vkDeviceWaitIdle(renderer_->device());
+        std::array<GpuLocalFogVolume, kMaxLocalVolumes> gpuVolumes{};
+        for (size_t i = 0; i < localVolumes_.size(); ++i) {
+            const auto& source = localVolumes_[i];
+            auto& destination = gpuVolumes[i];
+            destination.centerDensity[0] = source.center.x;
+            destination.centerDensity[1] = source.center.y;
+            destination.centerDensity[2] = source.center.z;
+            destination.centerDensity[3] = source.density;
+            destination.halfExtentsEdgeFade[0] = source.halfExtents.x;
+            destination.halfExtentsEdgeFade[1] = source.halfExtents.y;
+            destination.halfExtentsEdgeFade[2] = source.halfExtents.z;
+            destination.halfExtentsEdgeFade[3] = source.edgeFade;
+        }
+        std::memcpy(localVolumeBufferMapped_, gpuVolumes.data(), sizeof(gpuVolumes));
+        localVolumesDirty_ = false;
     }
-    std::memcpy(localVolumeBufferMapped_, gpuVolumes.data(), sizeof(gpuVolumes));
 
     VkImageMemoryBarrier volToGeneral{};
     volToGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;

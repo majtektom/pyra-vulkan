@@ -603,6 +603,9 @@ void GltfSkinnedModel::cleanup() {
 }
 
 // GltfSkinnedInstance implementation
+static_assert(GltfSkinnedInstance::kBoneSlots == Renderer::kMaxFrames + 1,
+              "slotów kości musi być o jeden więcej niż klatek w locie");
+
 GltfSkinnedInstance::~GltfSkinnedInstance() {
     cleanup();
 }
@@ -618,9 +621,14 @@ GltfSkinnedInstance& GltfSkinnedInstance::operator=(GltfSkinnedInstance&& other)
         model_ = other.model_;
         boneBuffer_ = other.boneBuffer_;
         boneMemory_ = other.boneMemory_;
+        boneMapped_ = other.boneMapped_;
         descriptorPool_ = other.descriptorPool_;
         descriptorSetLayout_ = other.descriptorSetLayout_;
-        boneDescriptorSet_ = other.boneDescriptorSet_;
+        for (uint32_t i = 0; i < kBoneSlots; ++i) {
+            boneDescriptorSets_[i] = other.boneDescriptorSets_[i];
+            other.boneDescriptorSets_[i] = VK_NULL_HANDLE;
+        }
+        boneSlot_ = other.boneSlot_;
         rootEntity_ = other.rootEntity_;
         partEntities_ = std::move(other.partEntities_);
         animTime_ = other.animTime_;
@@ -629,9 +637,9 @@ GltfSkinnedInstance& GltfSkinnedInstance::operator=(GltfSkinnedInstance&& other)
         other.model_ = nullptr;
         other.boneBuffer_ = VK_NULL_HANDLE;
         other.boneMemory_ = VK_NULL_HANDLE;
+        other.boneMapped_ = nullptr;
         other.descriptorPool_ = VK_NULL_HANDLE;
         other.descriptorSetLayout_ = VK_NULL_HANDLE;
-        other.boneDescriptorSet_ = VK_NULL_HANDLE;
         other.rootEntity_ = nullptr;
         other.animTime_ = 0.0f;
     }
@@ -644,19 +652,22 @@ bool GltfSkinnedInstance::initialize(Renderer* renderer, const GltfSkinnedModel&
     model_ = &model;
     VkDevice dev = renderer->device();
 
-    // Create UBO for bone matrices (max 64 bones)
+    // UBO na macierze kości (max 64 kości) — kBoneSlots slotów, po jednym na klatkę w locie + 1.
+    // Rozmiar slotu (4096 B) jest wielokrotnością minUniformBufferOffsetAlignment.
     constexpr int kMaxBones = 64;
     VkDeviceSize boneSize = kMaxBones * sizeof(Matrix4);
-    vk::createBuffer(dev, renderer->physicalDevice(), boneSize,
+    vk::createBuffer(dev, renderer->physicalDevice(), boneSize * kBoneSlots,
                      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                      boneBuffer_, boneMemory_);
+    vkMapMemory(dev, boneMemory_, 0, boneSize * kBoneSlots, 0, &boneMapped_);
+    std::memset(boneMapped_, 0, static_cast<size_t>(boneSize * kBoneSlots));
 
     // Create descriptor pool for this instance
-    VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+    VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kBoneSlots};
     VkDescriptorPoolCreateInfo bonePoolInfo{};
     bonePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    bonePoolInfo.maxSets = 1;
+    bonePoolInfo.maxSets = kBoneSlots;
     bonePoolInfo.poolSizeCount = 1;
     bonePoolInfo.pPoolSizes = &bonePoolSize;
     if (vkCreateDescriptorPool(dev, &bonePoolInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
@@ -673,26 +684,30 @@ bool GltfSkinnedInstance::initialize(Renderer* renderer, const GltfSkinnedModel&
         return false;
     }
 
-    // Allocate descriptor set
+    // Jeden descriptor set na slot — każdy wskazuje na swój fragment bufora kości.
+    VkDescriptorSetLayout layouts[kBoneSlots];
+    std::fill(std::begin(layouts), std::end(layouts), descriptorSetLayout_);
     VkDescriptorSetAllocateInfo boneAlloc{};
     boneAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     boneAlloc.descriptorPool = descriptorPool_;
-    boneAlloc.descriptorSetCount = 1;
-    boneAlloc.pSetLayouts = &descriptorSetLayout_;
-    if (vkAllocateDescriptorSets(dev, &boneAlloc, &boneDescriptorSet_) != VK_SUCCESS) {
+    boneAlloc.descriptorSetCount = kBoneSlots;
+    boneAlloc.pSetLayouts = layouts;
+    if (vkAllocateDescriptorSets(dev, &boneAlloc, boneDescriptorSets_) != VK_SUCCESS) {
         return false;
     }
 
-    // Update descriptor set
-    VkDescriptorBufferInfo boneBufInfo{boneBuffer_, 0, boneSize};
-    VkWriteDescriptorSet boneWrite{};
-    boneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    boneWrite.dstSet = boneDescriptorSet_;
-    boneWrite.dstBinding = 0;
-    boneWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    boneWrite.descriptorCount = 1;
-    boneWrite.pBufferInfo = &boneBufInfo;
-    vkUpdateDescriptorSets(dev, 1, &boneWrite, 0, nullptr);
+    for (uint32_t slot = 0; slot < kBoneSlots; ++slot) {
+        VkDescriptorBufferInfo boneBufInfo{boneBuffer_, slot * boneSize, boneSize};
+        VkWriteDescriptorSet boneWrite{};
+        boneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        boneWrite.dstSet = boneDescriptorSets_[slot];
+        boneWrite.dstBinding = 0;
+        boneWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        boneWrite.descriptorCount = 1;
+        boneWrite.pBufferInfo = &boneBufInfo;
+        vkUpdateDescriptorSets(dev, 1, &boneWrite, 0, nullptr);
+    }
+    boneSlot_ = 0;
 
     return true;
 }
@@ -709,7 +724,7 @@ Entity* GltfSkinnedInstance::instantiate(Scene* scene, const std::string& namePr
         auto* mc = part->addComponent<MeshComponent>(prims[i].meshName);
         mc->materialHandle = prims[i].materialHandle;
         mc->skinVertexBuffer = prims[i].skinVertexBuffer;
-        mc->boneDescriptorSet = boneDescriptorSet_;
+        mc->boneDescriptorSet = boneDescriptorSets_[boneSlot_];
         
         partEntities_.push_back(part);
     }
@@ -728,12 +743,19 @@ void GltfSkinnedInstance::update(float dt, int animIdx, float speed) {
     std::vector<Matrix4> jointMats;
     evaluateAnimation(model_->getModel(), animIdx, animTime_, jointMats);
     
-    if (!jointMats.empty()) {
+    if (!jointMats.empty() && boneMapped_) {
+        // Piszemy do kolejnego slotu — poprzednie mogą być jeszcze czytane przez klatki w locie.
+        constexpr size_t kSlotSize = 64 * sizeof(Matrix4);
+        boneSlot_ = (boneSlot_ + 1) % kBoneSlots;
         size_t copySize = std::min(jointMats.size(), (size_t)64) * sizeof(Matrix4);
-        void* mapped;
-        vkMapMemory(renderer_->device(), boneMemory_, 0, copySize, 0, &mapped);
-        memcpy(mapped, jointMats.data(), copySize);
-        vkUnmapMemory(renderer_->device(), boneMemory_);
+        memcpy(static_cast<uint8_t*>(boneMapped_) + boneSlot_ * kSlotSize, jointMats.data(), copySize);
+
+        // Paczki renderowania tej klatki muszą wskazywać na właśnie zapisany slot.
+        for (Entity* part : partEntities_) {
+            if (auto* mc = part->getComponent<MeshComponent>()) {
+                mc->boneDescriptorSet = boneDescriptorSets_[boneSlot_];
+            }
+        }
     }
 }
 
@@ -745,12 +767,17 @@ void GltfSkinnedInstance::cleanup() {
             boneBuffer_ = VK_NULL_HANDLE;
         }
         if (boneMemory_ != VK_NULL_HANDLE) {
+            if (boneMapped_) {
+                vkUnmapMemory(dev, boneMemory_);
+                boneMapped_ = nullptr;
+            }
             vkFreeMemory(dev, boneMemory_, nullptr);
             boneMemory_ = VK_NULL_HANDLE;
         }
         if (descriptorPool_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(dev, descriptorPool_, nullptr);
             descriptorPool_ = VK_NULL_HANDLE;
+            std::fill(std::begin(boneDescriptorSets_), std::end(boneDescriptorSets_), VK_NULL_HANDLE);
         }
         if (descriptorSetLayout_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(dev, descriptorSetLayout_, nullptr);

@@ -112,14 +112,20 @@ public:
     float getAnimationTime() const { return animTime_; }
     void setAnimationTime(float time) { animTime_ = time; }
 
+    // Liczba slotów macierzy kości: GPU może jeszcze czytać kMaxFrames poprzednich klatek,
+    // więc zapis idzie do slotu, którego żadna klatka w locie nie używa.
+    static constexpr uint32_t kBoneSlots = 4; // Renderer::kMaxFrames + 1
+
 private:
     Renderer* renderer_ = nullptr;
     const GltfSkinnedModel* model_ = nullptr;
-    VkBuffer boneBuffer_ = VK_NULL_HANDLE;
+    VkBuffer boneBuffer_ = VK_NULL_HANDLE;          // kBoneSlots slotów po 64 macierze
     VkDeviceMemory boneMemory_ = VK_NULL_HANDLE;
+    void* boneMapped_ = nullptr;                    // trwale zmapowana pamięć bufora kości
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
-    VkDescriptorSet boneDescriptorSet_ = VK_NULL_HANDLE;
+    VkDescriptorSet boneDescriptorSets_[kBoneSlots] = {};
+    uint32_t boneSlot_ = 0;
 
     Entity* rootEntity_ = nullptr;
     std::vector<Entity*> partEntities_;

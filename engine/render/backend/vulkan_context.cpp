@@ -324,6 +324,7 @@ void VulkanContext::createLogicalDevice() {
     features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
     features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
+    features12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
     features12.timelineSemaphore = VK_TRUE;
 
