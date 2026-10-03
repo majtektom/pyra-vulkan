@@ -1,161 +1,120 @@
-# do zrobienia
+# TODO — engine3d
 
-- dodać wiele pipeline'ów/materialów per obiekt, zamiast jednego activeShaderProgram na całą scenę
-- wprowadzić UBO/SSBO per frame dla większej liczby obiektów zamiast push constants, gdy scena urośnie
-- dołożyć prosty loader modeli i tekstur, żeby odciąć przykłady od ręcznie wpisanych wierzchołków
- Uwaga techniczna: Nowe pasy renderowania (OpaquePass, TransparentPass) są przygotowane do rysowania, ale ze względu na stopień skomplikowania pełnej implementacji Vulkana (setki linii na potok), używają one obecnie uproszczonych struktur (stubs).
-  Silnik jest jednak w pełni gotowy na wpięcie kompletnej logiki shaderów w te dedykowane moduły.
+Legenda: `[x]` zrobione, `[ ]` do zrobienia. Odnośniki do plików względem katalogu głównego repo.
 
-textury z modelu gltf w postaci binrnej są wyciągane do tmp i wczytywane, popraw na wczytywanie odrau do pamięci
+Wszystkie przykłady (01–09) przechodzą walidację Vulkana bez błędów i ostrzeżeń (także wydajnościowych),
+również z walidacją synchronizacji. Uruchamianie z pełnym logiem:
 
-teren3d
-  Główne braki w porównaniu ze starym (2400 linii):
-Feature
-LOD stitching — 16 wzorców łączenia poziomów
-Multi-texturing — 4 warstwy z maskami
-Dynamiczny LOD — wybór poziomu wg odległości od kamery
-Frustum culling — test sfera/frustum na noda
-Zarządzanie obiektami — przypinanie obiektów do nodów quadtree
-Debug rendering — wireframe quadtree
-Znajdowanie sąsiadów — do stitchingu LOD
+```sh
+VK_LAYER_VALIDATE_SYNC=1 VK_LAYER_DUPLICATE_MESSAGE_LIMIT=1000 ./bin/09_vegetation
+```
 
+---
 
-gotowe
-Wygładzanie krawędzi — brzegi do poziomu wody
-Generatory terenu
-Wczytywanie heightmapy
-Wczytywanie XML
-QuadTree (struktura)
-Zapytania wysokości
-Budowa meshy
-Kluczowy brak: QuadTree jest zbudowany, ale nie używany do renderowania. Stary system dynamicznie wybierał LOD per node na podstawie odległości od kamery i łączył sąsiednie poziomy szczegółowości specjalnymi index bufferami — to te 800 linii stitchingu. Bez tego teren to po prostu statyczna mesh.
+## 1. Błędy działania
 
+### Swapchain i synchronizacja
 
-Wraz z nadejściem Vulkana 1.3, API graficzne przeszło ewolucję z modelu "programowania sprzętu przez bardzo drobne instrukcje" w stronę modelu "zarządzania potężnymi, zautomatyzowanymi blokami operacji".Poniżej zestawiam kluczowe techniki renderingu, które definiują nowoczesny Vulkan (1.3+) w porównaniu do wczesnych wersji (1.0/1.1).
+- [x] `VK_SUBOPTIMAL_KHR` przy acquire traktowany jak błąd (semafor zostawał zasygnalizowany)
+- [x] Bariera obrazu swapchaina z `TOP_OF_PIPE` zamiast `COLOR_ATTACHMENT_OUTPUT`
+- [x] Semafory prezentacji per klatka zamiast per obraz swapchaina
+- [x] Minimalizacja okna (swapchain 0×0) — renderowanie wstrzymane
+- [x] Fallback formatu swapchaina
+- [x] Początkowe przejścia layoutu mapy cieni i buforów głębi
+- [x] Brakujące bariery przed przebiegiem 2 (ocean/przezroczyste) i przed overlayem
+- [x] Głębia read-only w przebiegu 2 ze `storeOp = STORE` → `STORE_OP_NONE`
+- [x] Przełączanie trybu synchronizacji (Standard ↔ Timeline) w trakcie działania
 
-1. Mesh Shading (Rewolucja w geometrii)Vulkan 1.3 wspiera Mesh Shaders jako standard (często przez rozszerzenia, ale w pełni zintegrowane z ekosystemem).Stare podejście: Vertex Shader + Geometry Shader + Tessellation. CPU musiało wysyłać wszystkie wierzchołki, a GPU tylko je "przepuszczało".Vulkan 1.3: Mesh Shaders (Task + Mesh) pozwalają GPU na samodzielne decydowanie o tym, co jest widoczne (culling) i generowanie geometrii z danych w pamięci (SSBO).Zaleta: Przejście z "przesyłania danych" na "przesyłanie instrukcji", co eliminuje wąskie gardło procesora.
+### Zapisy CPU do pamięci czytanej przez GPU (klatki w locie)
 
----------------------
-Oto jak zaprojektować profesjonalny system oparty na ECS (Entity-Component-System) z domieszką Data-Oriented Design, który jest standardem w nowoczesnych silnikach.
+- [x] `MeshManager`: wierzchołki MD2, instancje cząsteczek i sprite'ów — bufory zastępowane, stare zwalniane po `kMaxFrames + 1` klatkach
+- [x] Kości GLTF — pierścień slotów w buforze kości instancji
+- [x] Przeładowanie tekstury / zmiana filtrowania — `vkDeviceWaitIdle` przed zniszczeniem
+- [x] Nowe tekstury w trakcie gry — `UPDATE_UNUSED_WHILE_PENDING` na bindless
+- [x] Przebudowa atlasu fontu przy nowych znakach
+- [x] Bufor lokalnych wolumenów mgły — zapis tylko po zmianie
+- [x] Przykład `03_flyaround` przepisany na `GltfSkinnedModel`/`GltfSkinnedInstance` (usunięta ręczna kopia skinningu)
 
-1. Nowa Architektura: "Separacja Danych od Logiki"
-Zamiast dziedziczyć z jednego wielkiego obiektu, budujesz Entity (byt), które jest tylko identyfikatorem (ID), a całą resztę "doklejasz" jako komponenty.
+### Niepoprawne użycie API
 
-Entity: To tylko uint64_t (ID). Nie posiada metod, nie przechowuje danych modelu.
+- [x] Wireframe bez `fillModeNonSolid`; anizotropia bez sprawdzenia wsparcia
+- [x] Czyszczenie i zapis depth w layoucie read-only (overlay ma teraz własny przebieg)
+- [x] Zapis głębi przez materiały przezroczyste w przebiegu read-only
+- [x] Set 0 bindowany niezgodnym layoutem w `OpaquePass`/`TransparentPass`
+- [x] Brak formatu depth w pipeline'ach deferred i kompozycji mgły
+- [x] Format obrazu mgły niezgodny z shaderem (RGBA16F vs Rgba32f)
+- [x] `vkFreeDescriptorSets` na pulach bez `FREE_DESCRIPTOR_SET_BIT`
+- [x] Wycieki przy zamykaniu (GUI, layouty pipeline'ów przy przełączaniu wireframe)
+- [x] Atrybuty wierzchołka nieczytane przez shader (ostrzeżenia `PERFORMANCE`) — `vk::filterVertexAttributes` odczytuje wejścia z SPIR-V
+- [x] Shader siatki (grid) czytał kolor z lokacji normalnej — siatka i osie były zawsze zielone
+- [ ] Generowanie mipmap przez blit na teksturach DXT/BC — `vkCmdBlitImage` nie działa dla formatów skompresowanych; brak sprawdzenia `VK_FORMAT_FEATURE_BLIT_DST` / `SAMPLED_IMAGE_FILTER_LINEAR` (`engine/render/renderer_core.cpp`, `loadTexture`)
+- [ ] Indeks bindless bez limitu — `nextTextureIndex_` nie jest porównywany z `kMaxBindlessTextures` (1024), indeksy nie są zwalniane
 
-Component: To czysta struktura danych (struct). Nie posiada logiki.
+### Mgła wolumetryczna
 
-System: To klasa, która operuje na grupach komponentów.
+- [x] Kompozycja z głębi sceny zamiast G-buffera (obejmuje teren rysowany forwardem)
+- [x] Odbicie mgły w pionie (podwójne odwracanie Y)
+- [x] Całkowanie od kamery w głąb (front-to-back)
+- [x] Mgła wysokościowa sumowana z lokalnymi wolumenami
+- [x] Kolor mgły z mapy, kierunek słońca z pierwszego światła kierunkowego
+- [ ] Podwójna mgła — `"fog": {"enabled": true}` włącza naraz liniową (deferred, teren) i wolumetryczną
+- [ ] Ocean nie zapisuje głębi — nad wodą mgła liczy się do dna / nieba (trochę za gęsta)
 
-Przykłady struktur (Komponenty):
-C++
-struct TransformComponent {
-    vec3 position;
-    quat rotation;
-    vec3 scale;
-};
+### Logika
 
-struct MeshComponent {
-    Mesh* mesh;
-    Material* material;
-};
+- [ ] Delta time w milisekundach — szarpanie przy wysokim FPS, dt = 0 powyżej 1000 FPS (`engine/core/engine.cpp`, `calculateDeltaTimeMs`)
+- [ ] `loadMap`: jeden `currentBrainModel_` dla wszystkich `gltf_skinned_models` (drugi nadpisuje pierwszy); ponowne `loadMap` nie czyści starych encji
+- [ ] `JobSystem`: przepełnienie, gdy `hardware_concurrency()` zwraca 0 (`engine/core/job_system.h`)
+- [ ] Niedeterministyczna kolejność paczek po scaleniu buforów wątków (G-buffer, cienie)
+- [ ] Skydome to wycinek kuli — w oddali widać jej ciemną krawędź na horyzoncie
 
-struct HierarchyComponent {
-    Entity parent;
-    std::vector<Entity> children;
-};
-2. Jak to zorganizować? (SOLID w praktyce)
-Single Responsibility (SRP)
-MeshManager zajmuje się tylko wczytywaniem i cache'owaniem plików z dysku. Nie wie nic o pozycji obiektu w świecie.
+---
 
-RenderSystem (System) zajmuje się tylko przeglądaniem listy obiektów z MeshComponent i wysyłaniem ich do GPU.
+## 2. Wydajność
 
-Interface Segregation (ISP)
-Zamiast VObject jako baza, użyj interfejsów dla systemów:
+- [ ] Roślinność: jedna encja = jedno źdźbło = osobny draw call (+4 kaskady cieni). Instancing: jeden draw na gatunek i chunk świata (`MeshManager` ma już `instanceBuffer`; shadery `default`/`gbuffer` muszą czytać macierz z `VK_VERTEX_INPUT_RATE_INSTANCE`)
+- [ ] Frustum culling dla siatek (jest tylko dla terenu) i culling per kaskada cienia
+- [ ] Sortowanie paczek po pipeline/materiale, mniej rebindów
+- [ ] Statyczne siatki w `DEVICE_LOCAL` przez staging (teraz wszystkie host-visible)
+- [ ] Tekstury i render targety przez VMA zamiast surowego `vkAllocateMemory`
+- [ ] Upload tekstur: jeden command buffer zamiast 3–4 submitów z `vkQueueWaitIdle` na teksturę
+- [ ] `TerrainPlacementSystem` co klatkę liczy wysokość dla wszystkich statycznych obiektów
+- [ ] Kopiowanie sceny ze swapchaina do `sceneColor` w każdej klatce, także bez oceanu
+- [ ] Nagrywanie komend z wielu wątków (secondary command buffers, osobna pula komend na wątek)
 
-IRenderable (dla obiektów z meshem)
+---
 
-IUpdatable (dla obiektów z fizyką/logiką)
+## 3. Architektura
 
-ITransformable (dla obiektów mających pozycję w przestrzeni)
+- [ ] HDR i tonemapping — render do `R16G16B16A16_SFLOAT`, tonemapping (ACES/AgX), na końcu kopia do swapchaina (usuwa też kopiowanie ze swapchaina)
+- [ ] Spójność forward/deferred — teren i materiały custom idą forwardem z własnym oświetleniem; albo wszystko przez G-buffer, albo wspólna funkcja oświetlenia
+- [ ] `engine/render/renderer_core.cpp` (~3300 linii) — podział; helper `transition(image, from, to)` albo prosty render graph (`RenderOrchestrator`/`renderPlan_` istnieje, ale nieużywany)
+- [ ] Cienie punktowe — teraz jedna perspektywa 120° w dół; potrzebne cube mapy lub dual-paraboloid
+- [ ] Push constants 224 B (gwarantowane minimum 128 B) — dane materiału do SSBO z indeksem
+- [ ] UBO/SSBO per klatka dla danych obiektów zamiast push constants, gdy scena urośnie
+- [ ] Ścieżki `bin/assets/...` zależą od katalogu roboczego — ścieżka bazowa przez `SDL_GetBasePath`
+- [ ] `-Wall -Wextra` w `cmake/ProjectSettings.cmake`, w Debug także `-fsanitize=address,undefined`
+- [ ] Shadery HLSL kompiluje `glslangValidator` (brak `dxc` w PATH, choć README go wymaga) — nie obsługuje części atrybutów `[[vk::...]]`
+- [ ] Tekstury osadzone w GLTF/GLB są zapisywane do `/tmp/gltf_embed_*.bmp` i wczytywane z dysku — wczytywać prosto z pamięci (`engine/object/gltf/model_gltf.cpp`)
 
-3. Proponowany system zarządzania (Scene i Object)
-Stwórz klasę Scene, która jest "sercem" wszystkiego.
+---
 
-C++
-class Scene {
-    // Zarządza pulą bytów i ich komponentami (np. za pomocą biblioteki EnTT)
-    EntityManager entityManager;
+## 4. Teren 3D (porównanie ze starym systemem)
 
-    void update(float dt) {
-        // Systemy wykonują logikę
-        physicsSystem.update(entityManager, dt);
-        animationSystem.update(entityManager, dt);
-    }
+- [x] LOD stitching (`TerrainIndexGenerator`, `computeStitchConfig`)
+- [x] Multi-texturing z maskami (do 12 warstw)
+- [x] Dynamiczny LOD wg odległości od kamery
+- [x] Frustum culling węzłów quadtree
+- [x] Znajdowanie sąsiadów do stitchingu
+- [x] Teselacja zagęszczająca siatkę
+- [x] Wygładzanie krawędzi do poziomu wody, generatory, heightmapa, XML/JSON, zapytania wysokości
+- [ ] Przypinanie obiektów do węzłów quadtree (teraz `TerrainPlacementComponent` tylko dociąga wysokość)
+- [ ] Debug rendering — wireframe węzłów quadtree
 
-    void render(Renderer& renderer) {
-        // RenderSystem zbiera wszystko co ma MeshComponent i TransformComponent
-        renderSystem.render(entityManager, renderer);
-    }
-};
-4. Co z "rodzicem" (Hierarchy)?
-To klasyczny błąd w VObject. Nie rób hierarchii w klasie obiektu!
-Zrób to za pomocą komponentu HierarchyComponent i specjalnego systemu TransformSystem.
+---
 
-TransformSystem w każdej klatce oblicza "Globalną Macierz" (Local Matrix * Parent Global Matrix).
+## 5. Pomysły na przyszłość
 
-Dzięki temu, jeśli zmienisz pozycję rodzica, dzieci automatycznie zaktualizują swoją pozycję w następnej klatce bez "dziedziczenia" pozycji w klasie C++.
-
-Dlaczego to jest lepsze? (Podsumowanie)
-Brak gigantycznej bazy: VObject znika. Nie masz już klasy Particle dziedziczącej po VObject. Masz cząstkę jako zestaw danych w buforze (o czym rozmawialiśmy wcześniej).
-
-Elastyczność: Jeśli chcesz dodać do postaci system "podpalenia", po prostu dodajesz do niej FireComponent. Nie musisz zmieniać żadnej hierarchii klas.
-
-Wydajność: Systemy operują na ciągłych blokach pamięci (std::vector<TransformComponent>), co jest znacznie szybsze dla CPU niż skakanie po obiektach VObject porozrzucanych w pamięci RAM.
-
-Jak zacząć refaktoryzację?
-Wywal VObject jako bazę dla wszystkiego.
-
-Stwórz klasę Scene, która przechowuje listę obiektów (być może zacznij od prostych structs).
-
-Przenieś logikę renderowania z obiektów do oddzielnego RenderSystem.
-
-Wskazówka: Jeśli projekt jest duży, nie pisz własnego ECS od zera – polecam bibliotekę EnTT (standard w branży, niezwykle szybka).
-
-Czy chcesz, abym rozpisał Ci, jak przenieść obecny MeshComponent i MeshManager do tego systemu, abyś zobaczył różnicę w czytelności kodu?
-
-----------------
-  Mamy trzy główne ścieżki zrównoleglenia i optymalizacji w Vulkanie:                                                                                                                       
-                                                                                                                                                                                            
-  #### 1. GPU Instancing (Rekomendowane i najbardziej wydajne)                                                                                                                              
-                                                                                                                                                                                            
-  Zamiast zrównoleglać CPU, całkowicie eliminujemy pętlę po stronie procesora. Zamiast wysyłać 100 drzew osobno:                                                                            
-                                                                                                                                                                                            
-  • Tworzymy jeden bufor instancji ( VkBuffer instanceBuffer ), w którym zapisujemy macierze transformacji wszystkich 100 drzew.                                                            
-  • Wywołujemy tylko jedno polecenie rysowania:  vkCmdDrawIndexed  z parametrem  instanceCount = 100 .                                                                                      
-  • GPU narysuje wszystkie drzewa na raz w jednym przebiegu.                                                                                                                                
-  • Stan w silniku: Silnik posiada już przygotowany kod pod bindowanie  instanceBuffer  (w  opaque_pass.cpp ), ale wymagałoby to modyfikacji shaderów  default / gbuffer , aby potrafiły    
-  odczytywać macierz modelu z wejściowego slotu vertexów o indeksie instancji ( VK_VERTEX_INPUT_RATE_INSTANCE ) zamiast z Push Constants.                                                   
-                                                                                                                                                                                            
-  #### 2. Zrównoleglenie nagrywania komend Vulkan (Secondary Command Buffers)                                                                                                               
-                                                                                                                                                                                            
-  Vulkan pozwala na nagrywanie komend rysowania z wielu wątków CPU jednocześnie:                                                                                                            
-                                                                                                                                                                                            
-  • Główny wątek: Tworzy główny bufor komend ( Primary VkCommandBuffer ).                                                                                                                   
-  • Wątki pomocnicze (Worker Threads): Każdy wątek otrzymuje własną pulę komend ( VkCommandPool  – nie są one bezpieczne wielowątkowo, więc każdy wątek musi mieć swoją) i nagrywa podrzędny
-  bufor ( Secondary VkCommandBuffer ). Jeden wątek może nagrywać np. teren, drugi drzewa i trawę, trzeci cienie.                                                                            
-  • Połączenie: Na koniec wątek główny wykonuje jedno szybkie połączenie za pomocą:                                                                                                         
-    vkCmdExecuteCommands(primaryCmdBuffer, secondaryCmdBuffers.size(), secondaryCmdBuffers.data());                                                                                         
-                                                                                                                                                                                            
-  • Pozwala to rozłożyć narzut sterownika graficznego Vulkan na wszystkie rdzenie procesora.                                                                                                
-                                                                                                                                                                                            
-  #### 3. Zrównoleglenie systemów aktualizacji ECS                                                                                                                                          
-                                                                                                                                                                                            
-  Przed renderowaniem, silnik wykonuje aktualizacje komponentów (np. animacje MD2, fizyka, TransformSystem). Możemy zrównoleglić te obliczenia na CPU za pomocą puli wątków lub  std::async 
-  w scene.cpp:                                                                                                                                                                         
-                                                                                                                                                                                            
-    // Przykładowe zrównoleglenie aktualizacji pozycji encji:                                                                                                                               
-    void Scene::updateEntities(std::chrono::milliseconds deltaTime) {
-        // Możemy podzielić entities_ na pakiety i przetworzyć je w std::async/wątkach
-    }
-  
+- **Mesh shaders** (task + mesh) — culling i generowanie geometrii na GPU z danych w SSBO.
+- **ECS w stylu data-oriented** — encja jako ID, komponenty jako czyste struktury w ciągłych tablicach, logika w systemach (ewentualnie biblioteka EnTT). Hierarchia przez `HierarchyComponent` + `TransformSystem` (częściowo już jest).
+- **Zrównoleglenie aktualizacji ECS** — `Scene::updateEntities` w paczkach na `JobSystem`.

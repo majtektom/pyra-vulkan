@@ -2147,7 +2147,8 @@ private:
         VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
 
         auto bindingDesc = Vertex::bindingDescription();
-        auto attrDescs = Vertex::attributeDescriptions();
+        // Tylko atrybuty czytane przez vertex shader (np. cienie: pozycja + UV).
+        auto attrDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -2273,6 +2274,7 @@ private:
         std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
         allAttrs.push_back(skinAttrs[0]);
         allAttrs.push_back(skinAttrs[1]);
+        allAttrs = vk::filterVertexAttributes(vertCode, allAttrs);
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -2434,7 +2436,8 @@ private:
         stages[1].pName = "fragmentMain";
 
         auto bindingDesc = Vertex::bindingDescription();
-        auto attrDescs = Vertex::attributeDescriptions();
+        // Tylko atrybuty czytane przez vertex shader (np. cienie: pozycja + UV).
+        auto attrDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -2569,6 +2572,7 @@ private:
         std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
         allAttrs.push_back(skinAttrs[0]);
         allAttrs.push_back(skinAttrs[1]);
+        allAttrs = vk::filterVertexAttributes(vertCode, allAttrs);
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

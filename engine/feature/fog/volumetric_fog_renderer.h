@@ -43,12 +43,17 @@ public:
     void setHeightFalloff(float f) { fogHeightFalloff_ = f; }
     void setSeaLevel(float s) { seaLevel_ = s; }
     void setFogRadius(float r) { fogRadius_ = r; }
+    void setFogColor(const Vec3& color) { fogColor_ = color; }
+    // Kierunek promieni słońca (od słońca do sceny), jak SceneLight::direction światła kierunkowego.
+    void setSunDirection(const Vec3& direction) { sunDirection_ = normalize(direction); }
     void setLocalVolumes(std::vector<LocalFogVolume> volumes);
     const std::vector<LocalFogVolume>& localVolumes() const { return localVolumes_; }
     float getFogDensity() const { return fogDensity_; }
     float getHeightFalloff() const { return fogHeightFalloff_; }
     float getSeaLevel() const { return seaLevel_; }
     float getFogRadius() const { return fogRadius_; }
+    const Vec3& getFogColor() const { return fogColor_; }
+    const Vec3& getSunDirection() const { return sunDirection_; }
 
 private:
     void createVolumeTexture(VkDevice device, VkPhysicalDevice physicalDevice);
@@ -87,6 +92,8 @@ private:
     float fogHeightFalloff_ = 0.004f;
     float seaLevel_ = 0.0f;
     float fogRadius_ = 1500.0f;
+    Vec3 fogColor_{0.575f, 0.68f, 0.88f};
+    Vec3 sunDirection_ = normalize(Vec3{0.32f, -0.77f, 0.56f}); // ~50° nad horyzontem
     std::vector<LocalFogVolume> localVolumes_;
     bool localVolumesDirty_ = true; // bufor GPU wymaga ponownego wypełnienia
 };

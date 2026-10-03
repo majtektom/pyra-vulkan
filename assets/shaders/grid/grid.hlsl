@@ -8,8 +8,9 @@ cbuffer GlobalUniformBufferObject : register(b0)
 struct VertexInput
 {
     [[vk::location(0)]] float3 position : POSITION; // Pozycja wierzchołka w przestrzeni świata
-    [[vk::location(1)]] float3 color : COLOR;        // Kolor linii siatki przekazany z CPU
-    [[vk::location(2)]] float2 texCoord : TEXCOORD0; // Nieużywane współrzędne UV (dla zgodności z formatem Vertex)
+    // Lokacje zgodne z Vertex::attributeDescriptions(): 1 = normalna (nieużywana), 2 = kolor, 3 = UV.
+    [[vk::location(2)]] float3 color : COLOR;        // Kolor linii siatki przekazany z CPU
+    [[vk::location(3)]] float2 texCoord : TEXCOORD0; // Nieużywane współrzędne UV (dla zgodności z formatem Vertex)
 };
 
 struct VertexOutput

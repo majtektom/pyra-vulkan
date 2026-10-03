@@ -275,6 +275,8 @@ const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& mate
     std::vector<VkVertexInputBindingDescription> bindings = {bindingDesc, binding2};
     std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
     allAttrs.insert(allAttrs.end(), binding2Attrs.begin(), binding2Attrs.end());
+    // Tylko atrybuty czytane przez vertex shader (reszta to ostrzeżenie wydajnościowe walidacji).
+    allAttrs = vk::filterVertexAttributes(vertCode, allAttrs);
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

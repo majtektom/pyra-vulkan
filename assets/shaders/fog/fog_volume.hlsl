@@ -41,9 +41,11 @@ float localFogDensity(float3 worldPos, uint volumeCount)
 }
 
 groupshared float densities[FROXEL_Z];
-groupshared float3 lights[FROXEL_Z];
+groupshared float3 inscatter[FROXEL_Z];
 groupshared float distances[FROXEL_Z];
 
+// Jedna grupa = jedna kolumna froxeli (piksel ekranu × FROXEL_Z plasterków wzdłuż promienia).
+// Wynik w plasterku z: (światło rozproszone od kamery do plasterka, transmitancja do plasterka).
 [numthreads(1, 1, FROXEL_Z)]
 void main(uint3 id : SV_DispatchThreadID, uint3 gtid : SV_GroupThreadID)
 {
@@ -54,62 +56,53 @@ void main(uint3 id : SV_DispatchThreadID, uint3 gtid : SV_GroupThreadID)
     uint y = id.y;
     uint z = gtid.z;
 
+    // Macierz projekcji odwraca już Y pod Vulkana, więc NDC = uv * 2 - 1 bez dodatkowego odbicia
+    // (ta sama konwencja co w ocean.hlsl i fog_composite.hlsl).
     float2 screenUV = (float2(x, y) + 0.5) / float2(width, height);
     float2 ndc = screenUV * 2.0 - 1.0;
-    ndc.y = -ndc.y;
 
-    // Reconstruct world position on the far plane (clip-space depth = 1.0)
-    float4 farClip = float4(ndc, 1.0, 1.0);
-    float4 farWorld4 = mul(invViewProj, farClip);
+    // Punkt na dalekiej płaszczyźnie (clip-space depth = 1.0) wyznacza kierunek promienia.
+    float4 farWorld4 = mul(invViewProj, float4(ndc, 1.0, 1.0));
     float3 farWorld = farWorld4.xyz / farWorld4.w;
 
-    // Normalized world-space distance for this slice [0, 1]
+    // Plasterki rozłożone równomiernie w odległości od kamery, do fogRadius.
     float t = (z + 0.5) / slices;
-
-    // World position at uniform world-space distance from camera
     float3 viewDir = normalize(farWorld - cameraPos.xyz);
-    float viewDist = length(farWorld - cameraPos.xyz);
-    float maxDist = min(viewDist, fogRadius);
+    float maxDist = min(length(farWorld - cameraPos.xyz), fogRadius);
     float3 worldPos = cameraPos.xyz + viewDir * t * maxDist;
-
-    // Store world-space distance for step-size computation
     distances[z] = t * maxDist;
 
+    // Gęstość: globalna mgła wysokościowa + lokalne wolumeny (sumowane, nie zamiast).
     uint localVolumeCount = min((uint)round(lightDir.w), 32u);
-    float h = worldPos.y;
-    float density = localVolumeCount > 0u
-        ? localFogDensity(worldPos, localVolumeCount)
-        : fogDensity * exp(-fogHeightFalloff * max(0.0, h - seaLevel));
+    float density = fogDensity * exp(-fogHeightFalloff * max(0.0, worldPos.y - seaLevel));
+    if (localVolumeCount > 0u)
+        density += localFogDensity(worldPos, localVolumeCount);
 
     float noise = 0.5 + 0.5 * sin(worldPos.x * 0.015 + worldPos.y * 0.025 + worldPos.z * 0.015);
     density *= (0.6 + 0.4 * noise);
 
-    float NdotL = dot(normalize(worldPos - cameraPos.xyz), -lightDir.xyz);
-    float phase = 0.15 + 0.85 * max(0.0, NdotL);
-    float3 scatteredLight = density * fogColor.rgb * phase;
+    // lightDir = kierunek promieni słońca; patrząc pod słońce (viewDir ≈ -lightDir) rozpraszanie rośnie.
+    float VdotL = dot(viewDir, -lightDir.xyz);
+    float phase = 0.15 + 0.85 * max(0.0, VdotL);
 
     densities[z] = density;
-    lights[z] = scatteredLight;
+    inscatter[z] = fogColor.rgb * phase; // radiancja rozpraszana przez ośrodek (bez gęstości)
 
     GroupMemoryBarrierWithGroupSync();
 
-    float extinction = 0.0;
+    // Całkowanie od kamery w głąb (front-to-back): światło z każdego odcinka jest tłumione
+    // przez transmitancję WSZYSTKIEGO, co leży bliżej kamery. Odcinek o gęstości d i długości
+    // ds dodaje inscatter * (1 - exp(-d*ds)) — tyle światła, ile ośrodek pochłania, tyle rozprasza.
+    float transmittance = 1.0;
     float3 accumulatedLight = 0.0;
-
-    [unroll] for (uint s = 0; s <= z; s++)
+    for (uint s = 0; s <= z; s++)
     {
-        float stepSize = (s == 0)
-            ? distances[0]
-            : distances[s] - distances[s - 1];
-        stepSize = max(stepSize, 0.001);
+        float stepSize = (s == 0) ? distances[0] : distances[s] - distances[s - 1];
+        float stepT = exp(-densities[s] * max(stepSize, 0.0));
 
-        float d = densities[s];
-        float stepT = exp(-d * stepSize);
-
-        accumulatedLight = accumulatedLight * stepT + lights[s] * (1.0 - stepT);
-        extinction += d * stepSize;
+        accumulatedLight += transmittance * inscatter[s] * (1.0 - stepT);
+        transmittance *= stepT;
     }
 
-    float totalTransmittance = exp(-extinction);
-    fogVolume[uint3(x, y, z)] = float4(accumulatedLight, totalTransmittance);
+    fogVolume[uint3(x, y, z)] = float4(accumulatedLight, transmittance);
 }

@@ -297,6 +297,16 @@ void Engine::renderFrame() {
 
         // Renderer otrzymuje komplet swiatel przygotowany przez ECS.
         renderer->setLights(scene->frameLights());
+
+        // Mgła wolumetryczna rozprasza światło słońca — kierunek z pierwszego światła kierunkowego.
+        if (volumetricFogRenderer_) {
+            for (const auto& light : scene->frameLights()) {
+                if (light.type == SceneLightType::Directional) {
+                    volumetricFogRenderer_->setSunDirection(light.direction);
+                    break;
+                }
+            }
+        }
         hasRenderView = scene->hasFrameView();
         if (hasRenderView) {
             renderView = scene->frameView();
@@ -658,6 +668,10 @@ bool Engine::loadMap(const std::string& path, Scene* scene) {
         volumetricFogRenderer_->setHeightFalloff(fogNode.value("heightFalloff", 0.004f));
         volumetricFogRenderer_->setSeaLevel(fogNode.value("seaLevel", 0.0f));
         volumetricFogRenderer_->setFogRadius(fogNode.value("radius", 1500.0f));
+        if (fogNode.contains("color")) {
+            const auto& c = fogNode["color"];
+            volumetricFogRenderer_->setFogColor({c.value("r", 0.575f), c.value("g", 0.68f), c.value("b", 0.88f)});
+        }
 
         std::vector<LocalFogVolume> localVolumes;
         if (fogNode.contains("volumes") && fogNode["volumes"].is_array()) {

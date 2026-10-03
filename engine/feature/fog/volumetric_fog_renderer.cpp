@@ -556,13 +556,6 @@ void VolumetricFogRenderer::preRender(VkCommandBuffer cmd, uint32_t frameIndex, 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_,
                             0, 1, &computeDescriptorSet_, 0, nullptr);
 
-    float lightDirArray[4] = {0.0f, -1.0f, 0.0f, 0.0f};
-    float sunElevation = 50.0f * 3.14159265f / 180.0f;
-    lightDirArray[0] = cos(sunElevation) * 0.5f;
-    lightDirArray[1] = -sin(sunElevation);
-    lightDirArray[2] = cos(sunElevation) * 0.866f;
-    lightDirArray[3] = static_cast<float>(localVolumes_.size());
-
     struct FogPush {
         Matrix4 invViewProj;
         float cameraPos[4];
@@ -577,8 +570,12 @@ void VolumetricFogRenderer::preRender(VkCommandBuffer cmd, uint32_t frameIndex, 
     push.invViewProj = inverse(multiply(view.projection, view.view));
     std::memcpy(push.cameraPos, &view.cameraPosition, sizeof(Vec3));
     push.cameraPos[3] = 0.0f;
-    push.fogColor[0] = 0.575f; push.fogColor[1] = 0.68f; push.fogColor[2] = 0.88f; push.fogColor[3] = 1.0f;
-    std::memcpy(push.lightDir, lightDirArray, sizeof(float) * 4);
+    push.fogColor[0] = fogColor_.x; push.fogColor[1] = fogColor_.y; push.fogColor[2] = fogColor_.z; push.fogColor[3] = 1.0f;
+    push.lightDir[0] = sunDirection_.x;
+    push.lightDir[1] = sunDirection_.y;
+    push.lightDir[2] = sunDirection_.z;
+    // w = liczba lokalnych wolumenów (push constants mają już maksymalne 128 B, brak miejsca na osobne pole).
+    push.lightDir[3] = static_cast<float>(localVolumes_.size());
     push.fogDensity = fogDensity_;
     push.fogHeightFalloff = fogHeightFalloff_;
     push.seaLevel = seaLevel_;
@@ -617,8 +614,9 @@ void VolumetricFogRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, con
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, compositePipelineLayout_,
                             0, 2, descSets, 0, nullptr);
 
-    struct { uint32_t worldPosIdx; float fogRadius; } compositePush = {};
-    compositePush.worldPosIdx = renderer_->getTextureIndex("gbuffer_world_pos");
+    // Głębia sceny zamiast pozycji z G-buffera — obejmuje też obiekty rysowane forwardem (np. teren).
+    struct { uint32_t sceneDepthIdx; float fogRadius; } compositePush = {};
+    compositePush.sceneDepthIdx = renderer_->getTextureIndex("ocean_scene_depth");
     compositePush.fogRadius = fogRadius_;
     vkCmdPushConstants(cmd, compositePipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(compositePush), &compositePush);

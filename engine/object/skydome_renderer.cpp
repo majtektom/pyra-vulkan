@@ -182,7 +182,7 @@ void SkydomeRenderer::init(Renderer* renderer) {
     std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertStage, fragStage};
 
     auto bindingDesc = Vertex::bindingDescription();
-    auto attribDescs = Vertex::attributeDescriptions();
+    auto attribDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

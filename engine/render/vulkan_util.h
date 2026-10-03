@@ -34,6 +34,26 @@ namespace vk {
 [[nodiscard]] VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code);
 
 /**
+ * @brief Zostawia tylko te atrybuty wierzchołka, które vertex shader faktycznie czyta.
+ *
+ * Kompilator usuwa nieużywane wejścia z SPIR-V, a pipeline'y dostają pełny układ Vertex
+ * (lokacje 0–3). Atrybuty bez odpowiadającego wejścia shadera są dozwolone, ale warstwa
+ * walidacyjna zgłasza je jako ostrzeżenie wydajnościowe — GPU i tak pobiera te dane.
+ * Lokacje wejść są odczytywane bezpośrednio z kodu SPIR-V (OpVariable Input + Location).
+ * Gdy kod nie jest poprawnym SPIR-V, zwraca atrybuty bez zmian.
+ */
+[[nodiscard]] std::vector<VkVertexInputAttributeDescription> filterVertexAttributes(
+    const std::vector<char>& vertexSpirv,
+    const VkVertexInputAttributeDescription* attributes,
+    size_t attributeCount);
+
+template <typename Container>
+[[nodiscard]] std::vector<VkVertexInputAttributeDescription> filterVertexAttributes(
+    const std::vector<char>& vertexSpirv, const Container& attributes) {
+    return filterVertexAttributes(vertexSpirv, std::data(attributes), std::size(attributes));
+}
+
+/**
  * @brief Wyszukuje indeks typu pamięci fizycznej karty graficznej, który spełnia wymagania sprzętowe i logiczne.
  * 
  * GPU posiada różne rodzaje pamięci (np. Device Local - szybka pamięć VRAM, Host Visible - pamięć dostępna dla CPU).

@@ -63,7 +63,7 @@ void GridRenderer::init(Renderer* renderer) {
     // 2. USTAWIENIA WEJSCIA WIERZCHOLKOW (wspoldzielone z Vertex)
     // ---------------------------------------------------------------
     const auto bindingDesc = Vertex::bindingDescription();
-    const auto attribDescs = Vertex::attributeDescriptions();
+    const auto attribDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

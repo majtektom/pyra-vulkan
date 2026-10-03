@@ -33,7 +33,7 @@ Texture2D<float4> textures[] : register(t1, space0);
 [[vk::push_constant]]
 cbuffer PushConstants
 {
-    uint worldPosTexIndex;
+    uint sceneDepthTexIndex; // głębia sceny (bindless "ocean_scene_depth") — obejmuje też obiekty forward
     float fogRadius;
 };
 
@@ -53,37 +53,23 @@ VertexOutput vertexMain(uint vid : SV_VertexID)
 
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
-    // Sample world position directly from G-buffer (avoid depth-clear issue in overlay)
-    float3 geomPos = textures[worldPosTexIndex].SampleLevel(globalSampler, input.uv, 0).xyz;
+    // Load zamiast Sample: bez filtrowania głębi (nie każdy format depth wspiera filtr liniowy).
+    float depth = textures[sceneDepthTexIndex].Load(int3(int2(input.position.xy), 0)).r;
 
-    // NDC coordinate (Vulkan: Y-down, so flip Y)
-    float2 ndc = input.uv * float2(2.0, -2.0) + float2(-1.0, 1.0);
-
-    // Reconstruct world position on the far plane
-    float4 farClip = mul(invViewProj, float4(ndc, 1.0, 1.0));
-    float3 farPos = farClip.xyz / farClip.w;
-
-    // Normalized slice coordinate within the fog radius
-    float viewDist = length(farPos - cameraPos.xyz);
-    float geomDist = length(geomPos - cameraPos.xyz);
+    // Macierz projekcji odwraca już Y pod Vulkana: NDC = uv * 2 - 1 (jak w ocean.hlsl).
+    float2 ndc = input.uv * 2.0 - 1.0;
     float maxDist = max(fogRadius, 0.001);
 
-    float t;
-    float farFade;
-    if (geomDist < 0.001) {
-        t = 1.0;
-        farFade = 0.0;
-    } else {
-        t = saturate(geomDist / maxDist);
-        farFade = 1.0;
+    // Niebo (depth = 1): mgła na całej długości wolumenu. Geometria: do odległości od kamery.
+    float t = 1.0;
+    if (depth < 0.99999)
+    {
+        float4 world = mul(invViewProj, float4(ndc, depth, 1.0));
+        float3 geomPos = world.xyz / max(world.w, 0.00001);
+        t = saturate(length(geomPos - cameraPos.xyz) / maxDist);
     }
 
-    // Sample accumulated fog from the 3D volume
-    float3 volUV = float3(input.uv, t);
-    float4 fogData = fogVolume.SampleLevel(volumeSampler, volUV, 0);
-
-    float3 fogScattered = fogData.rgb * farFade;
-    float fogFactor = (1.0 - fogData.a) * farFade;
-
-    return float4(fogScattered, fogFactor);
+    // rgb = światło rozproszone, a = transmitancja; blending: dst * a + rgb.
+    float4 fogData = fogVolume.SampleLevel(volumeSampler, float3(input.uv, t), 0);
+    return float4(fogData.rgb, 1.0 - fogData.a);
 }

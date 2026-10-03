@@ -43,6 +43,56 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
     return shaderModule;
 }
 
+std::vector<VkVertexInputAttributeDescription> filterVertexAttributes(
+    const std::vector<char>& vertexSpirv,
+    const VkVertexInputAttributeDescription* attributes,
+    size_t attributeCount) {
+    std::vector<VkVertexInputAttributeDescription> all(attributes, attributes + attributeCount);
+
+    constexpr uint32_t kSpirvMagic = 0x07230203;
+    constexpr uint32_t kOpDecorate = 71;
+    constexpr uint32_t kOpVariable = 59;
+    constexpr uint32_t kDecorationLocation = 30;
+    constexpr uint32_t kStorageClassInput = 1;
+
+    const size_t wordCount = vertexSpirv.size() / sizeof(uint32_t);
+    if (wordCount < 5) return all;
+    std::vector<uint32_t> words(wordCount);
+    std::memcpy(words.data(), vertexSpirv.data(), wordCount * sizeof(uint32_t));
+    if (words[0] != kSpirvMagic) return all;
+
+    // id -> lokacja oraz zbiór id zmiennych wejściowych. Wbudowane wejścia (np. SV_VertexID)
+    // mają dekorację BuiltIn zamiast Location, więc naturalnie nie trafiają do wyniku.
+    std::vector<std::pair<uint32_t, uint32_t>> locations;
+    std::vector<uint32_t> inputIds;
+    for (size_t i = 5; i < wordCount;) {
+        const uint32_t opcode = words[i] & 0xFFFFu;
+        const uint32_t length = words[i] >> 16;
+        if (length == 0 || i + length > wordCount) return all; // uszkodzony SPIR-V
+        if (opcode == kOpDecorate && length >= 4 && words[i + 2] == kDecorationLocation) {
+            locations.emplace_back(words[i + 1], words[i + 3]);
+        } else if (opcode == kOpVariable && length >= 4 && words[i + 3] == kStorageClassInput) {
+            inputIds.push_back(words[i + 2]);
+        }
+        i += length;
+    }
+
+    std::vector<uint32_t> usedLocations;
+    for (const auto& [id, location] : locations) {
+        if (std::find(inputIds.begin(), inputIds.end(), id) != inputIds.end()) {
+            usedLocations.push_back(location);
+        }
+    }
+
+    std::vector<VkVertexInputAttributeDescription> used;
+    for (const auto& attribute : all) {
+        if (std::find(usedLocations.begin(), usedLocations.end(), attribute.location) != usedLocations.end()) {
+            used.push_back(attribute);
+        }
+    }
+    return used;
+}
+
 // ---------------------------------------------------------------
 // ZARZĄDZANIE PAMIĘCIĄ GPU
 // ---------------------------------------------------------------
