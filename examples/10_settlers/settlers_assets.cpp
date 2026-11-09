@@ -1,3 +1,16 @@
+/**
+ * settlers_assets.cpp - proceduralne modele 3D i materiały gry.
+ *
+ * Wszystkie modele są składane w kodzie z prostych brył (MeshBuilder z silnika):
+ * prostopadłościanów, walców, stożków, sfer i dachów. Nie ma żadnych plików modeli.
+ *
+ * KONWENCJE
+ *  - y = 0 to poziom ziemi; budynki mają fundament schodzący pod ziemię (maskuje nierówny teren),
+ *  - przód modelu (drzwi, twarz postaci) jest skierowany w stronę +Z,
+ *  - kolory są zapisane w wierzchołkach, więc wszystkie modele używają jednego materiału,
+ *  - budynki i postacie mają wersję dla każdej frakcji (flagi, dachy, ubrania w kolorze frakcji),
+ *    a nazwy siatek tworzą funkcje buildingMeshName / unitMeshName.
+ */
 #include "settlers_assets.h"
 
 #include <cmath>
@@ -29,6 +42,7 @@ const Vec3 kSteel{0.78f, 0.8f, 0.84f};
 const Vec3 kMail{0.52f, 0.54f, 0.58f};
 const Vec3 kWindow{0.18f, 0.22f, 0.32f};
 
+// Przyciemnia (f < 1) lub rozjaśnia (f > 1) kolor.
 Vec3 shade(const Vec3& c, float f) {
     return {std::min(1.0f, c.x * f), std::min(1.0f, c.y * f), std::min(1.0f, c.z * f)};
 }
@@ -45,6 +59,7 @@ void foundation(MeshBuilder& b, float half) {
     b.box({0.0f, -2.0f, 0.0f}, {half * 2.0f - 0.6f, 5.0f, half * 2.0f - 0.6f}, kDarkStone);
 }
 
+// Zamek: mury z blankami, cztery baszty z dachami w kolorze frakcji, donżon i brama.
 MeshData castleMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 16.0f);
@@ -85,6 +100,7 @@ MeshData castleMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Dom: ściany z belkami, okna, drzwi, dach dwuspadowy z kominem.
 MeshData houseMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 7.0f);
@@ -104,6 +120,7 @@ MeshData houseMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Chata drwala: drewniane ściany, stos bali, pieniek z siekierą.
 MeshData woodcutterMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 7.5f);
@@ -128,6 +145,7 @@ MeshData woodcutterMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Kamieniarz: kamienna chata z łupkowym dachem i ułożone bloki kamienia.
 MeshData quarryMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 7.5f);
@@ -144,6 +162,7 @@ MeshData quarryMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Farma: zagroda na tyłach i pole ze zbożem z płotkiem (pole jest częścią modelu).
 MeshData farmMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 12.0f);
@@ -165,6 +184,7 @@ MeshData farmMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Koszary: długi budynek, plac ćwiczeń z manekinem i stojakiem na broń.
 MeshData barracksMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 11.0f);
@@ -188,6 +208,7 @@ MeshData barracksMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Wieża: kamienna, z blankami i stożkowym dachem w kolorze frakcji.
 MeshData towerMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 5.5f);
@@ -205,6 +226,7 @@ MeshData towerMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Osadnik w słomkowym kapeluszu; wariant z niesionym surowcem (drewno / kamień / worek zboża).
 MeshData settlerMesh(const Vec3& fc, CarryType carry) {
     MeshBuilder b;
     b.box({-0.4f, 1.1f, 0.0f}, {0.6f, 2.2f, 0.8f}, kPants);
@@ -232,6 +254,7 @@ MeshData settlerMesh(const Vec3& fc, CarryType carry) {
     return b.build();
 }
 
+// Miecznik: kolczuga, tunika w kolorze frakcji, hełm, miecz i tarcza.
 MeshData swordsmanMesh(const Vec3& fc) {
     MeshBuilder b;
     b.box({-0.42f, 1.15f, 0.0f}, {0.62f, 2.3f, 0.85f}, {0.25f, 0.25f, 0.28f});
@@ -251,6 +274,7 @@ MeshData swordsmanMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Łucznik: zielona tunika, kaptur w kolorze frakcji, łuk i kołczan.
 MeshData archerMesh(const Vec3& fc) {
     MeshBuilder b;
     const Vec3 tunic{0.32f, 0.45f, 0.2f};
@@ -269,6 +293,7 @@ MeshData archerMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Sosna: pień i trzy stożki igliwia (tint zmienia odcień zieleni).
 MeshData pineMesh(float tint) {
     MeshBuilder b;
     const Vec3 leaves{0.12f * tint, 0.38f * tint, 0.16f * tint};
@@ -279,6 +304,7 @@ MeshData pineMesh(float tint) {
     return b.build();
 }
 
+// Drzewo liściaste: pień i trzy kule korony.
 MeshData oakMesh(float tint) {
     MeshBuilder b;
     const Vec3 leaves{0.27f * tint, 0.55f * tint, 0.18f * tint};
@@ -289,6 +315,7 @@ MeshData oakMesh(float tint) {
     return b.build();
 }
 
+// Skała: kilka nieregularnych brył (sfery o małej liczbie ścian wyglądają jak kamień).
 MeshData rockMesh(int variant) {
     MeshBuilder b;
     const Vec3 c{0.55f, 0.54f, 0.52f};
@@ -308,6 +335,7 @@ MeshData rockMesh(int variant) {
     return b.build();
 }
 
+// Strzała wzdłuż osi +Z: drzewce, grot i lotki.
 MeshData arrowMesh() {
     MeshBuilder b;
     b.box({0.0f, 0.0f, 0.0f}, {0.14f, 0.14f, 3.4f}, kWood);
@@ -317,6 +345,7 @@ MeshData arrowMesh() {
     return b.build();
 }
 
+// Rusztowanie o jednostkowym rozmiarze - skalowane do obrysu budowanego budynku.
 MeshData scaffoldMesh() {
     // Rusztowanie o jednostkowym rozmiarze, skalowane do obrysu budynku.
     MeshBuilder b;
@@ -336,6 +365,7 @@ MeshData scaffoldMesh() {
     return b.build();
 }
 
+// Gruzowisko po zniszczonym budynku (skalowane do jego rozmiaru).
 MeshData rubbleMesh() {
     MeshBuilder b;
     const Vec3 c{0.3f, 0.28f, 0.26f};
@@ -349,10 +379,12 @@ MeshData rubbleMesh() {
 
 } // namespace
 
+// Nazwa siatki budynku dla frakcji, np. "b_house_0".
 std::string buildingMeshName(BuildingType type, int faction) {
     return std::string(buildingDef(type).meshBase) + "_" + std::to_string(faction);
 }
 
+// Nazwa siatki jednostki; osadnik ma osobne siatki dla każdego niesionego surowca.
 std::string unitMeshName(UnitType type, int faction, CarryType carry) {
     static const char* names[] = {"u_settler", "u_sword", "u_archer"};
     std::string n = std::string(names[static_cast<int>(type)]) + "_" + std::to_string(faction);
@@ -362,6 +394,7 @@ std::string unitMeshName(UnitType type, int faction, CarryType carry) {
     return n;
 }
 
+// Nazwy wariantów drzew i skał.
 std::string treeMeshName(int variant) {
     return "s_tree_" + std::to_string(variant);
 }
@@ -370,6 +403,7 @@ std::string rockMeshName(int variant) {
     return "s_rock_" + std::to_string(variant);
 }
 
+// Tworzy wszystkie siatki gry raz, na starcie programu (są wspólne dla wszystkich partii).
 void buildGameMeshes(Engine& engine) {
     auto* mm = engine.getMeshManager();
     for (int f = 0; f < kFactionCount; ++f) {
@@ -413,6 +447,8 @@ void buildGameMeshes(Engine& engine) {
     mm->loadMesh(kRubbleMesh, rubbleMesh());
 }
 
+// Materiały: zwykły (kolory z wierzchołków), półprzezroczysty zielony/czerwony do podglądu budowy
+// i półprzezroczysty do siatki kolizji w trybie debug.
 GameMaterials createGameMaterials(Engine& engine) {
     auto* mats = engine.getMaterialManager();
     GameMaterials out;

@@ -68,6 +68,10 @@ Menu (główne i pauza) ma okna **Ustawienia** (muzyka/efekty wł./wył. i gło�
 pełny ekran, synchronizacja pionowa, synchronizacja GPU-CPU, limit FPS, cienie — zapis w `save/settlers_settings.json`)
 oraz **Sterowanie** z pełną listą klawiszy.
 
+Kod przykładu jest podzielony na symulację (`World`, pliki `world_*.cpp`) i aplikację (`SettlersApp`, pliki `app_*.cpp`).
+Mapa plików i kolejność czytania: komentarz na początku `examples/10_settlers/main.cpp`; opisy klas
+w `settlers_world.h` i `settlers_app.h`.
+
 Prędkość czasu: klawisze **[** i **]** (x1, x2, x4, x8, x16) albo przycisk w menu pauzy. W menu głównym
 **Pokaz: AI kontra AI** — komputer gra za obie strony, a gracz ogląda (domyślnie x4).
 
