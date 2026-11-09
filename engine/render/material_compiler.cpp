@@ -107,7 +107,8 @@ VkDescriptorSetLayout MaterialCompiler::createBoneDescriptorSetLayout() {
 
 const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& materialData) {
     // Generowanie unikalnego klucza na podstawie stanu materiału
-    PipelineKey key{materialData.shaderProgram, materialData.blendMode, materialData.depthTest, materialData.depthWrite, materialData.cullMode};
+    PipelineKey key{materialData.shaderProgram, materialData.blendMode, materialData.depthTest, materialData.depthWrite,
+                    materialData.cullMode, materialData.colorWrite};
     
     // Zwrócenie potoku, jeśli jest już w pamięci podręcznej
     if (pipelineCache_.count(key)) return pipelineCache_[key];
@@ -348,7 +349,7 @@ const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& mate
     // Konfiguracja mieszania kolorów (Color Blending) dla docelowego bufora ramki
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    
+
     if (materialData.blendMode == BlendMode::Additive) {
         // Mieszanie addytywne: kolor_wyjsciowy = kolor_zrodlowy * alfa_zrodlowa + kolor_tla
         // Przydatne przy cząsteczkach ognia, wybuchów itp.
@@ -367,6 +368,17 @@ const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& mate
         colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
         colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    } else if (!materialData.colorWrite) {
+        // Potok "tylko głębokość" (wstępny zapis głębokości przezroczystych obiektów): mieszanie ZERO/ONE
+        // zostawia kolor bufora bez zmian. Celowo nie colorWriteMask = 0 - sterownik NVIDIA 615 wysypuje się
+        // przy kompilacji takiego potoku (SEGV w libnvidia-gpucomp).
+        colorBlendAttachment.blendEnable = VK_TRUE;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
     } else {
         // Mieszanie wyłączone - obiekty nieprzezroczyste (nadpisywanie koloru bufora)

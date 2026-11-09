@@ -573,17 +573,26 @@ GameMaterials createGameMaterials(Engine& engine) {
     solid.cullMode = CullMode::Back;
     out.solid = mats->add(solid);
 
+    // Podgląd budynku przed postawieniem: półprzezroczysty, zielony (można) / czerwony (nie można).
+    // depthPrepass: silnik najpierw zapisuje samą głębokość modelu, więc widać tylko jego najbliższą
+    // powierzchnię - bez tego tylne i wewnętrzne ściany nakładały się warstwami ("brudny" podgląd).
+    Material preview;
+    preview.name = "settlers_ghost_ok";
+    preview.blendMode = BlendMode::Alpha;
+    preview.depthWrite = false;
+    preview.depthPrepass = true;
+    preview.cullMode = CullMode::Back;
+    preview.roughnessFactor = 0.85f;
+    preview.color = {0.55f, 1.25f, 0.55f, 0.6f};   // > 1 rozjaśnia, alfa 0.6
+    out.ghostOk = mats->add(preview);
+
+    preview.name = "settlers_ghost_bad";
+    preview.color = {1.35f, 0.45f, 0.4f, 0.6f};
+    out.ghostBad = mats->add(preview);
+
     Material ghost;
-    ghost.name = "settlers_ghost_ok";
     ghost.blendMode = BlendMode::Alpha;
     ghost.depthWrite = false;
-    ghost.cullMode = CullMode::Back;
-    ghost.color = {0.45f, 1.0f, 0.45f, 0.5f};
-    out.ghostOk = mats->add(ghost);
-
-    ghost.name = "settlers_ghost_bad";
-    ghost.color = {1.0f, 0.3f, 0.25f, 0.5f};
-    out.ghostBad = mats->add(ghost);
 
     ghost.name = "settlers_debug";
     ghost.color = {1.0f, 1.0f, 1.0f, 0.55f};

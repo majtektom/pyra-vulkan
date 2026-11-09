@@ -26,6 +26,18 @@ public:
         return data_.blendMode != BlendMode::Disabled; 
     }
 
+    // Wariant materiału: bez mieszania i bez zapisu koloru, z zapisem głębokości (ten sam shader wierzchołków,
+    // więc głębokość jest identyczna jak w przebiegu przezroczystym).
+    const VulkanPipeline* getDepthPrepassPipeline() const override {
+        if (!data_.depthPrepass || data_.blendMode == BlendMode::Disabled) return nullptr;
+        Material depthOnly = data_;
+        depthOnly.blendMode = BlendMode::Disabled;
+        depthOnly.depthWrite = true;
+        depthOnly.colorWrite = false;
+        depthOnly.depthPrepass = false;
+        return &compiler_->getOrCreatePipeline(depthOnly);
+    }
+
     TextureHandle getDiffuseHandle() const override {
         return data_.textureHandle;
     }

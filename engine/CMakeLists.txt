@@ -27,6 +27,7 @@ add_library(engine3d SHARED
     render/render_orchestrator.cpp
     render/opaque_pass.cpp
     render/transparent_pass.cpp
+    render/packet_draw.cpp
     render/material_system.cpp
     render/base_material_instance.cpp
     render/shader_hot_reload.cpp

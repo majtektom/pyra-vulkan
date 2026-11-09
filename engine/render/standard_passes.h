@@ -24,4 +24,16 @@ private:
     std::string name_;
 };
 
+// Wstępny zapis głębokości dla przezroczystych materiałów z Material::depthPrepass
+// (wykonywany przed TransparentPass, gdy bufor głębokości jest jeszcze zapisywalny).
+class TransparentDepthPrepass : public IRenderPass {
+public:
+    TransparentDepthPrepass();
+    void execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
+                 VkDescriptorSet globalDescriptorSet) override;
+    const std::string& getName() const override { return name_; }
+private:
+    std::string name_;
+};
+
 } // namespace engine3d

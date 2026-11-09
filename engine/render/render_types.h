@@ -33,6 +33,8 @@ public:
     virtual TextureHandle getOcclusionHandle() const = 0;
     virtual TextureHandle getEmissiveHandle() const = 0;
     virtual TextureHandle getNormalHandle() const = 0;
+    // Potok "tylko głębokość" dla przezroczystych materiałów z depthPrepass (nullptr = brak prepassu).
+    virtual const VulkanPipeline* getDepthPrepassPipeline() const { return nullptr; }
 };
 
 struct RenderPacket {

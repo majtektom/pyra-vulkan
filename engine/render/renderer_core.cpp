@@ -139,6 +139,7 @@ public:
             defaultMaskIndex_ = getTextureIndex("default_black");
 
             passes_.push_back(std::make_unique<OpaquePass>());
+            passes_.push_back(std::make_unique<TransparentDepthPrepass>());
             passes_.push_back(std::make_unique<TransparentPass>());
 
             createSyncObjects();
@@ -573,6 +574,14 @@ public:
         }
 
         executeFeatures(cmd, view, IRenderFeature::Stage::AfterOpaque);
+
+        // Wstępny zapis głębokości przezroczystych obiektów z Material::depthPrepass - tutaj, bo w części 2
+        // bufor głębokości jest tylko do odczytu (próbkuje go ocean).
+        for (auto& pass : passes_) {
+            if (pass->getName() == "TransparentDepthPrepass") {
+                pass->execute(cmd, currentFrame_, scene, descriptorSets_[currentFrame_]);
+            }
+        }
 
         // End first pass — scene render to swapchain is done
         vkCmdEndRendering(cmd);

@@ -247,6 +247,11 @@ struct Material {
     BlendMode blendMode = BlendMode::Disabled;
     bool depthTest = true;     // Czy sprawdzać głębokość piksela (czy obiekt jest zasłonięty).
     bool depthWrite = true;    // Czy zapisywać głębokość piksela do Depth Buffer.
+    bool colorWrite = true;    // Czy zapisywać kolor (false = potok "tylko głębokość").
+    // Tylko dla przezroczystych (blendMode != Disabled): najpierw zapis samej głębokości obiektu, potem kolor.
+    // Widać wtedy tylko najbliższą powierzchnię - złożony model (podgląd budowy, hologram) nie pokazuje
+    // swoich tylnych i wewnętrznych ścian nałożonych warstwami. Koszt: drugi draw obiektu.
+    bool depthPrepass = false;
     CullMode cullMode = CullMode::Back;
     std::string vertexEntryPoint = "vertexMain";
     std::string fragmentEntryPoint = "fragmentMain";

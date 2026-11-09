@@ -81,13 +81,15 @@ private:
         bool depthTest;
         bool depthWrite;
         CullMode cullMode;
+        bool colorWrite = true;
         
         bool operator==(const PipelineKey& other) const {
             return shaderName == other.shaderName &&
                    blendMode == other.blendMode &&
                    depthTest == other.depthTest &&
                    depthWrite == other.depthWrite &&
-                   cullMode == other.cullMode;
+                   cullMode == other.cullMode &&
+                   colorWrite == other.colorWrite;
         }
     };
 
@@ -100,7 +102,8 @@ private:
                    (static_cast<std::size_t>(k.blendMode) << 16) ^
                    (k.depthTest ? 1u : 0u) ^
                    (k.depthWrite ? 2u : 0u) ^
-                   (static_cast<std::size_t>(k.cullMode) << 8);
+                   (static_cast<std::size_t>(k.cullMode) << 8) ^
+                   (k.colorWrite ? 0u : 4u);
         }
     };
 

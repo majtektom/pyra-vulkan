@@ -60,8 +60,9 @@ engine.getMeshManager()->loadMesh("nazwa", b.build());
 
 - Wszystkie siatki twórz raz przy starcie (`buildGameMeshes`); warianty per frakcja/ładunek przez nazwę (`"b_house_0"`).
 - Siatki zmieniane w trakcie gry (drogi, granice) ładuj pod NOWĄ unikalną nazwą przy każdej zmianie.
-- Jeden materiał "solid" wystarcza dla modeli z kolorem w wierzchołkach; półprzezroczyste podglądy:
-  `Material m; m.blendMode = BlendMode::Alpha; m.depthWrite = false; m.color = {r,g,b,a};`
+- Jeden materiał "solid" wystarcza dla modeli z kolorem w wierzchołkach; półprzezroczyste podglądy / hologramy:
+  `Material m; m.blendMode = BlendMode::Alpha; m.depthWrite = false; m.depthPrepass = true; m.color = {r,g,b,a};`
+  (bez `depthPrepass` złożony model z alfą pokazuje swoje tylne i wewnętrzne ściany warstwami).
   Po zmianie `materialHandle` encji wyzeruj `mc->materialInstance.reset()`.
 - Obiekt przykryty terenem/rośnięcie budowy: skaluj Y encji, fundament schodzący pod ziemię maskuje nierówności.
 

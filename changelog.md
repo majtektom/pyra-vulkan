@@ -5,6 +5,10 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - `Material::depthPrepass` — półprzezroczyste obiekty bez widocznego wnętrza (podglądy budowy, hologramy):
+   `TransparentDepthPrepass` zapisuje najpierw samą głębokość obiektu (część 1 klatki, gdy depth jest zapisywalny),
+   potem TransparentPass rysuje tylko najbliższą powierzchnię; wspólne rysowanie paczek `render/packet_draw.h`
+   (OpaquePass/TransparentPass/prepass); obejście awarii sterownika NVIDIA przy `colorWriteMask = 0` (mieszanie ZERO/ONE)
  - `feature/gui/gui_toolbar.h` — `GuiToolbar` (pasek z grupami ikon, skrótami, stanem enabled/active) i `GuiCard`
    (karta informacji: tytuł, opis, żetony kosztu, ostrzeżenie); `feature/gui/gui_pixel_icon.h` — ikony pixel-art z tekstu
    z domyślną paletą; demo w `05_gui_demo`

@@ -61,6 +61,10 @@ bool SettlersApp::initialize() {
         if (what == "economy") showEconomy_ = true;
         if (what == "demo") startNewGame(true);
         if (what == "game") startNewGame();
+        // SETTLERS_PLACE=<n> (z OPEN=game): od razu tryb stawiania n-tego budynku z paska (kursor na środku ekranu)
+        if (const char* place = std::getenv("SETTLERS_PLACE"); place && gameStarted_) {
+            beginPlacement(kBuildMenu[std::clamp(std::atoi(place), 0, kBuildMenuSize - 1)]);
+        }
         }
         if (std::getenv("SETTLERS_SHOWCASE")) {
             if (!gameStarted_) startNewGame();
@@ -330,6 +334,9 @@ void SettlersApp::update(float dt, Engine& e) {
     // Pomocnicze (zrzuty ekranu): SETTLERS_HOVERBAR=<n> - po chwili kursor nad n-tym przyciskiem paska budowy
     // (0-8 budynki jak klawisze 1-9, -1 droga).
     static int hoverFrames = 0;
+    if (std::getenv("SETTLERS_PLACE") && placing_ && ++hoverFrames >= 30 && hoverFrames % 5 == 0) {
+        pushMouseMotion(screenW_ * 0.5f, screenH_ * 0.55f);
+    }
     if (const char* hb = std::getenv("SETTLERS_HOVERBAR"); hb && ++hoverFrames >= 30 && hoverFrames % 5 == 0) {
         float hx, hy;
         const int n = std::atoi(hb);

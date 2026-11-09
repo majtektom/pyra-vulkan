@@ -1,14 +1,14 @@
 {
-  "fpsLimit": 144,
-  "fullscreen": true,
+  "fpsLimit": 0,
+  "fullscreen": false,
   "masterVolume": 100,
-  "musicOn": true,
+  "musicOn": false,
   "musicVolume": 20,
   "presentMode": 1,
   "sfxOn": true,
   "sfxVolume": 90,
   "shadows": true,
-  "syncMode": 2,
+  "syncMode": 0,
   "windowH": 1050,
   "windowW": 1680
 }

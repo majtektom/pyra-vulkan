@@ -37,6 +37,9 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
 - Zmiana materiału encji: po podmianie `materialHandle` wyzerować `materialInstance`.
 - Pozycja myszy SDL to (0,0) przed pierwszym ruchem — przewijanie krawędzią ekranu dopiero po ruchu myszy.
 - Kółko myszy: używać `InputSnapshot::mouseWheelF` (float), nie wersji int.
+- Obiekty półprzezroczyste nie zapisują głębokości (w TransparentPass depth jest tylko do odczytu), więc złożony model
+  z alfą pokazuje swoje wnętrze warstwami. Dla podglądów/hologramów ustaw `Material::depthPrepass = true`
+  (`TransparentDepthPrepass` zapisuje głębokość w części 1 klatki, potem widać tylko najbliższą powierzchnię).
 - `MeshManager::loadMesh` z unikalną nazwą przy częstych zmianach siatki (np. drogi) — bezpieczniej niż nadpisywanie.
 
 ## Przykład 10_settlers (gra RTS w stylu Osadników)
@@ -58,6 +61,7 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_FLAGDUMP=1` | przy końcu autoplay wypisuje flagi z towarami |
 | `SETTLERS_DEBUG=1|2` | tryb debug od startu (jak F3) |
 | `SETTLERS_OPEN=settings|controls|help|demo|economy|game` | otwiera okno / rozpoczyna partię od razu |
+| `SETTLERS_PLACE=<n>` | z `OPEN=game`: od razu tryb stawiania n-tego budynku (podgląd na środku ekranu) |
 | `SETTLERS_HOVERBAR=<n>` | kursor nad n-tym przyciskiem paska budowy (0-8, -1 droga) - do zrzutów karty informacji |
 | `SETTLERS_CAMERA=<odl>` | odległość kamery (do zrzutów ekranu) |
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
