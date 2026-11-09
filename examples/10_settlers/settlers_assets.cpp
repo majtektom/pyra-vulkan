@@ -249,6 +249,59 @@ MeshData foresterMesh(const Vec3& fc) {
 }
 
 // Kopalnia: skalny kopiec z wejściem obudowanym belkami, tory i wózek z kamieniem.
+// Magazyn: szeroka drewniana hala na kamiennej podmurówce, duże wrota, skrzynie i beczki przy ścianie.
+MeshData warehouseMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 8.5f);
+    b.box({0.0f, 1.0f, -1.0f}, {15.0f, 2.0f, 12.0f}, kDarkStone);           // podmurówka
+    b.box({0.0f, 4.5f, -1.0f}, {14.4f, 5.0f, 11.4f}, kWood);                // ściany
+    for (int i = -3; i <= 3; ++i) {
+        b.box({static_cast<float>(i) * 2.3f, 4.5f, 4.8f}, {0.35f, 5.0f, 0.3f}, kDarkWood);   // deski na froncie
+    }
+    b.box({0.0f, 3.2f, 4.85f}, {4.6f, 4.4f, 0.3f}, kDarkWood);              // wrota
+    b.box({0.0f, 3.2f, 5.0f}, {0.2f, 4.4f, 0.1f}, kWood);
+    b.gableRoof({0.0f, 7.0f, -1.0f}, 15.6f, 12.6f, 4.2f, shade(kRoofTile, 0.85f));
+    // Skrzynie i beczki przed magazynem (po bokach wrót)
+    b.box({-5.2f, 0.9f, 6.4f}, {1.8f, 1.8f, 1.8f}, kWood);
+    b.box({-5.2f, 2.5f, 6.4f}, {1.4f, 1.4f, 1.4f}, shade(kWood, 1.15f));
+    b.box({-3.3f, 0.7f, 6.6f}, {1.4f, 1.4f, 1.4f}, kStone);
+    b.cylinder({4.4f, 0.0f, 6.4f}, 0.8f, 1.8f, 8, kDarkWood);
+    b.cylinder({6.0f, 0.0f, 6.6f}, 0.8f, 1.8f, 8, kDarkWood);
+    b.sphere({5.2f, 2.3f, 6.5f}, 0.75f, 4, 7, {0.85f, 0.75f, 0.45f});   // worek zboża
+    flag(b, {6.8f, 0.0f, -6.5f}, 11.0f, fc);
+    return b.build();
+}
+
+// Flaga na skrzyżowaniu dróg: niski maszt z proporcem w kolorze frakcji i kamienna podstawa.
+MeshData roadFlagMesh(const Vec3& fc) {
+    MeshBuilder b;
+    b.cylinder({0.0f, -0.3f, 0.0f}, 0.9f, 0.5f, 8, kDarkStone);
+    b.cylinder({0.0f, 0.0f, 0.0f}, 0.16f, 5.2f, 6, kDarkWood);
+    b.box({0.85f, 4.4f, 0.0f}, {1.7f, 1.1f, 0.1f}, fc);
+    return b.build();
+}
+
+// Towar leżący przy fladze (mniejszy niż niesiony przez osadnika).
+MeshData goodMesh(CarryType t) {
+    MeshBuilder b;
+    switch (t) {
+    case CarryType::Wood:
+        b.box({0.0f, 0.35f, 0.0f}, {0.6f, 0.6f, 2.4f}, kWood);
+        b.box({0.0f, 0.36f, 1.21f}, {0.5f, 0.5f, 0.02f}, kStraw);
+        break;
+    case CarryType::Stone:
+        b.box({0.0f, 0.45f, 0.0f}, {1.1f, 0.9f, 1.0f}, kStone);
+        break;
+    case CarryType::Food:
+        b.sphere({0.0f, 0.6f, 0.0f}, 0.65f, 4, 7, {0.85f, 0.75f, 0.45f});
+        b.box({0.0f, 1.2f, 0.0f}, {0.25f, 0.25f, 0.25f}, kStraw);
+        break;
+    default:
+        break;
+    }
+    return b.build();
+}
+
 MeshData mineMesh(const Vec3& fc) {
     MeshBuilder b;
     foundation(b, 8.0f);
@@ -440,6 +493,14 @@ std::string unitMeshName(UnitType type, int faction, CarryType carry) {
 }
 
 // Nazwy wariantów drzew i skał.
+std::string flagMeshName(int faction) {
+    return "s_flag_" + std::to_string(faction);
+}
+
+std::string goodMeshName(CarryType t) {
+    return "s_good_" + std::to_string(static_cast<int>(t));
+}
+
 std::string treeMeshName(int variant) {
     return "s_tree_" + std::to_string(variant);
 }
@@ -462,6 +523,8 @@ void buildGameMeshes(Engine& engine) {
         mm->loadMesh(buildingMeshName(BuildingType::Tower, f), towerMesh(fc));
         mm->loadMesh(buildingMeshName(BuildingType::Forester, f), foresterMesh(fc));
         mm->loadMesh(buildingMeshName(BuildingType::Mine, f), mineMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Warehouse, f), warehouseMesh(fc));
+        mm->loadMesh(flagMeshName(f), roadFlagMesh(fc));
 
         for (int c = 0; c <= 3; ++c) {
             const auto carry = static_cast<CarryType>(c);
@@ -484,6 +547,9 @@ void buildGameMeshes(Engine& engine) {
         b.cylinder({0.0f, -0.5f, 0.0f}, 0.85f, 1.4f, 7, kWood);
         b.disk({0.0f, 0.91f, 0.0f}, 0.75f, 7, {0.8f, 0.65f, 0.45f});
         mm->loadMesh(kStumpMesh, b.build());
+    }
+    for (int c = 1; c <= kGoodTypeCount; ++c) {
+        mm->loadMesh(goodMeshName(static_cast<CarryType>(c)), goodMesh(static_cast<CarryType>(c)));
     }
     mm->loadMesh(kArrowMesh, arrowMesh());
     mm->loadMesh(kMarkerMesh, MeshBuilder::makeRing(0.7f, 1.0f, 20, {0.3f, 1.0f, 0.3f}));

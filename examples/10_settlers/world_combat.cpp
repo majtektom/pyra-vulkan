@@ -64,7 +64,8 @@ void World::commandAttackBuilding(const std::vector<int>& ids, int target) {
     }
 }
 
-// Dodaje żołnierza do kolejki koszar. Koszt pobierany od razu; wymaga miejsca w limicie ludności.
+// Dodaje żołnierza do kolejki koszar. Koszt zdejmowany z magazynu od razu, a szkolenie rusza, gdy
+// tragarze dowiozą go do koszar; wymaga miejsca w limicie ludności.
 bool World::queueTraining(int id, UnitType type, std::string* reason) {
     auto fail = [&](const char* r) {
         if (reason) *reason = r;
@@ -86,7 +87,7 @@ bool World::queueTraining(int id, UnitType type, std::string* reason) {
         if (reason) *reason = "brakuje " + missingText(def.cost, fs.res);
         return false;
     }
-    fs.res.subtract(def.cost);
+    orderMaterials(id, def.cost);   // koszt zdjęty z magazynu, tragarze dowiozą go do koszar
     b.trainQueue.push_back(type);
     return true;
 }

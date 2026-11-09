@@ -14,6 +14,8 @@ World::World(Engine& engine, const GameMaterials& materials) : engine_(engine), 
     units.reserve(2048);
     buildings.reserve(512);
     nodes.reserve(1024);
+    flags.reserve(1024);
+    roads.reserve(1024);
 }
 
 World::~World() = default;
@@ -120,9 +122,6 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
     sum += heightAt(posIn.x - h, posIn.z + h) + heightAt(posIn.x + h, posIn.z + h);
     b.pos.y = sum / 5.0f;
 
-    if (!instant) {
-        factions[faction].res.subtract(def.cost);
-    }
 
     b.entity = makeEntity("bld", buildingMeshName(type, faction));
     b.entity->transform().position = b.pos;
@@ -151,6 +150,36 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
     }
     buildings.push_back(std::move(b));
     const int id = static_cast<int>(buildings.size()) - 1;
+
+    // Flaga przed wejściem: istniejąca flaga tuż przy drzwiach, podział drogi biegnącej pod drzwiami
+    // (budynek postawiony przy drodze od razu jest z nią połączony) albo nowa flaga.
+    const Vec3 door = buildings[id].door();
+    int flag = flagNear(faction, door, 2.5f);
+    if (flag < 0) {
+        const int road = roadAtCell(door.x, door.z);
+        if (road >= 0 && roads[road].alive && roads[road].faction == faction) {
+            const Road& r = roads[road];
+            size_t k = 0;
+            float bestD = 1e9f;
+            for (size_t i = 0; i < r.points.size(); ++i) {
+                const float d = dist2D(r.points[i], door);
+                if (d < bestD) {
+                    bestD = d;
+                    k = i;
+                }
+            }
+            if (bestD < 2.5f && k > 0 && k + 1 < r.points.size() && dist2D(r.points[k], flags[r.flagA].pos) >= 3.0f &&
+                dist2D(r.points[k], flags[r.flagB].pos) >= 3.0f) {
+                flag = splitRoad(road, k);
+            }
+        }
+    }
+    if (flag < 0) flag = createFlag(faction, door, id);
+    flags[flag].building = id;
+    buildings[id].flag = flag;
+    routingDirty_ = true;
+    // Materiały na budowę: zdejmowane z magazynów od razu, na plac donoszą je tragarze.
+    if (!instant) orderMaterials(id, def.cost);
     if (instant && def.territoryRadius > 0.0f) territoryDirty_ = true;
     return id;
 }
@@ -163,9 +192,12 @@ void World::completeBuilding(int id) {
     b.progress = 1.0f;
     b.hp = std::max(b.hp, def.maxHp * 0.9f);
     b.hp = std::min(b.hp, def.maxHp);
+    b.delivered = {};   // materiały budowy zużyte
     b.entity->transform().scale = {1.0f, 1.0f, 1.0f};
     destroyEntity(b.scaffold);
     if (def.territoryRadius > 0.0f) territoryDirty_ = true;
+    routingDirty_ = true;   // nowy magazyn przyjmuje towary
+    refreshFactionResources();
     if (b.faction == kPlayer) {
         pushMessage(std::string("Budowa ukończona: ") + def.name, {0.6f, 1.0f, 0.6f, 1.0f});
         emitSound("complete", b.pos, 0.7f, false);
@@ -184,6 +216,13 @@ void World::becomeIdleSettler(Unit& u) {
         Building& b = buildings[u.building];
         if (b.worker >= 0 && &units[b.worker] == &u) b.worker = -1;
     }
+    // Tragarz porzuca zlecenie (rezerwacje są zwalniane, niesiony towar zostaje na fladze).
+    if (isCarrierState(u.state)) releaseCarrierJob(u);
+    u.atFlag = -1;
+    u.jobFlag = -1;
+    u.jobOrder = -1;
+    u.jobDest = -1;
+    u.carryCount = 0;
     u.resourceNode = -1;
     u.building = -1;
     u.state = UnitState::Idle;
@@ -243,6 +282,18 @@ void World::destroyBuilding(int id, int killerFaction) {
     destroyEntity(b.ring);
     if (def.territoryRadius > 0.0f) territoryDirty_ = true;
 
+    // Zapasy magazynu przepadają. Flaga zostaje, jeśli prowadzą do niej drogi (to już zwykła flaga).
+    b.stock = {};
+    b.incoming = 0;
+    b.delivered = {};
+    if (b.flag >= 0 && b.flag < static_cast<int>(flags.size()) && flags[b.flag].alive) {
+        flags[b.flag].building = -1;
+        if (flags[b.flag].roads.empty()) removeFlag(b.flag);
+    }
+    b.flag = -1;
+    routingDirty_ = true;
+    refreshFactionResources();
+
     if (b.faction == kPlayer) {
         pushMessage(std::string("Utracono budynek: ") + def.name, {1.0f, 0.5f, 0.4f, 1.0f});
     } else if (killerFaction == kPlayer) {
@@ -260,7 +311,7 @@ void World::demolish(int id) {
     Building& b = buildings[id];
     if (!b.alive || b.type == BuildingType::Castle) return;
     const Resources& c = buildingDef(b.type).cost;
-    factions[b.faction].res.add({c.wood / 2, c.stone / 2, c.food / 2});
+    deposit(b.faction, {c.wood / 2, c.stone / 2, c.food / 2});
     destroyBuilding(id, -1);
 }
 

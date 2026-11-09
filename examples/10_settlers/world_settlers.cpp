@@ -7,9 +7,15 @@
  *   BUDOWA / NAPRAWA:
  *     Idle --(dispatchJobs)--> GoBuild --(dotarł)--> Building --(gotowe)--> Idle
  *
- *   PRACA W WARSZTACIE (drwal, kamieniarz, farma):
+ *   PRACA W WARSZTACIE (drwal, kamieniarz, farma, kopalnia):
  *     Idle --(dispatchJobs)--> GoToWork --(dotarł do drzwi)--> WorkWait
  *     WorkWait --> GoGather --(dotarł do drzewa/skały/pola)--> Gathering --> ReturnHome --> WorkWait ...
+ *     W ReturnHome pracownik odkłada towary na fladze przed warsztatem. Gdy flaga jest pełna,
+ *     czeka w WorkWait z towarem w rękach - produkcja stoi, dopóki tragarz nie odbierze towarów.
+ *
+ *   TRAGARZ (world_roads.cpp):
+ *     Idle --(manageCarriers)--> GoToRoad (do flagi zamku) --> CarrierWait
+ *     CarrierWait --(zlecenie)--> GoToRoad (po towar) --> CarrierWalk (z towarem do celu) --> CarrierWait
  *
  * Przydział prac (kto buduje, kto pracuje) robi World::dispatchJobs w world_update.cpp.
  * Ten sam stan GoBuild/Building służy też do naprawy ukończonego, uszkodzonego budynku.
@@ -35,6 +41,9 @@ void World::updateSettler(Unit& u, int id, float dt) {
     case UnitState::GoGather:   settlerGoGather(u, id, dt); break;
     case UnitState::Gathering:  settlerGather(u, id, dt); break;
     case UnitState::ReturnHome: settlerReturnHome(u, id, dt); break;
+    case UnitState::GoToRoad:
+    case UnitState::CarrierWait:
+    case UnitState::CarrierWalk: updateCarrier(u, id, dt); break;
     default:                    u.state = UnitState::Idle; break;   // stany wojskowe nie dotyczą osadników
     }
 
@@ -80,13 +89,15 @@ void World::playWorkSound(Unit& u, const char* sound, const Vec3& where, float m
     }
 }
 
-// Oddanie niesionego surowca do zapasów frakcji; pracownik odpoczywa i rusza na kolejny kurs.
+// Odłożenie niesionego surowca na fladze warsztatu (kGoodsPerTrip towarów); pracownik odpoczywa
+// i rusza na kolejny kurs. Gdy flaga jest pełna, czeka z towarem przy wejściu (WorkWait ponawia próbę).
 void World::deliverCarriedResource(Unit& u, Building& b) {
-    // Jeden kurs pracownika przynosi 2 jednostki surowca.
-    FactionState& fs = factions[u.faction];
-    if (u.carry == CarryType::Wood) fs.res.wood += 2;
-    if (u.carry == CarryType::Stone) fs.res.stone += 2;
-    if (u.carry == CarryType::Food) fs.res.food += 2;
+    if (!depositAtWorkshopFlag(u, b)) {
+        u.state = UnitState::WorkWait;
+        u.timer = 1.0f;
+        u.path.clear();
+        return;
+    }
     b.produced++;
     u.carry = CarryType::None;
     u.state = UnitState::WorkWait;
@@ -168,8 +179,14 @@ void World::settlerBuild(Unit& u, float dt) {
     }
 
     // Budowa: jeden osadnik buduje w czasie buildTime, dwóch - dwa razy szybciej.
+    // Postęp nie może wyprzedzić dowiezionych materiałów (np. połowa materiałów = najwyżej 50%).
     const BuildingDef& def = buildingDef(b->type);
-    const float progressStep = dt / def.buildTime;
+    const float materials = def.cost.total() > 0 ? static_cast<float>(b->delivered.total()) / def.cost.total() : 1.0f;
+    if (b->progress >= materials) {
+        faceTowards(u, b->pos, dt);   // czeka na tragarzy z materiałami
+        return;
+    }
+    const float progressStep = std::min(dt / def.buildTime, materials - b->progress);
     b->progress = std::min(1.0f, b->progress + progressStep);
     b->hp = std::min(def.maxHp, b->hp + def.maxHp * 0.9f * progressStep);   // budynek "rośnie" razem z PŻ
     playWorkSound(u, "hammer", u.pos, 0.65f, 0.95f, 0.55f, dt);
@@ -197,7 +214,7 @@ void World::settlerRepair(Unit& u, Building& b, float dt) {
             becomeIdleSettler(u);
             return;
         }
-        fs.res.wood -= 1;
+        spend(b.faction, {1, 0, 0});
         b.repairCredit += def.maxHp * 0.1f;
     }
 
@@ -252,6 +269,12 @@ void World::settlerWorkWait(Unit& u, int id, float dt) {
     }
     u.timer -= dt;
     if (u.timer > 0.0f) return;
+
+    // Towar w rękach: flaga była pełna - ponawiamy odłożenie (bez tego nie ma kolejnego kursu).
+    if (u.carry != CarryType::None) {
+        deliverCarriedResource(u, *b);
+        return;
+    }
 
     const BuildingDef& def = buildingDef(b->type);
     if (b->type == BuildingType::Woodcutter || b->type == BuildingType::Quarry) {

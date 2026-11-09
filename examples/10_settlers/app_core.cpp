@@ -58,6 +58,7 @@ bool SettlersApp::initialize() {
         if (what == "settings") openSubWindow(settingsWindow_, menuWindow_);
         if (what == "controls") openSubWindow(controlsWindow_, menuWindow_);
         if (what == "help") showHelp_ = true;
+        if (what == "economy") showEconomy_ = true;
         if (what == "demo") startNewGame(true);
         }
         if (std::getenv("SETTLERS_SHOWCASE")) {
@@ -112,8 +113,10 @@ void SettlersApp::setupInput() {
     map.bindKey(kActSlower, SDL_SCANCODE_LEFTBRACKET);
     map.bindKey(kActFaster, SDL_SCANCODE_RIGHTBRACKET);
     map.bindKey(kActDebugDump, SDL_SCANCODE_F9);
-    static const SDL_Scancode numKeys[] = {SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
-                                            SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8};
+    map.bindKey(kActRoad, SDL_SCANCODE_T);
+    map.bindKey(kActEconomy, SDL_SCANCODE_I);
+    static const SDL_Scancode numKeys[] = {SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, SDL_SCANCODE_5,
+                                            SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8, SDL_SCANCODE_9};
     for (int i = 0; i < kBuildMenuSize; ++i) {
         map.bindKey("build." + std::to_string(i + 1), numKeys[i]);
     }
@@ -152,6 +155,9 @@ void SettlersApp::setupSkyAndWater() {
 void SettlersApp::newWorld(uint32_t seed, Difficulty diff) {
     clearSelection();
     placing_ = false;
+    roadMode_ = false;
+    roadStart_ = -1;
+    roadPreview_.clear();
     ghost_ = nullptr;
     world_.reset();
     if (sceneManager()->getScene("game")) {
@@ -264,6 +270,7 @@ void SettlersApp::hideAllWindows() {
     buildWindow_->setVisible(false);
     barracksWindow_->setVisible(false);
     actionsWindow_->setVisible(false);
+    carriersWindow_->setVisible(false);
 }
 
 // Menu główne (w tle świat dalej żyje, kamera krąży).
@@ -352,7 +359,14 @@ void SettlersApp::update(float dt, Engine& e) {
 
 // Klawisze działające w każdym trybie: F1 pomoc, M muzyka, F3 tryb debug, F9 zrzut stanu.
 void SettlersApp::handleGlobalKeys(Engine& e) {
-    if (e.actionPressed(kActHelp)) showHelp_ = !showHelp_;
+    if (e.actionPressed(kActHelp)) {
+        showHelp_ = !showHelp_;
+        if (showHelp_) showEconomy_ = false;
+    }
+    if (e.actionPressed(kActEconomy) && mode_ != Mode::Menu) {
+        showEconomy_ = !showEconomy_;
+        if (showEconomy_) showHelp_ = false;
+    }
     if (e.actionPressed(kActMuteMusic)) toggleMusic();
     if (e.actionPressed(kActDebug)) {
         debugMode_ = (debugMode_ + 1) % 3;
@@ -383,7 +397,7 @@ void SettlersApp::updateMode(float dt, Engine& e, const InputSnapshot& in) {
         break;
 
     case Mode::Game: {
-        const bool wasPlacing = placing_;   // ESC przy stawianiu budynku anuluje budowę, a nie pauzuje
+        const bool wasPlacing = placing_ || roadMode_;   // ESC przy stawianiu budynku/drogi anuluje budowę, a nie pauzuje
         updateCameraInput(dt, e, in);
         handleGameInput(e, in);
         if (e.actionPressed(kActSlower)) changeGameSpeed(-1);

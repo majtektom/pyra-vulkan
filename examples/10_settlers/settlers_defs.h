@@ -49,16 +49,35 @@ struct Resources {
         stone += r.stone;
         food += r.food;
     }
+    [[nodiscard]] int total() const { return wood + stone + food; }
 };
 
 std::string costText(const Resources& cost);
 // Opis brakujących surowców, np. "5 drewna, 3 kamienia" (pusty, gdy niczego nie brakuje).
 std::string missingText(const Resources& cost, const Resources& have);
 
+// Towar niesiony przez osadnika / leżący na fladze. Jeden towar = 1 jednostka surowca.
 enum class CarryType { None = 0, Wood = 1, Stone = 2, Food = 3 };
+constexpr int kGoodTypeCount = 3;   // Wood, Stone, Food
+
+// Dostęp do pola Resources wg rodzaju towaru.
+inline int& resourceRef(Resources& r, CarryType t) {
+    return t == CarryType::Wood ? r.wood : (t == CarryType::Stone ? r.stone : r.food);
+}
+inline int resourceOf(const Resources& r, CarryType t) {
+    return t == CarryType::Wood ? r.wood : (t == CarryType::Stone ? r.stone : r.food);
+}
+const char* goodName(CarryType t);
+
+// --- Drogi i transport ---
+constexpr int kFlagCapacity = 8;           // tyle towarów mieści flaga przed warsztatem
+constexpr float kFlagMinSpacing = 7.0f;    // minimalna odległość między flagami
+constexpr int kGoodsPerTrip = 2;           // pracownik warsztatu przynosi 2 towary na kurs
+constexpr int kCarrierLoad = 2;            // tragarz przenosi do 2 towarów tego samego rodzaju naraz
+constexpr float kRoadSpeedBonus = 1.5f;    // po ubitej drodze każdy idzie szybciej
 
 // --- Budynki ---
-enum class BuildingType { Castle = 0, House, Woodcutter, Quarry, Farm, Barracks, Tower, Forester, Mine, Count };
+enum class BuildingType { Castle = 0, House, Woodcutter, Quarry, Farm, Barracks, Tower, Forester, Mine, Warehouse, Count };
 constexpr int kBuildingTypeCount = static_cast<int>(BuildingType::Count);
 
 struct BuildingDef {
@@ -80,6 +99,10 @@ struct BuildingDef {
 };
 
 const BuildingDef& buildingDef(BuildingType type);
+// Pojemność magazynu (zamek, magazyn); 0 = budynek nie przechowuje towarów.
+int storageCapacity(BuildingType type);
+// Warsztaty, których towary trzeba odbierać drogą (drwal, kamieniarz, farma, kopalnia).
+bool producesGoods(BuildingType type);
 
 // --- Jednostki ---
 enum class UnitType { Settler = 0, Swordsman, Archer, Count };

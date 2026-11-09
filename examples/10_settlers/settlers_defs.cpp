@@ -31,7 +31,7 @@ std::string missingText(const Resources& cost, const Resources& have) {
 const BuildingDef& buildingDef(BuildingType type) {
     //                         name          mesh           cost{W,S,F}   time   hp    half  terr   worker pop  workR  atkR   dmg  cd    h
     static const std::array<BuildingDef, kBuildingTypeCount> defs = {{
-        {"Zamek",       "b_castle",     {0, 0, 0},    1.0f,  2200, 16.0f, 175.0f, false, 10, 0.0f,   95.0f, 7.0f, 1.6f, 34.0f,
+        {"Zamek",       "b_castle",     {0, 0, 0},    1.0f,  2200, 16.0f, 175.0f, false, 14, 0.0f,   95.0f, 7.0f, 1.6f, 34.0f,
          "Siedziba rodu. Przyjmuje nowych osadników. Jego utrata kończy grę."},
         {"Dom",         "b_house",      {20, 10, 0},  14.0f, 320,  7.0f,  0.0f,   false, 6,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
          "Zwiększa limit populacji o 6."},
@@ -49,8 +49,30 @@ const BuildingDef& buildingDef(BuildingType type) {
          "Pracownik sadzi drzewa w okolicy - las odrasta dla drwala."},
         {"Kopalnia",    "b_mine",       {25, 10, 0},  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
          "Wydobywa kamień z wnętrza góry. Tylko w górach (powyżej linii lasu)."},
+        {"Magazyn",     "b_store",      {30, 20, 0},  16.0f, 500,  8.5f,  0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
+         "Przechowuje do 200 towarów. Stawiaj blisko produkcji - krótsze drogi."},
     }};
     return defs[static_cast<int>(type)];
+}
+
+int storageCapacity(BuildingType type) {
+    if (type == BuildingType::Castle) return 200;
+    if (type == BuildingType::Warehouse) return 200;
+    return 0;
+}
+
+bool producesGoods(BuildingType type) {
+    return type == BuildingType::Woodcutter || type == BuildingType::Quarry || type == BuildingType::Farm ||
+           type == BuildingType::Mine;
+}
+
+const char* goodName(CarryType t) {
+    switch (t) {
+    case CarryType::Wood: return "Drewno";
+    case CarryType::Stone: return "Kamień";
+    case CarryType::Food: return "Żywność";
+    default: return "";
+    }
 }
 
 const UnitDef& unitDef(UnitType type) {

@@ -155,8 +155,27 @@ bool World::canPlace(BuildingType type, const Vec3& pos, int faction, std::strin
         if (std::abs(n.pos.x - pos.x) < h + 1.5f && std::abs(n.pos.z - pos.z) < h + 1.5f) return fail("Drzewa na drodze");
     }
 
+    // Drogi i flagi: budynek nie może stać na drodze ani na fladze.
+    const float hr = h + 1.5f;
+    for (const auto& r : roads) {
+        if (!r.alive) continue;
+        for (const auto& p : r.points) {
+            if (std::abs(p.x - pos.x) < hr && std::abs(p.z - pos.z) < hr) return fail("Na drodze - postaw obok drogi");
+        }
+    }
+    for (const auto& fl : flags) {
+        if (fl.alive && std::abs(fl.pos.x - pos.x) < hr && std::abs(fl.pos.z - pos.z) < hr) return fail("Na fladze");
+    }
+
     const Vec3 door = add(pos, rotateY({0.0f, 0.0f, h + 3.0f}, rotY));
     if (!nav_.isWalkableWorld(door.x, door.z)) return fail("Wejście zablokowane");
+    // Flaga przed wejściem: może to być istniejąca flaga (tuż przy drzwiach), ale nie flaga "prawie" w tym miejscu.
+    for (const auto& fl : flags) {
+        if (!fl.alive) continue;
+        const float d = dist2D(fl.pos, door);
+        if (d < 2.5f && fl.faction == faction && fl.building < 0) continue;
+        if (d < 4.5f) return fail("Wejście za blisko innej flagi");
+    }
     // Osadnicy wychodzą z zamku - plac budowy musi leżeć w tym samym spójnym obszarze terenu
     const int castle = factions[faction].castle;
     if (castle >= 0 && buildings[castle].alive && !nav_.sameRegion(buildings[castle].door(), door)) {
@@ -350,11 +369,14 @@ bool World::findPlacementNear(BuildingType type, int faction, const Vec3& center
 // Nazwa stanu do debugowania i logów.
 const char* World::stateName(UnitState s) {
     static const char* names[] = {"Idle", "Moving", "GoBuild", "Building", "GoToWork", "WorkWait",
-                                  "GoGather", "Gathering", "ReturnHome", "Attack"};
+                                  "GoGather", "Gathering", "ReturnHome", "Attack",
+                                  "GoToRoad", "CarrierWait", "CarrierWalk"};
     return names[static_cast<int>(s)];
 }
 
 // Stany, w których jednostka powinna się przemieszczać (do wykrywania zawieszeń).
+// Tragarze nie są tu liczeni: czekanie na miejsce na fladze to normalny postój, a z tłumu
+// wydostają się sami (przechodzą przez inne jednostki).
 bool World::isTravelState(UnitState s) {
     return s == UnitState::Moving || s == UnitState::GoBuild || s == UnitState::GoToWork ||
            s == UnitState::GoGather || s == UnitState::ReturnHome;
@@ -364,7 +386,8 @@ bool World::isTravelState(UnitState s) {
 // postęp ścieżki, czas stania, budynek i odległość do jego drzwi.
 std::string World::describeUnit(int id) const {
     static const char* stateNames[] = {"Idle", "Moving", "GoBuild", "Building", "GoToWork", "WorkWait",
-                                       "GoGather", "Gathering", "ReturnHome", "Attack"};
+                                       "GoGather", "Gathering", "ReturnHome", "Attack",
+                                  "GoToRoad", "CarrierWait", "CarrierWalk"};
     const Unit& u = units[id];
     char buf[512];
     int cx = -1, cz = -1;

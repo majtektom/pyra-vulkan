@@ -62,6 +62,16 @@ void SettlersApp::drawHud(Engine& e, const InputSnapshot& in) {
         text("LPM: postaw  PPM: anuluj  R: obróć  Shift: kilka", x, y + 40.0f, 0.42f, {0.85f, 0.85f, 0.85f, 1.0f});
     }
 
+    if (roadMode_ && mode_ == Mode::Game) drawRoadPreview(in);
+
+    // Zaznaczona flaga: ramka wokół jej położenia na ekranie.
+    if (selectedFlag_ >= 0 && w.flags[selectedFlag_].alive) {
+        float sx, sy;
+        if (worldToScreen(*camera_, add(w.flags[selectedFlag_].pos, {0.0f, 2.5f, 0.0f}), screenW_, screenH_, sx, sy)) {
+            gui_->addOverlayFrame(sx - 16.0f, sy - 26.0f, 32.0f, 44.0f, 2.0f, {0.4f, 1.0f, 0.5f, 0.95f}, 0.95f);
+        }
+    }
+
     if (!hoverMissing_.empty() && mode_ == Mode::Game) {
         const float x = static_cast<float>(in.mouseX) + 18.0f, y = static_cast<float>(in.mouseY) + 6.0f;
         const float tw = engine_.measureText(hoverMissing_, 0.52f);
@@ -70,6 +80,7 @@ void SettlersApp::drawHud(Engine& e, const InputSnapshot& in) {
     }
 
     if (showHelp_) drawHelp();
+    if (showEconomy_) drawEconomy();
 }
 
 // Górny pasek: surowce, ludność, liczebność wojska; po prawej poziom, czas gry (z prędkością) i FPS.
@@ -94,6 +105,9 @@ void SettlersApp::drawTopBar(Engine& e) {
     item("Drewno:", std::to_string(fs.res.wood), {0.95f, 0.75f, 0.45f, 1.0f});
     item("Kamień:", std::to_string(fs.res.stone), {0.85f, 0.85f, 0.9f, 1.0f});
     item("Żywność:", std::to_string(fs.res.food), {0.95f, 0.9f, 0.4f, 1.0f});
+    const int used = w.storageUsedOf(kPlayer), cap = w.storageCapacityOf(kPlayer);
+    item("Magazyn:", std::to_string(used) + "/" + std::to_string(cap),
+         used * 10 >= cap * 9 ? Color{1.0f, 0.5f, 0.4f, 1.0f} : Color{0.85f, 0.85f, 0.75f, 1.0f});
     item("Ludność:", std::to_string(fs.population) + "/" + std::to_string(fs.popCap),
          fs.population >= fs.popCap ? Color{1.0f, 0.5f, 0.4f, 1.0f} : Color{0.8f, 1.0f, 0.8f, 1.0f});
     item("Wojsko:", std::to_string(soldiers), {0.7f, 0.85f, 1.0f, 1.0f});
@@ -104,7 +118,7 @@ void SettlersApp::drawTopBar(Engine& e) {
     static const char* diffNames[] = {"Łatwy", "Normalny", "Trudny"};
     std::string right = std::string("Poziom: ") + diffNames[static_cast<int>(w.difficulty)] + "   Czas: " + buf;
     if (gameSpeed_ != 1) right += " (x" + std::to_string(gameSpeed_) + ")";
-    right += "   FPS: " + std::to_string(static_cast<int>(e.getCurrentFPS())) + "   F1: pomoc";
+    right += "   FPS: " + std::to_string(static_cast<int>(e.getCurrentFPS())) + "   I: gospodarka   F1: pomoc";
     if (spectator_) {
         const std::string tag = "POKAZ: AI kontra AI";
         const float tw = engine_.measureText(tag, 0.6f);
@@ -164,12 +178,20 @@ void SettlersApp::drawWorldBars() {
     }
     // Znaczniki problemów nad budynkami gracza (widoczne zawsze)
     for (const auto& b : w.buildings) {
-        if (!b.alive || b.faction != kPlayer || (!b.constructed && !b.unreachable)) continue;
+        if (!b.alive || b.faction != kPlayer) continue;
         const BuildingDef& def = buildingDef(b.type);
         std::string label;
         Color color{1.0f, 0.55f, 0.3f, 1.0f};
+        const bool needsRoad = producesGoods(b.type) || b.type == BuildingType::Warehouse;
         if (b.unreachable) {
             label = "! brak dojścia";
+        } else if (!b.constructed) {
+            if (def.cost.total() <= 0 || w.flagConnected(b.flag)) continue;
+            label = "! brak drogi - brak materiałów";
+        } else if (needsRoad && !w.buildingLinked(b)) {
+            label = b.type == BuildingType::Warehouse ? "! brak drogi do zamku" : "! brak drogi do magazynu";
+        } else if (b.outputBlocked) {
+            label = "! pełna flaga - za mało tragarzy";
         } else if (b.lacksResources) {
             label = b.type == BuildingType::Woodcutter ? "! brak drzew" : "! brak kamienia";
         } else if (b.repairBlocked) {
@@ -245,6 +267,26 @@ void SettlersApp::drawSelectionPanel() {
     const Color title{1.0f, 0.92f, 0.65f, 1.0f};
     const Color body{0.9f, 0.9f, 0.88f, 1.0f};
 
+    if (selectedFlag_ >= 0) {
+        const Flag& fl = w.flags[selectedFlag_];
+        text(fl.building >= 0 ? std::string("Flaga: ") + buildingDef(w.buildings[fl.building].type).name : "Flaga", px + 14, py + 26,
+             0.7f, title);
+        int counts[kGoodTypeCount + 1] = {};
+        for (CarryType g : fl.goods) counts[static_cast<int>(g)]++;
+        std::string goods = "Towary: " + std::to_string(fl.goods.size()) + "/" + std::to_string(kFlagCapacity);
+        for (int t = 1; t <= kGoodTypeCount; ++t) {
+            if (counts[t] > 0) goods += "   " + std::string(goodName(static_cast<CarryType>(t))) + ": " + std::to_string(counts[t]);
+        }
+        const int reserved = static_cast<int>(fl.goods.size()) - w.flagAvailableGoods(fl);
+        if (reserved > 0) goods += "   (tragarze idą po " + std::to_string(reserved) + ")";
+        text(goods, px + 14, py + 54, 0.52f, body);
+        text("Drogi: " + std::to_string(fl.roads.size()) + "   " +
+                 (fl.connected ? "połączona z magazynem" : "BRAK POŁĄCZENIA Z MAGAZYNEM"),
+             px + 14, py + 80, 0.5f, fl.connected ? body : Color{1.0f, 0.55f, 0.35f, 1.0f});
+        text("T: droga od tej flagi   Del: usuń flagę i jej drogi", px + 14, py + 112, 0.45f, {0.75f, 0.75f, 0.7f, 1.0f});
+        return;
+    }
+
     if (selectedBuilding_ >= 0) {
         const Building& b = w.buildings[selectedBuilding_];
         const BuildingDef& def = buildingDef(b.type);
@@ -256,7 +298,17 @@ void SettlersApp::drawSelectionPanel() {
         std::string resLine;
         Color resColor{0.8f, 0.95f, 0.8f, 1.0f};
         if (!b.constructed) {
-            status = "W budowie: " + std::to_string(static_cast<int>(b.progress * 100.0f)) + "%";
+            status = "W budowie: " + std::to_string(static_cast<int>(b.progress * 100.0f)) + "%   Materiały: " +
+                     std::to_string(b.delivered.total()) + "/" + std::to_string(def.cost.total());
+            if (b.faction == kPlayer && def.cost.total() > 0) {
+                if (!w.flagConnected(b.flag)) {
+                    resLine = "Brak drogi do magazynu - tragarze nie dowiozą materiałów (T: droga)";
+                    resColor = {1.0f, 0.5f, 0.35f, 1.0f};
+                } else if (b.delivered.total() < def.cost.total()) {
+                    resLine = "Tragarze donoszą materiały z magazynu";
+                    resColor = {0.8f, 0.9f, 1.0f, 1.0f};
+                }
+            }
         } else if (def.needsWorker) {
             status = (b.worker >= 0 && w.units[b.worker].alive) ? "Pracownik: jest" : "Pracownik: brak (czeka na osadnika)";
             if (b.produced > 0) {
@@ -280,6 +332,11 @@ void SettlersApp::drawSelectionPanel() {
             }
         } else if (b.type == BuildingType::Barracks) {
             status = "Kolejka: " + std::to_string(b.trainQueue.size());
+            if (!b.trainQueue.empty() && !b.trainPaid) {
+                resLine = w.flagConnected(b.flag) ? "Czeka, aż tragarze dowiozą koszt szkolenia"
+                                                  : "Brak drogi do magazynu - koszt szkolenia nie dotrze";
+                resColor = {1.0f, 0.75f, 0.4f, 1.0f};
+            }
             if (!b.trainQueue.empty()) {
                 const float total = unitDef(b.trainQueue.front()).trainTime;
                 status += std::string("   Szkoli: ") + unitDef(b.trainQueue.front()).name + " " +
@@ -296,6 +353,28 @@ void SettlersApp::drawSelectionPanel() {
             else if (rep > 0) status += "   Naprawia: " + std::to_string(rep);
             else if (w.gameTime - b.lastDamagedTime < 8.0f) status += "   Naprawa po walce";
             else status += "   Czeka na naprawę";
+        }
+        // Magazyn: zapasy; warsztat: towary na fladze i połączenie z magazynem.
+        if (b.constructed && storageCapacity(b.type) > 0) {
+            resLine = "Zapas: drewno " + std::to_string(b.stock.wood) + ", kamień " + std::to_string(b.stock.stone) +
+                      ", żywność " + std::to_string(b.stock.food) + "   (" + std::to_string(b.stock.total()) + "/" +
+                      std::to_string(storageCapacity(b.type)) + ")";
+            resColor = b.stock.total() >= storageCapacity(b.type) ? Color{1.0f, 0.55f, 0.35f, 1.0f} : Color{0.8f, 0.95f, 0.8f, 1.0f};
+            if (b.type == BuildingType::Warehouse && !w.buildingLinked(b)) {
+                resLine = "Brak drogi do zamku - połącz Magazyn z siecią dróg ('Połącz drogą' lub T)";
+                resColor = {1.0f, 0.5f, 0.35f, 1.0f};
+            }
+        }
+        if (b.constructed && producesGoods(b.type) && b.flag >= 0) {
+            const Flag& fl = w.flags[b.flag];
+            status += "   Na fladze: " + std::to_string(fl.goods.size()) + "/" + std::to_string(kFlagCapacity);
+            if (!fl.connected) {
+                resLine = "Brak drogi do magazynu - towary nie dotrą (T: droga, albo 'Połącz drogą')";
+                resColor = {1.0f, 0.5f, 0.35f, 1.0f};
+            } else if (b.outputBlocked) {
+                resLine = "Flaga pełna - produkcja wstrzymana, czeka na tragarza";
+                resColor = {1.0f, 0.75f, 0.4f, 1.0f};
+            }
         }
         if (b.unreachable && b.faction == kPlayer) {
             resLine = "Osadnicy nie mogą tu dojść - udrożnij drogę lub zburz (Del)";
@@ -325,7 +404,7 @@ void SettlersApp::drawSelectionPanel() {
         if (u.hp < def.maxHp && w.gameTime - u.lastDamagedTime >= 8.0f && u.state != UnitState::Attack) st += "  (leczy się)";
         text(st, px + 14, py + 76, 0.55f, body);
         if (u.type == UnitType::Settler) {
-            std::string job = "Osadnicy pracują samodzielnie - wznoszą budowle i obsługują warsztaty.";
+            std::string job = "Osadnicy pracują samodzielnie - budują, obsługują warsztaty i noszą towary.";
             if (u.building >= 0 && w.buildings[u.building].alive) {
                 job = std::string("Miejsce: ") + buildingDef(w.buildings[u.building].type).name;
             }
@@ -368,7 +447,7 @@ void SettlersApp::drawSelectionPanel() {
 void SettlersApp::drawHelp() {
     // Dwie kolumny sterowania (wspólna lista z oknem "Sterowanie") + zasady gry
     // Poniżej strefy komunikatów (do 6 linii pod górnym paskiem)
-    const float w = std::min(screenW_ - 40.0f, 1100.0f), h = 450.0f;
+    const float w = std::min(screenW_ - 40.0f, 1100.0f), h = 560.0f;
     const float x = screenW_ * 0.5f - w * 0.5f, y = std::max(kTopBarH + 10.0f, std::min(kTopBarH + 180.0f, screenH_ - h - 20.0f));
     gui_->addOverlayRect(x - 3, y - 3, w + 6, h + 6, {0.55f, 0.45f, 0.25f, 0.95f}, 0.94f);
     gui_->addOverlayRect(x, y, w, h, {0.08f, 0.07f, 0.05f, 0.94f}, 0.935f);
@@ -394,6 +473,10 @@ void SettlersApp::drawHelp() {
         if (col == 1) {
             static const char* rules[] = {
                 "Osadnicy sami budują i pracują. Zamek przyjmuje nowych za żywność.",
+                "Warsztaty odkładają towary na fladze (max 8) - połącz je drogą z magazynem.",
+                "Tragarze niosą towary całą trasą do magazynu i materiały na budowy (I: ilu).",
+                "Po drogach chodzi się szybciej. Surowce liczą się dopiero w magazynie.",
+                "Zamek i Magazyn mieszczą po 200 towarów. Magazyn stawiaj blisko produkcji.",
                 "Domy zwiększają limit ludności. Wieże poszerzają terytorium.",
                 "Osadnicy naprawiają budynki (1 drewno = 10% PŻ).",
                 "Jednostki poza walką leczą się - najszybciej przy zamku i koszarach.",
@@ -410,6 +493,164 @@ void SettlersApp::drawHelp() {
     }
     text("F1 - zamknij pomoc   |   Menu (ESC) -> Sterowanie / Ustawienia", x + 18.0f, y + h - 12.0f, 0.44f,
          {0.7f, 0.7f, 0.7f, 1.0f}, 0.93f);
+}
+
+// Podgląd budowanej drogi: linia trasy (zielona = można, czerwona = nie) i podpowiedź przy kursorze.
+void SettlersApp::drawRoadPreview(const InputSnapshot& in) {
+    const World& w = *world_;
+    const Color ok{0.45f, 1.0f, 0.45f, 0.9f}, bad{1.0f, 0.35f, 0.3f, 0.9f};
+    if (roadStart_ >= 0) {
+        float sx, sy;
+        if (project(onGround(w.flags[roadStart_].pos, 2.0f), sx, sy)) {
+            gui_->addOverlayFrame(sx - 14.0f, sy - 14.0f, 28.0f, 28.0f, 2.0f, ok, 0.95f);
+        }
+        float px = 0, py = 0;
+        bool havePrev = false;
+        for (size_t i = 0; i < roadPreview_.size(); ++i) {
+            float x, y;
+            const bool vis = project(onGround(roadPreview_[i], 0.6f), x, y);
+            if (vis && havePrev) debugLine(px, py, x, y, roadPreviewOk_ ? ok : bad, 3.0f);
+            havePrev = vis;
+            px = x;
+            py = y;
+        }
+    }
+    const float x = static_cast<float>(in.mouseX) + 18.0f, y = static_cast<float>(in.mouseY) + 30.0f;
+    text(roadStart_ < 0 ? "Droga: wskaż flagę lub budynek początkowy" : "Droga: LPM - poprowadź do tego miejsca", x, y, 0.55f,
+         {1, 1, 1, 1});
+    if (!roadReason_.empty()) text(roadReason_, x, y + 20.0f, 0.5f, {1.0f, 0.5f, 0.4f, 1.0f});
+    text("PPM / ESC: koniec   Shift: buduj dalej od istniejącej flagi", x, y + 40.0f, 0.42f, {0.85f, 0.85f, 0.85f, 1.0f});
+}
+
+// Położenie panelu gospodarki (wspólne dla rysowania i okienka z przyciskami tragarzy).
+void SettlersApp::economyPanelRect(float& x, float& y, float& w, float& h) const {
+    w = 640.0f;
+    h = 470.0f;
+    x = screenW_ * 0.5f - w * 0.5f;
+    y = std::max(kTopBarH + 10.0f, screenH_ * 0.5f - h * 0.5f - 40.0f);
+}
+
+// Okno gospodarki (klawisz I): gdzie są towary, zapełnienie magazynów, tragarze i przestoje warsztatów.
+void SettlersApp::drawEconomy() {
+    const World& w = *world_;
+    float x, y, pw, ph;
+    economyPanelRect(x, y, pw, ph);
+    gui_->addOverlayRect(x - 3, y - 3, pw + 6, ph + 6, {0.55f, 0.45f, 0.25f, 0.95f}, 0.94f);
+    gui_->addOverlayRect(x, y, pw, ph, {0.08f, 0.07f, 0.05f, 0.95f}, 0.935f);
+    const Color head{1.0f, 0.9f, 0.6f, 1.0f}, body{0.9f, 0.9f, 0.9f, 1.0f}, dim{0.7f, 0.7f, 0.68f, 1.0f};
+    const Color warn{1.0f, 0.6f, 0.4f, 1.0f};
+
+    // Towary: w magazynach / na flagach / niesione (tragarze i pracownicy)
+    Resources onFlags, carried;
+    for (const auto& fl : w.flags) {
+        if (!fl.alive || fl.faction != kPlayer) continue;
+        for (CarryType g : fl.goods) resourceRef(onFlags, g) += 1;
+    }
+    for (const auto& u : w.units) {
+        if (!u.alive || u.faction != kPlayer || u.carry == CarryType::None) continue;
+        const bool carrier = u.state == UnitState::CarrierWalk;
+        resourceRef(carried, u.carry) += carrier ? u.carryCount : kGoodsPerTrip;
+    }
+    const Resources& stored = w.factions[kPlayer].res;
+
+    float ly = y + 32.0f;
+    text("GOSPODARKA", x + 18.0f, ly, 0.65f, head, 0.93f);
+    ly += 30.0f;
+    const float c1 = x + 150.0f, c2 = x + 270.0f, c3 = x + 390.0f, c4 = x + 510.0f;
+    text("Towar", x + 18.0f, ly, 0.48f, dim, 0.93f);
+    text("w magazynach", c1, ly, 0.48f, dim, 0.93f);
+    text("na flagach", c2, ly, 0.48f, dim, 0.93f);
+    text("niesione", c3, ly, 0.48f, dim, 0.93f);
+    text("razem", c4, ly, 0.48f, dim, 0.93f);
+    ly += 24.0f;
+    for (int t = 1; t <= kGoodTypeCount; ++t) {
+        const auto g = static_cast<CarryType>(t);
+        const int a = resourceOf(stored, g), b = resourceOf(onFlags, g), c = resourceOf(carried, g);
+        text(goodName(g), x + 18.0f, ly, 0.52f, body, 0.93f);
+        text(std::to_string(a), c1, ly, 0.52f, {0.7f, 1.0f, 0.7f, 1.0f}, 0.93f);
+        text(std::to_string(b), c2, ly, 0.52f, body, 0.93f);
+        text(std::to_string(c), c3, ly, 0.52f, body, 0.93f);
+        text(std::to_string(a + b + c), c4, ly, 0.52f, body, 0.93f);
+        ly += 22.0f;
+    }
+    text("Wydawać można tylko towary z magazynów.", x + 18.0f, ly + 4.0f, 0.44f, dim, 0.93f);
+    ly += 34.0f;
+
+    // Magazyny
+    text("MAGAZYNY  " + std::to_string(w.storageUsedOf(kPlayer)) + " / " + std::to_string(w.storageCapacityOf(kPlayer)), x + 18.0f,
+         ly, 0.55f, head, 0.93f);
+    ly += 24.0f;
+    int listed = 0;
+    for (const auto& b : w.buildings) {
+        if (!b.alive || b.faction != kPlayer || storageCapacity(b.type) <= 0) continue;
+        if (listed >= 4) break;
+        const int cap = storageCapacity(b.type);
+        std::string line = std::string(buildingDef(b.type).name);
+        if (!b.constructed) {
+            line += " (w budowie)";
+            text(line, x + 26.0f, ly, 0.48f, dim, 0.93f);
+        } else {
+            text(line, x + 26.0f, ly, 0.48f, body, 0.93f);
+            // Pasek zapełnienia (głębokość mniejsza niż tło okna, żeby był na wierzchu)
+            const float frac = std::clamp(static_cast<float>(b.stock.total()) / cap, 0.0f, 1.0f);
+            gui_->addOverlayRect(x + 159.0f, ly - 11.0f, 202.0f, 11.0f, {0.0f, 0.0f, 0.0f, 0.8f}, 0.933f);
+            gui_->addOverlayRect(x + 160.0f, ly - 10.0f, 200.0f * frac, 9.0f,
+                                 frac >= 1.0f ? Color{1.0f, 0.4f, 0.3f, 1.0f} : Color{0.45f, 0.75f, 1.0f, 1.0f}, 0.932f);
+            text(std::to_string(b.stock.total()) + "/" + std::to_string(cap) + "  (D " + std::to_string(b.stock.wood) + ", K " +
+                     std::to_string(b.stock.stone) + ", Ż " + std::to_string(b.stock.food) + ")",
+                 x + 372.0f, ly, 0.44f, body, 0.93f);
+        }
+        ly += 21.0f;
+        ++listed;
+    }
+    ly += 10.0f;
+
+    // Tragarze (liczbę zmienia się przyciskami w okienku "Tragarze" pod panelem)
+    const TransportStats ts = w.transportStats(kPlayer);
+    const FactionState& fs = w.factions[kPlayer];
+    int roadCount = 0;
+    for (const auto& r : w.roads) roadCount += (r.alive && r.faction == kPlayer) ? 1 : 0;
+    text("TRANSPORT", x + 18.0f, ly, 0.55f, head, 0.93f);
+    ly += 24.0f;
+    text("Tragarze: " + std::to_string(ts.carriers) + " (cel " + std::to_string(ts.target) + (fs.carrierAuto ? ", auto" : ", ręcznie") +
+             ")   zajęci: " + std::to_string(ts.busy) + "   wolni: " + std::to_string(ts.carriers - ts.busy) +
+             "   odcinki dróg: " + std::to_string(roadCount),
+         x + 26.0f, ly, 0.48f, body, 0.93f);
+    ly += 22.0f;
+    text("Towary czekające na odbiór: " + std::to_string(ts.goodsWaiting) + "   dostawy w kolejce: " +
+             std::to_string(ts.ordersWaiting) + "   brak towaru na dostawy: " + std::to_string(ts.ordersUnfunded),
+         x + 26.0f, ly, 0.48f, body, 0.93f);
+    ly += 22.0f;
+    if (ts.carriers < ts.target) {
+        text("Brakuje wolnych osadników na tragarzy - zbuduj Dom", x + 26.0f, ly, 0.46f, warn, 0.93f);
+        ly += 22.0f;
+    } else if (ts.busy == ts.carriers && ts.goodsWaiting + ts.ordersWaiting > ts.carriers) {
+        text("Wszyscy tragarze zajęci, a towary czekają - dodaj tragarzy (+)", x + 26.0f, ly, 0.46f, warn, 0.93f);
+        ly += 22.0f;
+    }
+
+    // Warsztaty
+    int producers = 0, blocked = 0, unconnected = 0;
+    std::string blockedNames;
+    for (const auto& b : w.buildings) {
+        if (!b.alive || b.faction != kPlayer || !b.constructed || !producesGoods(b.type)) continue;
+        ++producers;
+        if (!w.flagConnected(b.flag)) {
+            ++unconnected;
+        } else if (b.outputBlocked) {
+            ++blocked;
+            if (blockedNames.size() < 60) blockedNames += std::string(blockedNames.empty() ? "" : ", ") + buildingDef(b.type).name;
+        }
+    }
+    ly += 6.0f;
+    text("WARSZTATY  " + std::to_string(producers), x + 18.0f, ly, 0.55f, head, 0.93f);
+    ly += 24.0f;
+    text("bez drogi do magazynu: " + std::to_string(unconnected) + "   wstrzymane (pełna flaga): " + std::to_string(blocked),
+         x + 26.0f, ly, 0.48f, (unconnected + blocked) > 0 ? warn : body, 0.93f);
+    ly += 22.0f;
+    if (!blockedNames.empty()) text("Wstrzymane: " + blockedNames, x + 26.0f, ly, 0.44f, warn, 0.93f);
+
+    text("I - zamknij      Tragarze (- / + / Auto):", x + 18.0f, y + ph - 18.0f, 0.46f, dim, 0.93f);
 }
 
 } // namespace settlers

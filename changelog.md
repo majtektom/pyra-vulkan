@@ -14,6 +14,13 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: drogi, flagi i tragarze (`world_roads.cpp`) — towary z warsztatów czekają na fladze (max 8, pełna flaga
+   wstrzymuje produkcję); wspólna pula tragarzy (liczba ustawiana w oknie Gospodarka (I): −/+/Auto) — wolny tragarz
+   niesie towar całą trasą po drogach do najbliższego magazynu z miejscem, a materiały z magazynu na place budowy
+   i koszt szkolenia do koszar (budowa/szkolenie postępują w miarę dostaw); po drogach chodzi się 1,5x szybciej;
+   surowce są dostępne dopiero w magazynie (zamek/Magazyn po 200); nowy budynek Magazyn (9); budowa dróg klawiszem T
+   z podglądem trasy, flagi na skrzyżowaniach, budynek postawiony przy drodze łączy się z nią; przycisk
+   "Połącz drogą"; AI buduje drogi i magazyny; testy transportu, dostaw i budowy drogi myszą w SETTLERS_UITEST
  - Osadnicy: przejmowanie terenu — gdy zasięgi zamków/wież się nakładają, punkt należy do budynku, w którego zasięgu
    leży najgłębiej (`World::territoryOwnerAt`); wspólna granica z dwukolorowymi słupkami, budynki na przejętym terenie płoną
  - Osadnicy: teren jako wyspa (brzegi schodzą do morza), masywy górskie z łagodnymi zboczami (dostępne do chodzenia

@@ -93,9 +93,24 @@ void SettlersApp::handleGameInput(Engine& e, const InputSnapshot& in) {
     if (e.actionPressed(kActDemolish)) demolishSelected();
     if (e.actionPressed(kActHalt)) haltSelected();
     if (e.actionPressed(kActSelectArmy)) selectAllArmy();
+    if (e.actionPressed(kActRoad)) {
+        if (roadMode_) {
+            cancelRoad();
+        } else if (selectedFlag_ >= 0) {
+            beginRoad(selectedFlag_);
+        } else if (selectedBuilding_ >= 0 && world_->buildings[selectedBuilding_].faction == kPlayer) {
+            beginRoad(world_->buildings[selectedBuilding_].flag);
+        } else {
+            beginRoad();
+        }
+    }
 
     if (placing_) {
         updatePlacement(e, in, overUi, shift);
+        return;
+    }
+    if (roadMode_) {
+        updateRoadMode(e, in, overUi, shift);
         return;
     }
 
@@ -153,6 +168,17 @@ void SettlersApp::clickSelect(const InputSnapshot& in, bool additive) {
     }
     const int b = world_->pickBuilding(ray);
     clearSelection();
+    // Flaga gracza w pobliżu klikniętego punktu terenu (gdy nie trafiliśmy w budynek).
+    Vec3 hit;
+    if (b < 0 && world_->pickGround(ray, hit)) {
+        const int fl = world_->flagNear(kPlayer, hit, 3.5f);
+        if (fl >= 0) {
+            selectedFlag_ = fl;
+            world_->setFlagSelected(fl, true);
+            sfx("select", 0.4f);
+            return;
+        }
+    }
     if (b >= 0) {
         selectedBuilding_ = b;
         world_->setBuildingSelected(b, true);
@@ -257,9 +283,11 @@ void SettlersApp::clearSelection() {
     if (world_) {
         for (int id : selectedUnits_) world_->setSelected(id, false);
         if (selectedBuilding_ >= 0) world_->setBuildingSelected(selectedBuilding_, false);
+        if (selectedFlag_ >= 0) world_->setFlagSelected(selectedFlag_, false);
     }
     selectedUnits_.clear();
     selectedBuilding_ = -1;
+    selectedFlag_ = -1;
 }
 
 // Usuwa z zaznaczenia obiekty, które zginęły lub zostały zniszczone.
@@ -268,11 +296,13 @@ void SettlersApp::cleanupSelection() {
                                         [this](int id) { return !world_->units[id].alive; }),
                          selectedUnits_.end());
     if (selectedBuilding_ >= 0 && !world_->buildings[selectedBuilding_].alive) selectedBuilding_ = -1;
+    if (selectedFlag_ >= 0 && !world_->flags[selectedFlag_].alive) selectedFlag_ = -1;
 }
 
 // Wejście w tryb stawiania budynku (przycisk lub klawisz 1-8), o ile stać nas na budynek.
 void SettlersApp::beginPlacement(BuildingType type) {
     if (mode_ != Mode::Game || spectator_) return;
+    cancelRoad();
     const BuildingDef& def = buildingDef(type);
     if (!world_->factions[kPlayer].res.canAfford(def.cost)) {
         world_->pushMessage(std::string(def.name) + ": brakuje " + missingText(def.cost, world_->factions[kPlayer].res),
@@ -365,9 +395,20 @@ void SettlersApp::trainSelected(UnitType type) {
     }
 }
 
-// Del / przycisk: burzy zaznaczony budynek gracza (zamku nie można zburzyć).
+// Del / przycisk: burzy zaznaczony budynek gracza (zamku nie można zburzyć)
+// albo usuwa zaznaczoną flagę razem z dochodzącymi drogami.
 void SettlersApp::demolishSelected() {
-    if (selectedBuilding_ < 0 || spectator_) return;
+    if (spectator_) return;
+    if (selectedFlag_ >= 0) {
+        const int fl = selectedFlag_;
+        const bool buildingFlag = world_->flags[fl].building >= 0;
+        world_->removeFlag(fl);
+        world_->pushMessage(buildingFlag ? "Usunięto drogi od flagi budynku" : "Usunięto flagę i jej drogi",
+                            {0.9f, 0.85f, 0.7f, 1.0f});
+        clearSelection();
+        return;
+    }
+    if (selectedBuilding_ < 0) return;
     const Building& b = world_->buildings[selectedBuilding_];
     if (!b.alive || b.faction != kPlayer || b.type == BuildingType::Castle) return;
     world_->demolish(selectedBuilding_);
@@ -384,10 +425,19 @@ void SettlersApp::updateContextWindows() {
         const Building& b = world_->buildings[selectedBuilding_];
         if (b.alive && b.faction == kPlayer) {
             barracks = b.type == BuildingType::Barracks && b.constructed;
-            actions = b.type != BuildingType::Castle;
+            actions = true;
         }
     }
     barracksWindow_->setVisible(barracks && !spectator_);
+    // Okienko liczby tragarzy - przy dolnej krawędzi panelu gospodarki.
+    const bool econ = showEconomy_ && !spectator_;
+    carriersWindow_->setVisible(econ);
+    if (econ) {
+        float ex, ey, ew, eh;
+        economyPanelRect(ex, ey, ew, eh);
+        carriersWindow_->setPosition(static_cast<int>(ex + ew - 250.0f), static_cast<int>(ey + eh - 50.0f));
+        btnCarrierAuto_->setText(world_->factions[kPlayer].carrierAuto ? "Auto: tak" : "Auto: nie");
+    }
     actionsWindow_->setVisible(actions && !spectator_);
     // Wyszarzenie przycisków budowy, na które nie stać gracza
     // Ustawiane co klatkę: GuiButton sam zmienia kolor przy najechaniu kursorem.
@@ -401,6 +451,143 @@ void SettlersApp::updateContextWindows() {
         if (can) continue;
         if (hover) hoverMissing_ = std::string(buildingDef(buildTypes_[i]).name) + " - brakuje: " +
                                    missingText(buildingDef(buildTypes_[i]).cost, res);
+    }
+}
+
+// =====================================================================================
+// Budowa dróg
+// =====================================================================================
+
+// Wejście w tryb budowy drogi. fromFlag >= 0 - droga zaczyna się od tej flagi, inaczej pierwszy
+// klik wskazuje flagę lub budynek początkowy.
+void SettlersApp::beginRoad(int fromFlag) {
+    if (mode_ != Mode::Game || spectator_) return;
+    cancelPlacement();
+    roadMode_ = true;
+    roadStart_ = (fromFlag >= 0 && world_->flags[fromFlag].alive && world_->flags[fromFlag].faction == kPlayer) ? fromFlag : -1;
+    roadPreview_.clear();
+    roadPreviewTarget_ = {1e9f, 0.0f, 1e9f};
+    dragging_ = false;
+}
+
+void SettlersApp::cancelRoad() {
+    roadMode_ = false;
+    roadStart_ = -1;
+    roadPreview_.clear();
+}
+
+// Flaga w pobliżu punktu terenu pod kursorem, a gdy jej nie ma - flaga budynku gracza pod kursorem.
+// Budynek liczy się tylko wtedy, gdy punkt terenu leży przy nim (promień z ukośnej kamery może
+// zahaczyć o dach budynku stojącego przed wskazanym miejscem).
+int SettlersApp::flagUnderCursor(const InputSnapshot& in, const Vec3& hit) const {
+    const int near = world_->flagNear(kPlayer, hit, 5.0f);
+    if (near >= 0) return near;
+    const int b = world_->pickBuilding(mouseRay(in));
+    if (b < 0) return -1;
+    const Building& bd = world_->buildings[b];
+    const float reach = buildingDef(bd.type).halfSize * 1.8f + 4.0f;
+    if (bd.faction != kPlayer || bd.flag < 0 || std::hypot(hit.x - bd.pos.x, hit.z - bd.pos.z) > reach) return -1;
+    return bd.flag;
+}
+
+// Tryb drogi. Pierwszy LPM: flaga/budynek początkowy. Potem podgląd trasy podąża za kursorem,
+// a LPM buduje drogę do wskazanego punktu (lub flagi/budynku). Gdy droga kończy się na nowej
+// fladze, można od razu prowadzić ją dalej; dojście do istniejącej flagi kończy budowę
+// (z Shift - budujemy dalej). PPM / ESC / T - koniec.
+void SettlersApp::updateRoadMode(Engine& e, const InputSnapshot& in, bool overUi, bool shift) {
+    if (e.mousePressed(1) || e.actionPressed(kActEsc)) {
+        cancelRoad();
+        return;
+    }
+    Vec3 hit;
+    if (!world_->pickGround(mouseRay(in), hit)) return;
+
+    if (roadStart_ < 0) {
+        roadReason_ = "Wskaż flagę lub budynek, od którego zacząć drogę";
+        if (e.mousePressed(0) && !overUi) {
+            const int fl = flagUnderCursor(in, hit);
+            if (fl >= 0) {
+                roadStart_ = fl;
+                sfx("select", 0.5f);
+            } else {
+                world_->pushMessage("Droga musi zaczynać się od flagi albo budynku", {1.0f, 0.6f, 0.45f, 1.0f});
+                sfx("ui_error", 0.6f);
+            }
+        }
+        return;
+    }
+    if (!world_->flags[roadStart_].alive) {
+        cancelRoad();
+        return;
+    }
+
+    // Cel: flaga pod kursorem (także flaga wskazanego budynku) albo punkt terenu.
+    const int targetFlag = flagUnderCursor(in, hit);
+    const Vec3 target = targetFlag >= 0 ? world_->flags[targetFlag].pos : hit;
+    if (std::hypot(target.x - roadPreviewTarget_.x, target.z - roadPreviewTarget_.z) > 1.0f) {
+        roadPreviewTarget_ = target;
+        roadReason_.clear();
+        roadPreviewOk_ = world_->planRoad(kPlayer, roadStart_, target, roadPreview_, &roadReason_);
+        if (!roadPreviewOk_ && roadPreview_.empty()) roadPreview_ = {world_->flags[roadStart_].pos, target};
+    }
+
+    if (e.mousePressed(0) && !overUi) {
+        std::string reason;
+        const int end = world_->buildRoad(kPlayer, roadStart_, target, &reason);
+        if (end < 0) {
+            world_->pushMessage("Nie można zbudować drogi: " + reason, {1.0f, 0.55f, 0.45f, 1.0f});
+            sfx("ui_error", 0.7f);
+            return;
+        }
+        sfx("place", 0.8f);
+        roadPreview_.clear();
+        roadPreviewTarget_ = {1e9f, 0.0f, 1e9f};
+        if (targetFlag >= 0 && !shift) {
+            cancelRoad();   // dołączyliśmy do istniejącej flagi - droga gotowa
+        } else {
+            roadStart_ = end;   // nowa flaga - prowadzimy drogę dalej
+        }
+    }
+}
+
+// Przycisk "Połącz drogą": AI-owy autoConnectFlag dla zaznaczonego budynku gracza.
+void SettlersApp::connectSelected() {
+    if (selectedBuilding_ < 0 || spectator_) return;
+    const Building& b = world_->buildings[selectedBuilding_];
+    if (!b.alive || b.faction != kPlayer || b.flag < 0) return;
+    if (world_->buildingLinked(b)) {
+        world_->pushMessage("Ten budynek jest już połączony drogą", {0.8f, 0.9f, 1.0f, 1.0f});
+        return;
+    }
+    std::string reason;
+    if (world_->autoConnectFlag(b.flag, &reason)) {
+        world_->pushMessage("Zbudowano drogę do sieci magazynu", {0.6f, 1.0f, 0.6f, 1.0f});
+        sfx("place", 0.8f);
+    } else {
+        world_->pushMessage("Nie udało się połączyć: " + reason + " - poprowadź drogę ręcznie (T)", {1.0f, 0.6f, 0.45f, 1.0f});
+        sfx("ui_error", 0.7f);
+    }
+}
+
+// Przycisk -/+ w okienku "Tragarze": ręczna liczba tragarzy (wyłącza tryb Auto).
+void SettlersApp::changeCarriers(int delta) {
+    if (spectator_) return;
+    FactionState& fs = world_->factions[kPlayer];
+    if (fs.carrierAuto) {
+        fs.carrierTarget = world_->carrierTargetOf(kPlayer);   // start od bieżącej wartości automatu
+        fs.carrierAuto = false;
+    }
+    fs.carrierTarget = std::clamp(fs.carrierTarget + delta, 0, 60);
+}
+
+void SettlersApp::toggleCarrierAuto() {
+    if (spectator_) return;
+    FactionState& fs = world_->factions[kPlayer];
+    if (!fs.carrierAuto) {
+        fs.carrierAuto = true;
+    } else {
+        fs.carrierTarget = world_->carrierTargetOf(kPlayer);
+        fs.carrierAuto = false;
     }
 }
 

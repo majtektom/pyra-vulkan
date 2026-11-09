@@ -33,6 +33,9 @@ GameMaterials createGameMaterials(engine3d::Engine& engine);
 std::string buildingMeshName(BuildingType type, int faction);
 std::string unitMeshName(UnitType type, int faction, CarryType carry);
 std::string treeMeshName(int variant);
+// Flaga na drodze (w kolorze frakcji) i towar leżący przy fladze.
+std::string flagMeshName(int faction);
+std::string goodMeshName(CarryType type);
 std::string rockMeshName(int variant);
 constexpr int kTreeVariants = 4;
 constexpr int kRockVariants = 3;

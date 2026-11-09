@@ -73,6 +73,7 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
     terrain_->uploadTo(*engine_.getMeshManager());
     createTerrainEntity();
     buildNavGrid();
+    rebuildRoadCells();
 
     for (auto& p : startPos) {
         p.y = heightAt(p.x, p.z);
@@ -86,15 +87,16 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
     }
 
     // Startowe zasoby i zamki
+    // Startowe zasoby leżą w zamku (zamek jest pierwszym magazynem).
     factions = {};
-    factions[kPlayer].res = {60, 40, 50};
-    factions[kEnemy].res = {60, 40, 50};
-    if (diff == Difficulty::Hard) factions[kEnemy].res = {120, 90, 100};
-    if (diff == Difficulty::Easy) factions[kPlayer].res = {100, 70, 80};
+    Resources startRes[kFactionCount] = {{60, 40, 50}, {60, 40, 50}};
+    if (diff == Difficulty::Hard) startRes[kEnemy] = {120, 90, 100};
+    if (diff == Difficulty::Easy) startRes[kPlayer] = {100, 70, 80};
 
     for (int f = 0; f < kFactionCount; ++f) {
         const int castle = placeBuilding(BuildingType::Castle, snapToGrid(startPos[f]), f, true);
         factions[f].castle = castle;
+        buildings[castle].stock = startRes[f];
         const Vec3 door = buildings[castle].door();
         for (int i = 0; i < 6; ++i) {
             spawnUnit(UnitType::Settler, f, add(door, {randf(-8, 8), 0.0f, randf(2, 10)}));
@@ -113,7 +115,8 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
         for (int i = 0; i < extra; ++i) {
             Vec3 p;
             if (findPlacementNear(pre[i], kEnemy, startPos[kEnemy], 35.0f, 90.0f, p)) {
-                placeBuilding(pre[i], p, kEnemy, true);
+                const int id = placeBuilding(pre[i], p, kEnemy, true);
+                autoConnectFlag(buildings[id].flag);   // AI od razu łączy budynek drogą z zamkiem
             }
         }
         factions[kEnemy].waveTimer = diff == Difficulty::Easy ? 480.0f : (diff == Difficulty::Normal ? 330.0f : 220.0f);
@@ -126,7 +129,9 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
     regionsDirty_ = false;
 
     pushMessage("Witaj, władco! Rozbuduj osadę i zniszcz zamek wroga.", {1.0f, 0.95f, 0.6f, 1.0f});
+    refreshFactionResources();
     pushMessage("Zacznij od Drwala, Kamieniarza i Farmy.", {0.85f, 0.95f, 1.0f, 1.0f});
+    pushMessage("Połącz warsztaty drogą (T) z zamkiem - towary liczą się dopiero w magazynie.", {0.85f, 0.95f, 1.0f, 1.0f});
     return true;
 }
 

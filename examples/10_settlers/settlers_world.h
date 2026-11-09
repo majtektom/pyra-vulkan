@@ -28,6 +28,17 @@
  *   world_settlers.cpp  - automat stanów osadnika
  *   world_combat.cpp    - walka i rozkazy wojskowe
  *   world_ai.cpp        - komputerowy przeciwnik
+ *   world_roads.cpp     - drogi, flagi, tragarze i magazyny (transport towarów)
+ *
+ * GOSPODARKA (world_roads.cpp)
+ * ----------------------------
+ * Pracownik warsztatu odkłada wytworzone towary na fladze przed budynkiem (najwyżej kFlagCapacity).
+ * Drogi łączą flagi budynków w sieć (i przyspieszają marsz). Wolni TRAGARZE (wspólna pula, liczbę
+ * ustawia gracz) dostają zlecenia:
+ *   - odbiór: towar z flagi warsztatu niesiony całą trasą do najbliższego magazynu z miejscem,
+ *   - dostawa: materiały z magazynu na plac budowy albo koszt szkolenia do koszar.
+ * Surowce są dostępne dopiero w magazynie - FactionState::res to suma zapasów wszystkich magazynów.
+ * Gdy flaga przed warsztatem jest pełna (brak drogi lub tragarzy), warsztat wstrzymuje produkcję.
  */
 
 #include <array>
@@ -70,7 +81,11 @@ enum class UnitState {
     Gathering,      // pracownik zbiera surowiec
     ReturnHome,     // pracownik niesie surowiec do warsztatu
     Attack,         // żołnierz atakuje cel
+    GoToRoad,       // tragarz idzie (bez ładunku) po towar albo wraca do magazynu
+    CarrierWait,    // tragarz czeka przy magazynie na zlecenie
+    CarrierWalk,    // tragarz niesie towar do celu zlecenia
 };
+constexpr int kUnitStateCount = static_cast<int>(UnitState::CarrierWalk) + 1;
 
 struct Unit {
     bool alive = false;
@@ -97,6 +112,13 @@ struct Unit {
     int resourceNode = -1;       // drzewo / skała, do której idzie lub którą obrabia
     CarryType carry = CarryType::None;
     Vec3 workSpot{};             // rolnik: miejsce na polu
+
+    // --- Transport (tragarze) ---
+    int atFlag = -1;             // flaga, przy której stoi (albo do której właśnie idzie)
+    int jobFlag = -1;            // zlecenie odbioru: flaga, z której zabiera towar
+    int jobOrder = -1;           // zlecenie dostawy: indeks w World::orders
+    int jobDest = -1;            // budynek docelowy (magazyn przy odbiorze, odbiorca przy dostawie)
+    int carryCount = 0;          // ile towarów niesie / ma podnieść (1-2, wszystkie typu carry)
 
     // --- Walka (żołnierze) ---
     int targetUnit = -1;
@@ -168,8 +190,71 @@ struct Building {
     bool unreachable = false;        // osadnicy nie mogą dojść do budynku
     float unreachableTime = -100.0f;
 
+    // Transport i magazyn
+    int flag = -1;                   // flaga przed wejściem (tu pracownik odkłada towary)
+    Resources stock;                 // zapasy (tylko zamek i magazyn)
+    int incoming = 0;                // magazyn: towary w drodze do niego (zarezerwowane miejsce)
+    Resources delivered;             // dowiezione materiały (plac budowy, koszary)
+    bool trainPaid = false;          // koszary: koszt bieżącego szkolenia już pobrany z dostaw
+    bool outputBlocked = false;      // warsztat: flaga pełna - produkcja wstrzymana
+    float outputMsgTime = -100.0f;
+
     // Punkt przed wejściem (z przodu budynku, uwzględnia obrót).
     [[nodiscard]] Vec3 door() const;
+};
+
+// ======================================================================================
+// Drogi i flagi (transport towarów)
+// ======================================================================================
+
+// Flaga: węzeł sieci dróg. Leży przed wejściem budynku albo na drodze (skrzyżowanie, podział drogi).
+struct Flag {
+    bool alive = false;
+    int faction = 0;
+    Vec3 pos{};
+    int building = -1;               // budynek, którego to flaga (-1 = zwykła flaga na drodze)
+    std::vector<CarryType> goods;    // towary czekające na odbiór (najwyżej kFlagCapacity)
+    std::array<int, kGoodTypeCount + 1> reserved{};   // ile towarów danego rodzaju zarezerwowali tragarze
+    std::vector<int> roads;          // odcinki dróg zaczynające się / kończące na tej fladze
+    bool connected = false;          // drogi prowadzą do jakiegoś magazynu (nawet pełnego)
+    bool castleLinked = false;       // drogi prowadzą do zamku (dla flagi Magazynu: czy jest włączony w sieć)
+    Entity* entity = nullptr;
+    std::array<Entity*, kFlagCapacity> goodEntities{};   // modele leżących towarów (tworzone w miarę potrzeby)
+    bool selected = false;
+};
+
+// Odcinek drogi między dwiema flagami. Obsługuje go jeden tragarz.
+struct Road {
+    bool alive = false;
+    int faction = 0;
+    int flagA = -1, flagB = -1;
+    std::vector<Vec3> points;        // trasa od flagA do flagB (punkty co ok. 2 jednostki)
+    float length = 0.0f;
+    Entity* entity = nullptr;        // ubity trakt na terenie
+};
+
+// Zlecenie dostawy: towar z magazynu do odbiorcy (plac budowy, koszary).
+// "Opłacone" (funded) = towar został już zdjęty z zapasu magazynu source.
+struct TransportOrder {
+    bool alive = false;
+    int faction = 0;
+    CarryType type = CarryType::Wood;
+    int amount = 1;                  // 1-2 sztuki
+    int source = -1;                 // magazyn, z którego tragarz zabierze towar
+    int dest = -1;                   // odbiorca
+    int carrier = -1;                // tragarz realizujący zlecenie
+    bool funded = false;
+    bool picked = false;             // tragarz już niesie towar
+};
+
+// Podsumowanie transportu frakcji (panel gospodarki, logi).
+struct TransportStats {
+    int carriers = 0;                // wszyscy tragarze
+    int busy = 0;                    // w trakcie zlecenia
+    int target = 0;                  // docelowa liczba tragarzy
+    int goodsWaiting = 0;            // towary na flagach czekające na odbiór
+    int ordersWaiting = 0;           // dostawy bez tragarza
+    int ordersUnfunded = 0;          // dostawy czekające na towar w magazynie
 };
 
 // ======================================================================================
@@ -241,6 +326,9 @@ struct FactionState {
     size_t buildOrderIndex = 0;
     float incomeAccumulator = 0.0f;
     int soldiersTrained = 0;
+    // Tragarze: docelowa liczba (gracz ustawia w oknie gospodarki) albo dobierana automatycznie.
+    int carrierTarget = 6;
+    bool carrierAuto = true;
 };
 
 // Zdarzenie dźwiękowe zgłoszone przez symulację - odtwarza je aplikacja (świat nie zależy od audio).
@@ -298,6 +386,50 @@ public:
     [[nodiscard]] bool needsRepairPublic(const Building& b) const { return needsRepair(b); }
 
     // ----------------------------------------------------------------------------------
+    // Drogi, flagi, magazyny                                                [world_roads.cpp]
+    // ----------------------------------------------------------------------------------
+
+    // Wyznacza trasę nowej drogi od flagi do punktu (bez budowania): punkty co ~2 jednostki.
+    // Cel blisko istniejącej flagi jest do niej "przyciągany". false + reason = nie da się.
+    bool planRoad(int faction, int fromFlag, const Vec3& to, std::vector<Vec3>& outPoints, std::string* reason = nullptr) const;
+    // Buduje drogę od flagi do punktu: po drodze stawia flagi co kRoadSegmentMax i na przecięciach
+    // z innymi drogami. Zwraca flagę końcową (-1 = nie udało się).
+    int buildRoad(int faction, int fromFlag, const Vec3& to, std::string* reason = nullptr);
+    // Łączy flagę drogą z najbliższą flagą sieci prowadzącej do magazynu (AI i przycisk gracza).
+    bool autoConnectFlag(int flag, std::string* reason = nullptr);
+    // Usuwa flagę razem z dochodzącymi drogami (flaga budynku zostaje - usuwane są tylko drogi).
+    void removeFlag(int flag);
+    void removeRoad(int road);
+    // Flaga frakcji najbliższa punktowi w promieniu radius (-1 = brak).
+    [[nodiscard]] int flagNear(int faction, const Vec3& p, float radius) const;
+    // Czy można postawić tu nową flagę.
+    [[nodiscard]] bool canPlaceFlag(int faction, const Vec3& p, std::string* reason = nullptr) const;
+    // Czy flaga ma połączenie z magazynem (z wolnym miejscem albo bez).
+    [[nodiscard]] bool flagConnected(int flag) const;
+    // Czy budynek jest włączony w sieć dróg: warsztat - droga do magazynu, Magazyn - droga do zamku.
+    [[nodiscard]] bool buildingLinked(const Building& b) const;
+    void setFlagSelected(int flag, bool selected);
+    // Zapłata z magazynów (najpierw zamek); false = za mało surowców.
+    bool spend(int faction, const Resources& cost);
+    // Dodanie surowców do magazynów z wolnym miejscem (nadmiar przepada); zwraca, ile się zmieściło.
+    int deposit(int faction, const Resources& r);
+    // Łączna pojemność i zapełnienie magazynów frakcji.
+    [[nodiscard]] int storageCapacityOf(int faction) const;
+    [[nodiscard]] int storageUsedOf(int faction) const;
+    // Dla testów: ustawia zapasy zamku (bez limitu pojemności).
+    void debugSetStock(int faction, const Resources& r);
+    // Przelicza FactionState::res jako sumę zapasów magazynów.
+    void refreshFactionResources();
+    // Liczba tragarzy, zlecenia, towary czekające na odbiór.
+    [[nodiscard]] TransportStats transportStats(int faction) const;
+    // Docelowa liczba tragarzy (w trybie Auto liczona z liczby warsztatów i zleceń).
+    [[nodiscard]] int carrierTargetOf(int faction) const;
+    // Zamawia materiały dla budynku (plac budowy, koszary): zdejmuje je z magazynów i tworzy zlecenia dostaw.
+    void orderMaterials(int building, const Resources& r);
+    // Czy przy fladze są towary czekające na odbiór (nie licząc zarezerwowanych).
+    [[nodiscard]] int flagAvailableGoods(const Flag& fl) const;
+
+    // ----------------------------------------------------------------------------------
     // Rozkazy (wywoływane przez gracza lub AI)
     // ----------------------------------------------------------------------------------
 
@@ -329,6 +461,9 @@ public:
     std::vector<ResourceNode> nodes;
     std::vector<Projectile> projectiles;
     std::vector<Effect> effects;
+    std::vector<Flag> flags;
+    std::vector<Road> roads;
+    std::vector<TransportOrder> orders;
     std::array<FactionState, kFactionCount> factions{};
     std::deque<GameMessage> messages;
     std::vector<SoundEvent> soundEvents;   // aplikacja odtwarza je i czyści co klatkę
@@ -365,6 +500,7 @@ public:
     std::string describeUnit(int id) const;
     // Dla testów: tworzy jednostkę w podanym miejscu.
     int debugSpawnUnit(UnitType type, int faction, const Vec3& pos) { return spawnUnit(type, faction, pos); }
+    void debugKillUnit(int id) { killUnit(id, -1); }
 
 private:
     // ----------------------------------------------------------------------------------
@@ -376,6 +512,7 @@ private:
     // Encja terenu z warstwami tekstur (maski liczone z wysokości i nachylenia).
     void createTerrainEntity();
     // Siatka nawigacji: woda, strome zbocza i krawędź mapy są nieprzechodnie.
+    // (Mapa dróg roadCells_ ma tę samą rozdzielczość co siatka nawigacji.)
     void buildNavGrid();
     // Lasy (z szumu), lasy i skały przy bazach, skały na wzgórzach.
     void placeResources();
@@ -407,8 +544,9 @@ private:
 
     // Populacja, limit ludności, przyjmowanie osadników przez zamek, przydział prac.
     void updateFactions(float dt);
-    // Przydziela wolnych osadników: budowy -> warsztaty bez pracownika -> naprawy.
+    // Przydziela wolnych osadników: pierwsi tragarze -> budowy -> warsztaty -> pozostali tragarze -> naprawy.
     void dispatchJobs(int faction);
+    int takeSettlerForJob(int faction, const Vec3& near);
     // Wspólna część dla każdej jednostki (wykrywanie zawieszeń, leczenie) + rozdzielenie na typ.
     void updateUnit(int id, float dt);
     // Leczenie poza walką (szybsze przy zamku i koszarach).
@@ -477,6 +615,50 @@ private:
     void updateProjectiles(float dt);
 
     // ----------------------------------------------------------------------------------
+    // Transport                                                              [world_roads.cpp]
+    // ----------------------------------------------------------------------------------
+
+    int createFlag(int faction, const Vec3& p, int building = -1);
+    // Nowy odcinek drogi a-b po podanych punktach (z encją 3D).
+    int createRoad(int faction, int a, int b, const std::vector<Vec3>& points);
+    // Dzieli odcinek w punkcie points[index]: powstaje tam flaga, odcinek dostaje drugą połowę.
+    int splitRoad(int road, size_t index);
+    void buildRoadMesh(int road);
+    // Mapa komórek nawigacji zajętych przez drogi (do wykrywania skrzyżowań i blokowania budowy).
+    void rebuildRoadCells();
+    [[nodiscard]] int roadAtCell(float x, float z) const;
+    // Spójność sieci: które flagi mają drogę do magazynu (connected) i do zamku (castleLinked).
+    void updateRouting();
+    // Towary na flagach magazynów trafiają do środka; zlecenia dostaw bez pokrycia dostają towar.
+    void updateFlags(float dt);
+    // Pracownik odkłada towary na fladze warsztatu; false = flaga pełna (produkcja wstrzymana).
+    bool depositAtWorkshopFlag(Unit& u, Building& b);
+    // Dijkstra po sieci dróg od flagi: odległości do wszystkich flag i odcinek, którym do nich doszliśmy.
+    void networkDistances(int fromFlag, std::vector<float>& dist, std::vector<int>& prevRoad) const;
+    // Trasa po drogach od flagi do flagi (punkty dróg w kolejności marszu); false = brak połączenia.
+    bool networkPath(int fromFlag, int toFlag, std::vector<Vec3>& out) const;
+    // Tragarze: nabór wolnych osadników do docelowej liczby albo zwalnianie nadmiaru.
+    void manageCarriers(int faction, int limit);
+    // Przydział zleceń (odbiory i dostawy) wolnym tragarzom.
+    void assignTransportJobs(int faction);
+    // Zdejmuje towar z najbliższego magazynu dla zlecenia (false = brak towaru).
+    bool fundOrder(TransportOrder& o);
+    // Automat tragarza.
+    void updateCarrier(Unit& u, int id, float dt);
+    // Tragarz przerywa zlecenie: zwalnia rezerwacje, niesiony towar zostawia na fladze.
+    void releaseCarrierJob(Unit& u);
+    // Odkłada niesiony towar na fladze (gdy cel zniknął) - inny tragarz zaniesie go do magazynu.
+    void dropCarriedGoods(Unit& u, int flag);
+    [[nodiscard]] int otherEnd(const Road& r, int flag) const { return r.flagA == flag ? r.flagB : r.flagA; }
+    [[nodiscard]] static bool isCarrierState(UnitState s) {
+        return s == UnitState::GoToRoad || s == UnitState::CarrierWait || s == UnitState::CarrierWalk;
+    }
+    // Modele towarów leżących przy flagach.
+    void syncFlagVisuals();
+    // Flagi i drogi na terenie przejętym przez wroga są niszczone.
+    void removeRoadsOnLostLand();
+
+    // ----------------------------------------------------------------------------------
     // AI przeciwnika                                                          [world_ai.cpp]
     // ----------------------------------------------------------------------------------
 
@@ -484,6 +666,8 @@ private:
     void aiCollectIncome(int faction, float dt);
     void aiBuildNext(int faction);
     void aiTrainArmy(int faction);
+    // Łączy drogami warsztaty i magazyny, które nie mają połączenia z magazynem.
+    void aiConnectRoads(int faction);
     void aiLaunchAttackWave(int faction, float dt);
     [[nodiscard]] Vec3 aiHome(int faction) const;
 
@@ -544,6 +728,9 @@ private:
     bool territoryDirty_ = true;                 // terytorium się zmieniło - przebuduj słupki
     bool regionsDirty_ = true;                   // przeszkody się zmieniły - przelicz obszary dostępności
     int territoryMeshVersion_ = 0;
+    std::vector<int> roadCells_;                 // komórka nawigacji -> indeks drogi + 1 (0 = brak drogi)
+    bool routingDirty_ = true;                   // sieć dróg lub magazyny się zmieniły - przelicz spójność
+    float transportTimer_ = 0.0f;                // odliczanie do kolejnego przydziału zleceń
     std::vector<Vec3> minimapColors_;
     int minimapSize_ = 64;
     uint32_t seed_ = 0;

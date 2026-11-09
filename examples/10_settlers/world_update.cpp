@@ -2,8 +2,8 @@
  * world_update.cpp - jeden krok symulacji (World::update) i elementy wspólne.
  *
  * Kolejność w każdym kroku:
- *   frakcje (populacja, nowi osadnicy, przydział prac) -> jednostki -> rozpychanie ->
- *   budynki (szkolenie, wieże) -> pociski -> efekty -> drzewa i skały -> AI ->
+ *   zapasy magazynów -> frakcje (populacja, nowi osadnicy, przydział prac) -> jednostki -> rozpychanie ->
+ *   budynki (szkolenie, wieże) -> flagi (towary do magazynów, routing) -> pociski -> efekty -> drzewa i skały -> AI ->
  *   terytorium i obszary nawigacji -> wygląd encji 3D -> sprawdzenie zwycięstwa.
  */
 #include "world_internal.h"
@@ -96,12 +96,14 @@ void World::update(float dt) {
     dt = std::min(dt, 0.1f);
     gameTime += dt;
 
+    refreshFactionResources();
     updateFactions(dt);
     for (size_t i = 0; i < units.size(); ++i) {
         if (units[i].alive) updateUnit(static_cast<int>(i), dt);
     }
     separateUnits(dt);
     updateBuildings(dt);
+    updateFlags(dt);
     updateProjectiles(dt);
     updateEffects(dt);
     updateNodes(dt);
@@ -145,17 +147,22 @@ void World::updateFactions(float dt) {
             int jobs = 0;
             for (const auto& b : buildings) {
                 if (!b.alive || b.faction != f) continue;
-                if (!b.constructed) jobs += 1;
+                if (!b.constructed) jobs += b.delivered.total() > 0 || buildingDef(b.type).cost.total() == 0 ? 1 : 0;
                 else if (buildingDef(b.type).needsWorker && b.worker < 0) jobs += 1;
                 else if (needsRepair(b) && gameTime - b.lastDamagedTime > 8.0f && !b.repairBlocked) jobs += 1;
             }
+            int carriers = 0;
+            for (const auto& u : units) {
+                if (u.alive && u.faction == f && isCarrierState(u.state)) ++carriers;
+            }
+            jobs += std::max(0, carrierTargetOf(f) - carriers);
             const int wantedIdle = std::max(2, jobs + 1);
             // Gdy osadników prawie nie ma, zamek przyjmuje ich za darmo (ochrona przed "spiralą śmierci")
             const int settlerCost = settlerCount < 3 ? 0 : 3;
             if (castle.settlerTimer >= 7.0f && idleSettlers < wantedIdle && fs.population < fs.popCap &&
                 fs.res.food >= settlerCost) {
                 castle.settlerTimer = 0.0f;
-                fs.res.food -= settlerCost;
+                spend(f, {0, 0, settlerCost});
                 const int id = spawnUnit(UnitType::Settler, f, castle.door());
                 units[id].timer = 0.5f;
                 if (f == kPlayer) {
@@ -177,25 +184,60 @@ void World::updateFactions(float dt) {
     }
 }
 
+// Osadnik do pracy przy budynku: wolny, a gdy takiego nie ma - czekający tragarz (zostaje co najmniej
+// dwóch tragarzy). Dzięki temu pula tragarzy nie zabiera ludzi potrzebnych na budowach i w warsztatach.
+int World::takeSettlerForJob(int f, const Vec3& near) {
+    const int idle = findIdleSettler(f, near);
+    if (idle >= 0) return idle;
+    int carriers = 0, best = -1;
+    float bestD = 1e9f;
+    for (size_t i = 0; i < units.size(); ++i) {
+        const Unit& u = units[i];
+        if (!u.alive || u.faction != f || !isCarrierState(u.state)) continue;
+        ++carriers;
+        if (u.state != UnitState::CarrierWait) continue;
+        const float d = dist2D(u.pos, near);
+        if (d < bestD) {
+            bestD = d;
+            best = static_cast<int>(i);
+        }
+    }
+    if (carriers <= 2 || best < 0) return -1;
+    becomeIdleSettler(units[best]);
+    return best;
+}
+
 // Przydział prac dla wolnych osadników, w kolejności ważności:
-//  1. place budowy (do 2 budowniczych),
-//  2. warsztaty bez pracownika,
-//  3. naprawy budynków, przy których od 8 s nie ma walki.
+//  1. pierwsi dwaj tragarze (bez nich nic nie dotrze do magazynu ani na budowę),
+//  2. place budowy, na które dowieziono już materiały (do 2 budowniczych),
+//  3. warsztaty bez pracownika,
+//  4. pozostali tragarze (do liczby ustawionej w oknie gospodarki),
+//  5. naprawy budynków, przy których od 8 s nie ma walki.
 // Przed wysłaniem sprawdzamy, czy do budynku w ogóle da się dojść.
 void World::dispatchJobs(int f) {
+    manageCarriers(f, 2);
     for (size_t bi = 0; bi < buildings.size(); ++bi) {
         Building& b = buildings[bi];
         if (!b.alive || b.faction != f) continue;
         const BuildingDef& def = buildingDef(b.type);
         if (b.unreachable && gameTime - b.unreachableTime < 30.0f) continue;   // ponowna próba co 30 s
         if (!b.constructed) {
+            // Budowniczowie idą dopiero, gdy tragarze dowiozą część materiałów. Dojście sprawdzamy od razu
+            // (od bramy zamku) - na plac bez dojścia materiały i tak nigdy nie dotrą.
+            if (def.cost.total() > 0 && b.delivered.total() <= 0) {
+                const int castle = factions[f].castle;
+                if (castle >= 0 && buildings[castle].alive && !b.unreachable && !buildingReachableFrom(b, buildings[castle].door())) {
+                    markUnreachable(static_cast<int>(bi));
+                }
+                continue;
+            }
             int builders = 0;
             for (const auto& u : units) {
                 if (u.alive && u.building == static_cast<int>(bi) &&
                     (u.state == UnitState::GoBuild || u.state == UnitState::Building)) ++builders;
             }
             if (builders < 2) {
-                const int s = findIdleSettler(f, b.pos);
+                const int s = takeSettlerForJob(f, b.pos);
                 if (s >= 0 && !buildingReachableFrom(b, units[s].pos)) {
                     markUnreachable(static_cast<int>(bi));
                 } else if (s >= 0) {
@@ -206,7 +248,7 @@ void World::dispatchJobs(int f) {
                 }
             }
         } else if (def.needsWorker && (b.worker < 0 || !units[b.worker].alive)) {
-            const int s = findIdleSettler(f, b.pos);
+            const int s = takeSettlerForJob(f, b.pos);
             if (s >= 0 && !buildingReachableFrom(b, units[s].pos)) {
                 markUnreachable(static_cast<int>(bi));
             } else if (s >= 0) {
@@ -219,6 +261,8 @@ void World::dispatchJobs(int f) {
         }
     }
 
+    manageCarriers(f, 1000);
+
     // Naprawy: uszkodzone budynki, przy których od 8 s nie ma walki (budowa i pracownicy mają pierwszeństwo)
     for (size_t bi = 0; bi < buildings.size(); ++bi) {
         Building& b = buildings[bi];
@@ -229,7 +273,7 @@ void World::dispatchJobs(int f) {
         }
         const int limit = b.type == BuildingType::Castle ? 3 : 2;
         if (repairersOf(static_cast<int>(bi)) >= limit) continue;
-        const int s = findIdleSettler(f, b.pos);
+        const int s = takeSettlerForJob(f, b.pos);
         if (s < 0) continue;
         Unit& u = units[s];
         u.state = UnitState::GoBuild;
@@ -371,11 +415,18 @@ void World::updateBuildings(float dt) {
         // Szkolenie wojska
         if (b.type == BuildingType::Barracks && !b.trainQueue.empty()) {
             const UnitType type = b.trainQueue.front();
+            // Szkolenie rusza, gdy tragarze dowiozą jego koszt.
+            if (!b.trainPaid) {
+                if (!b.delivered.canAfford(unitDef(type).cost)) continue;
+                b.delivered.subtract(unitDef(type).cost);
+                b.trainPaid = true;
+            }
             b.trainTimer += dt;
             if (b.trainTimer >= unitDef(type).trainTime) {
                 FactionState& fs = factions[b.faction];
                 if (fs.population < fs.popCap) {
                     b.trainTimer = 0.0f;
+                    b.trainPaid = false;
                     b.trainQueue.pop_front();
                     const Vec3 door = b.door();
                     const int id = spawnUnit(type, b.faction, door);
@@ -468,6 +519,7 @@ void World::syncVisuals(float dt) {
             }
         }
     }
+    syncFlagVisuals();
 }
 
 // Słupki granicy terytorium. Dwa rodzaje granic:
@@ -479,6 +531,7 @@ void World::syncVisuals(float dt) {
 void World::rebuildTerritory() {
     territoryDirty_ = false;
     burnBuildingsOnLostLand();
+    removeRoadsOnLostLand();
     auto* mm = engine_.getMeshManager();
     ++territoryMeshVersion_;
 

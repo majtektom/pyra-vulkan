@@ -38,6 +38,7 @@ Color SettlersApp::stateColor(UnitState s) {
     case UnitState::GoGather: case UnitState::Gathering: return {0.4f, 1.0f, 0.8f, 1.0f};
     case UnitState::ReturnHome: return {0.95f, 0.65f, 1.0f, 1.0f};
     case UnitState::Attack: return {1.0f, 0.35f, 0.3f, 1.0f};
+    case UnitState::GoToRoad: case UnitState::CarrierWait: case UnitState::CarrierWalk: return {1.0f, 0.75f, 0.45f, 1.0f};
     }
     return {1, 1, 1, 1};
 }
@@ -52,7 +53,7 @@ void SettlersApp::drawDebug(const InputSnapshot& in) {
     const Vec3 focus = cam_.focus();
     const float range = cam_.distance() * 1.3f + 120.0f;
     const bool detailed = cam_.distance() < 380.0f;
-    int counts[10] = {};
+    int counts[kUnitStateCount] = {};
     int stalledNow = 0;
 
     // --- Jednostki: ścieżki, cele, etykiety ---
@@ -158,7 +159,7 @@ void SettlersApp::drawDebug(const InputSnapshot& in) {
     const float x = 14.0f;
     float y = kTopBarH + 26.0f;
     const float pw = 340.0f;
-    gui_->addOverlayRect(x - 6, y - 20, pw, 222, {0.02f, 0.03f, 0.06f, 0.82f}, 0.958f);
+    gui_->addOverlayRect(x - 6, y - 20, pw, 258, {0.02f, 0.03f, 0.06f, 0.82f}, 0.958f);
     auto line = [&](const std::string& s, const Color& c = {0.85f, 0.95f, 1.0f, 1.0f}) {
         text(s, x, y, 0.42f, c);
         y += 18.0f;
@@ -166,9 +167,13 @@ void SettlersApp::drawDebug(const InputSnapshot& in) {
     line(std::string("DEBUG (F3: ") + (debugMode_ == 2 ? "+siatka kolizji" : "ścieżki/stany") + ", F9: zrzut)",
          {1.0f, 0.9f, 0.5f, 1.0f});
     char buf[160];
-    for (int s = 0; s < 10; s += 2) {
-        std::snprintf(buf, sizeof(buf), "%-11s %3d    %-11s %3d", World::stateName(static_cast<UnitState>(s)), counts[s],
-                      World::stateName(static_cast<UnitState>(s + 1)), counts[s + 1]);
+    for (int s = 0; s < kUnitStateCount; s += 2) {
+        if (s + 1 < kUnitStateCount) {
+            std::snprintf(buf, sizeof(buf), "%-11s %3d    %-11s %3d", World::stateName(static_cast<UnitState>(s)), counts[s],
+                          World::stateName(static_cast<UnitState>(s + 1)), counts[s + 1]);
+        } else {
+            std::snprintf(buf, sizeof(buf), "%-11s %3d", World::stateName(static_cast<UnitState>(s)), counts[s]);
+        }
         line(buf);
     }
     std::snprintf(buf, sizeof(buf), "Zawieszone teraz: %d   wykryte: %d   odblokowane: %d", stalledNow,
@@ -260,6 +265,27 @@ void SettlersApp::dumpDebug() {
         LOG_INFO("[budynek] #{} {} poz=({:.1f},{:.1f}) hp={:.0f} prac={} brakDojscia={} brakSurowca={} wZasiegu={}",
                  selectedBuilding_, buildingDef(b.type).name, b.pos.x, b.pos.z, b.hp, b.worker, b.unreachable,
                  b.lacksResources, b.resourcesInRange);
+        // Flaga budynku: towary, rezerwacje tragarzy, połączenie z magazynem; tragarze, którzy mają z nią coś wspólnego.
+        if (b.flag >= 0) {
+            const Flag& fl = w.flags[b.flag];
+            LOG_INFO("[flaga] #{} towary={} wolne={} połączona={} doZamku={} drogi={} zablokowana produkcja={}", b.flag,
+                     fl.goods.size(), w.flagAvailableGoods(fl), fl.connected, fl.castleLinked, fl.roads.size(), b.outputBlocked);
+            for (size_t i = 0; i < w.units.size(); ++i) {
+                const Unit& u = w.units[i];
+                if (!u.alive || u.faction != b.faction) continue;
+                if (u.jobFlag == b.flag || u.jobDest == selectedBuilding_) {
+                    LOG_INFO("[tragarz] #{} {} zlecenie: odbiór z flagi {} / dostawa {} -> budynek {} niesie {}x{}", i,
+                             World::stateName(u.state), u.jobFlag, u.jobOrder, u.jobDest, u.carryCount, goodName(u.carry));
+                }
+            }
+        }
+        if (!b.constructed || b.type == BuildingType::Barracks) {
+            LOG_INFO("[dostawy] dowiezione D={} K={} Ż={}", b.delivered.wood, b.delivered.stone, b.delivered.food);
+        }
+        if (storageCapacity(b.type) > 0) {
+            LOG_INFO("[magazyn] zapas D={} K={} Ż={} ({}/{})", b.stock.wood, b.stock.stone, b.stock.food, b.stock.total(),
+                     storageCapacity(b.type));
+        }
         ++dumped;
     }
     world_->pushMessage("Zrzut debug: " + std::to_string(dumped) + " wpisów w konsoli (F9)", {0.7f, 0.9f, 1.0f, 1.0f});

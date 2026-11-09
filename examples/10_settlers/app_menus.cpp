@@ -70,7 +70,7 @@ void SettlersApp::setupGui() {
     makeButton(gameOverWindow_, "quit", 196, 100, 160, 36, "Wyjście", []() { pushQuitEvent(); });
 
     // Panel budowy
-    buildWindow_ = gui_->addWindow("Budowa", 0, 0, 250, kBuildMenuSize * 36 + 8);
+    buildWindow_ = gui_->addWindow("Budowa", 0, 0, 250, (kBuildMenuSize + 1) * 36 + 8);
     for (int i = 0; i < kBuildMenuSize; ++i) {
         const BuildingType t = kBuildMenu[i];
         const BuildingDef& def = buildingDef(t);
@@ -79,6 +79,8 @@ void SettlersApp::setupGui() {
                                       [this, t]() { beginPlacement(t); });
         buildTypes_[i] = t;
     }
+    makeButton(buildWindow_, "road", 8, 8 + kBuildMenuSize * 36, 234, 30, "T. Droga (od flagi / budynku)",
+               [this]() { beginRoad(); });
 
     // Koszary
     barracksWindow_ = gui_->addWindow("Koszary", 0, 0, 250, 96);
@@ -89,9 +91,21 @@ void SettlersApp::setupGui() {
                std::string("Łucznik (") + costText(unitDef(UnitType::Archer).cost) + ")",
                [this]() { trainSelected(UnitType::Archer); });
 
+    // Tragarze: liczba ustawiana przez gracza (widoczne razem z oknem gospodarki - klawisz I)
+    carriersWindow_ = gui_->addWindow("Tragarze", 0, 0, 236, 44);
+    makeButton(carriersWindow_, "carr_minus", 6, 6, 50, 32, "-", [this]() { changeCarriers(-1); });
+    makeButton(carriersWindow_, "carr_plus", 62, 6, 50, 32, "+", [this]() { changeCarriers(+1); });
+    btnCarrierAuto_ = makeButton(carriersWindow_, "carr_auto", 118, 6, 112, 32, "Auto: tak", [this]() { toggleCarrierAuto(); });
+    carriersWindow_->setVisible(false);
+
     // Akcje budynku
-    actionsWindow_ = gui_->addWindow("Akcje", 0, 0, 250, 50);
+    actionsWindow_ = gui_->addWindow("Akcje", 0, 0, 250, 134);
     makeButton(actionsWindow_, "demolish", 8, 8, 234, 34, "Zburz (Del, zwrot 50%)", [this]() { demolishSelected(); });
+    btnConnect_ = makeButton(actionsWindow_, "connect", 8, 50, 234, 34, "Połącz drogą z magazynem",
+                             [this]() { connectSelected(); });
+    makeButton(actionsWindow_, "roadfrom", 8, 92, 234, 34, "Droga od budynku (T)", [this]() {
+        if (selectedBuilding_ >= 0) beginRoad(world_->buildings[selectedBuilding_].flag);
+    });
 
     layoutGui();
 }
@@ -403,8 +417,8 @@ void SettlersApp::layoutGui() {
     controlsWindow_->setPosition(w / 2 - controlsWindow_->width() / 2, std::max(40, h / 2 - controlsWindow_->height() / 2));
     gameOverWindow_->setPosition(w / 2 - 190, h / 2 - 100);
     buildWindow_->setPosition(14, h - buildWindow_->height() - 14);
-    barracksWindow_->setPosition(14 + 250 + 20, h - 96 - 14 - 64);
-    actionsWindow_->setPosition(14 + 250 + 20, h - 50 - 14);
+    barracksWindow_->setPosition(14 + 250 + 20, h - 96 - 14 - 148);
+    actionsWindow_->setPosition(14 + 250 + 20, h - 134 - 14);
 }
 
 } // namespace settlers

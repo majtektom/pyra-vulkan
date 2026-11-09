@@ -5,6 +5,8 @@
  * Co 3 sekundy "myśli": stawia kolejny budynek z listy i zleca szkolenie wojska.
  * Co kilka minut zbiera armię i wysyła falę ataku na najbliższy budynek przeciwnika.
  * Za prostotę decyzji AI dostaje niewielki dochód bierny zależny od poziomu trudności.
+ * Drogi AI buduje automatycznie: każdy warsztat i magazyn łączy z najbliższą flagą sieci (autoConnectFlag),
+ * a gdy magazyny są zapełnione w 75%, stawia nowy Magazyn blisko warsztatów.
  */
 #include "world_internal.h"
 
@@ -15,7 +17,7 @@ namespace {
 // Kolejność budowy komputerowego przeciwnika.
 const BuildingType kAiBuildOrder[] = {
     BuildingType::Woodcutter, BuildingType::House, BuildingType::Quarry, BuildingType::Woodcutter,
-    BuildingType::Farm, BuildingType::Forester, BuildingType::Mine, BuildingType::Barracks, BuildingType::House,
+    BuildingType::Farm, BuildingType::House, BuildingType::Forester, BuildingType::Mine, BuildingType::Barracks, BuildingType::House,
     BuildingType::Woodcutter, BuildingType::Tower, BuildingType::House, BuildingType::Farm,
     BuildingType::Barracks, BuildingType::Forester, BuildingType::Mine, BuildingType::Tower, BuildingType::House,
 };
@@ -38,6 +40,7 @@ void World::updateAI(int f, float dt) {
     fs.aiThinkTimer -= dt;
     if (fs.aiThinkTimer <= 0.0f) {
         fs.aiThinkTimer = 3.0f;
+        aiConnectRoads(f);
         aiBuildNext(f);
         aiTrainArmy(f);
     }
@@ -58,7 +61,7 @@ void World::aiCollectIncome(int f, float dt) {
     fs.incomeAccumulator += dt * income;
     while (fs.incomeAccumulator >= 1.0f) {
         fs.incomeAccumulator -= 1.0f;
-        fs.res.add({1, 1, 1});
+        deposit(f, {1, 1, 1});   // dochód trafia do magazynów (o ile jest miejsce)
     }
 }
 
@@ -69,19 +72,33 @@ void World::aiBuildNext(int f) {
 
     int underConstruction = 0;
     bool houseInProgress = false;
+    bool storeInProgress = false;
     for (const auto& b : buildings) {
         if (!b.alive || b.faction != f || b.constructed) continue;
         ++underConstruction;
         if (b.type == BuildingType::House) houseInProgress = true;
+        if (b.type == BuildingType::Warehouse) storeInProgress = true;
     }
     if (underConstruction >= 2) return;
 
     // Co budować: pilny Dom, kolejna pozycja z listy albo (po jej wyczerpaniu) cykl późnej gry.
     const size_t orderLen = std::size(kAiBuildOrder);
     const bool needHouse = fs.popCap - fs.population <= 2 && !houseInProgress;
+    // Nowy Magazyn: magazyny zapełnione w 75% (bez miejsca warsztaty staną) albo towary zalegają
+    // na flagach (drogi do zamku są zakorkowane - magazyn bliżej warsztatów skraca trasy).
+    int onFlags = 0, stores = 0;
+    for (const auto& fl : flags) {
+        if (fl.alive && fl.faction == f) onFlags += static_cast<int>(fl.goods.size());
+    }
+    for (const auto& b : buildings) {
+        if (b.alive && b.faction == f && b.type == BuildingType::Warehouse) ++stores;
+    }
+    const bool needStore = !storeInProgress && (storageUsedOf(f) * 4 >= storageCapacityOf(f) * 3 || (onFlags > 30 && stores < 3));
     BuildingType next;
     if (needHouse) {
         next = BuildingType::House;
+    } else if (needStore) {
+        next = BuildingType::Warehouse;
     } else if (fs.buildOrderIndex < orderLen) {
         next = kAiBuildOrder[fs.buildOrderIndex];
     } else {
@@ -94,8 +111,23 @@ void World::aiBuildNext(int f) {
     const bool tower = next == BuildingType::Tower;
     const float minR = tower ? maxR * 0.7f : 30.0f;
     Vec3 spot;
-    if (findPlacementNear(next, f, aiHome(f), minR, tower ? maxR + 60.0f : maxR, spot)) {
-        placeBuilding(next, spot, f, false, 0.0f);
+    bool found = false;
+    if (next == BuildingType::Warehouse) {
+        // Magazyn blisko produkcji: w okolicy środka ciężkości warsztatów.
+        Vec3 c{};
+        int n = 0;
+        for (const auto& b : buildings) {
+            if (b.alive && b.faction == f && producesGoods(b.type)) {
+                c = add(c, b.pos);
+                ++n;
+            }
+        }
+        if (n > 0) found = findPlacementNear(next, f, multiply(c, 1.0f / static_cast<float>(n)), 10.0f, 70.0f, spot);
+    }
+    if (!found) found = findPlacementNear(next, f, aiHome(f), minR, tower ? maxR + 60.0f : maxR, spot);
+    if (found) {
+        const int id = placeBuilding(next, spot, f, false, 0.0f);
+        autoConnectFlag(buildings[id].flag);   // bez drogi tragarze nie dowiozą materiałów
         // Pilny Dom spoza listy nie przesuwa listy budowy (chyba że lista i tak wskazywała Dom).
         const bool listSaysHouse = fs.buildOrderIndex < orderLen && kAiBuildOrder[fs.buildOrderIndex] == BuildingType::House;
         if (!(next == BuildingType::House && fs.popCap - fs.population <= 2 && !listSaysHouse)) {
@@ -105,6 +137,20 @@ void World::aiBuildNext(int f) {
     } else if (++fs.placementFailures > 4) {
         fs.buildOrderIndex++;   // nie ma gdzie postawić - pomijamy tę pozycję listy
         fs.placementFailures = 0;
+    }
+}
+
+// Budynki bez połączenia z siecią dróg: AI dobudowuje drogę (najwyżej 2 na raz,
+// żeby jeden "myślący" krok nie trwał za długo).
+void World::aiConnectRoads(int f) {
+    int tries = 0;
+    for (const auto& b : buildings) {
+        if (tries >= 2) break;
+        if (!b.alive || b.faction != f || b.flag < 0 || b.type == BuildingType::Castle) continue;
+        if (!b.constructed && b.type == BuildingType::Warehouse && flagConnected(b.flag)) continue;
+        if (buildingLinked(b)) continue;
+        ++tries;
+        autoConnectFlag(b.flag);
     }
 }
 

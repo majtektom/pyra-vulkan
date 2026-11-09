@@ -94,9 +94,10 @@ bool World::followPath(Unit& u, float dt, float reachDist) {
     if (u.pathIndex >= u.path.size()) return true;
     const UnitDef& def = unitDef(u.type);
     float step = def.speed * dt;
-    // Na zboczach jednostki zwalniają
+    // Na zboczach jednostki zwalniają, po ubitej drodze idą szybciej.
     const Vec3 nrm = terrain_->getNormal(u.pos.x, u.pos.z);
     step *= std::clamp(0.55f + nrm.y * 0.45f, 0.6f, 1.0f);
+    if (roadAtCell(u.pos.x, u.pos.z) >= 0) step *= kRoadSpeedBonus;
 
     while (step > 0.0f && u.pathIndex < u.path.size()) {
         const Vec3& t = u.path[u.pathIndex];

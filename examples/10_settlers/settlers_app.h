@@ -111,11 +111,13 @@ inline constexpr const char* kActDebug = "debug.cycle";
 inline constexpr const char* kActDebugDump = "debug.dump";
 inline constexpr const char* kActSlower = "time.slower";
 inline constexpr const char* kActFaster = "time.faster";
+inline constexpr const char* kActRoad = "build.road";
+inline constexpr const char* kActEconomy = "ui.economy";
 
-// Budynki w panelu budowy - kolejność odpowiada klawiszom 1..8.
+// Budynki w panelu budowy - kolejność odpowiada klawiszom 1..9.
 inline constexpr BuildingType kBuildMenu[] = {
     BuildingType::House, BuildingType::Woodcutter, BuildingType::Forester, BuildingType::Quarry,
-    BuildingType::Mine, BuildingType::Farm, BuildingType::Barracks, BuildingType::Tower,
+    BuildingType::Mine, BuildingType::Farm, BuildingType::Barracks, BuildingType::Tower, BuildingType::Warehouse,
 };
 inline constexpr int kBuildMenuSize = static_cast<int>(std::size(kBuildMenu));
 
@@ -158,12 +160,14 @@ inline const ControlLine kControls[] = {
     {"PPM na minimapie", "marsz wojska we wskazane miejsce"},
     {"H", "stój (przerwanie rozkazu)"},
     {"", "BUDOWA"},
-    {"1 - 8", "Dom, Drwal, Leśniczy, Kamieniarz, Kopalnia, Farma, Koszary, Wieża"},
+    {"1 - 9", "Dom, Drwal, Leśniczy, Kamieniarz, Kopalnia, Farma, Koszary, Wieża, Magazyn"},
     {"LPM / PPM", "postawienie budynku / anulowanie"},
     {"R", "obrót budynku przed postawieniem"},
     {"Shift + LPM", "postawienie kilku budynków z rzędu"},
-    {"Del", "zburzenie zaznaczonego budynku (zwrot 50%)"},
+    {"T", "droga: LPM na fladze/budynku, potem LPM kolejne punkty, PPM koniec"},
+    {"Del", "zburzenie budynku (zwrot 50%) / usunięcie flagi z drogami"},
     {"", "INNE"},
+    {"I", "gospodarka: zapasy, magazyny, tragarze"},
     {"ESC", "pauza / powrót z okna"},
     {"F1", "pomoc na ekranie gry"},
     {"M", "muzyka wł. / wył."},
@@ -226,6 +230,12 @@ inline const char* stateText(const Unit& u, const World& w) {
         return "Zbiera";
     case UnitState::ReturnHome: return "Niesie surowiec";
     case UnitState::Attack: return "Walczy";
+    case UnitState::GoToRoad:
+        if (u.jobFlag >= 0) return "Tragarz - idzie po towar do warsztatu";
+        if (u.jobOrder >= 0) return "Tragarz - idzie do magazynu po materiały";
+        return "Tragarz - wraca do magazynu";
+    case UnitState::CarrierWait: return "Tragarz - czeka na zlecenie";
+    case UnitState::CarrierWalk: return u.jobOrder >= 0 ? "Tragarz - niesie materiały" : "Tragarz - niesie towar do magazynu";
     }
     return "";
 }
@@ -349,7 +359,7 @@ private:
     bool mouseInMinimap(int mx, int my, Vec3* worldPos = nullptr) const;
     // Czy kursor jest nad jakimkolwiek elementem interfejsu (wtedy klik nie trafia w świat).
     bool mouseOverUi(int mx, int my) const;
-    bool hasSelectionPanel() const { return !selectedUnits_.empty() || selectedBuilding_ >= 0; }
+    bool hasSelectionPanel() const { return !selectedUnits_.empty() || selectedBuilding_ >= 0 || selectedFlag_ >= 0; }
 
     // Zaznaczanie
     void clickSelect(const InputSnapshot& in, bool additive);
@@ -373,6 +383,15 @@ private:
     // Zielony podgląd = można budować, czerwony = nie można.
     void setGhostMaterial(bool ok);
     void updatePlacement(Engine& e, const InputSnapshot& in, bool overUi, bool shift);
+
+    // Budowa dróg (klawisz T): pierwszy klik - flaga/budynek początkowy, kolejne - punkty końcowe.
+    void beginRoad(int fromFlag = -1);
+    void cancelRoad();
+    void updateRoadMode(Engine& e, const InputSnapshot& in, bool overUi, bool shift);
+    // Flaga pod kursorem: flaga budynku pod kursorem albo flaga w pobliżu punktu terenu.
+    int flagUnderCursor(const InputSnapshot& in, const Vec3& groundHit) const;
+    // Przycisk "Połącz drogą": automatyczna droga od zaznaczonego budynku do sieci magazynu.
+    void connectSelected();
 
     // Akcje zaznaczonego budynku
     void trainSelected(UnitType type);
@@ -401,6 +420,14 @@ private:
     void drawSelectionPanel();
     // Pomoc F1: sterowanie i zasady gry.
     void drawHelp();
+    // Okno gospodarki (I): towary w magazynach / na flagach / w drodze, magazyny, tragarze, przestoje.
+    void drawEconomy();
+    void economyPanelRect(float& x, float& y, float& w, float& h) const;
+    // Przyciski liczby tragarzy (okienko pod panelem gospodarki).
+    void changeCarriers(int delta);
+    void toggleCarrierAuto();
+    // Podgląd trasy budowanej drogi.
+    void drawRoadPreview(const InputSnapshot& in);
     static float length2(const Vec3& v) { return dot(v, v); }
 
     // ----------------------------------------------------------------------------------
@@ -454,6 +481,7 @@ private:
     void repairHealResourceTest();
     void mountainBuildingsTest();
     void territoryCaptureTest();
+    void economyRoadTest();
     void showcaseBuildings();
     bool constructionStressTest();
     // Log stanu partii w trybie SETTLERS_AUTOPLAY i zakończenie po zadanym czasie.
@@ -506,6 +534,16 @@ private:
     Entity* ghost_ = nullptr;                 // półprzezroczysty podgląd budynku
     bool mouseMoved_ = false;                 // przewijanie krawędzią dopiero po ruchu myszy
     bool showHelp_ = false;
+    bool showEconomy_ = false;                // okno gospodarki (I)
+    int selectedFlag_ = -1;
+
+    // --- Budowa dróg ---
+    bool roadMode_ = false;
+    int roadStart_ = -1;                      // flaga, od której biegnie budowana droga (-1 = jeszcze nie wybrana)
+    std::vector<Vec3> roadPreview_;           // podgląd trasy (planRoad)
+    bool roadPreviewOk_ = false;
+    std::string roadReason_;                  // dlaczego nie można tu poprowadzić drogi
+    Vec3 roadPreviewTarget_{1e9f, 0.0f, 1e9f};
 
     // --- Okna GUI ---
     std::shared_ptr<GuiMgr> gui_;
@@ -524,6 +562,9 @@ private:
     GuiStaticText* gameOverText_ = nullptr;
     GuiStaticText* gameOverStats_ = nullptr;
     std::array<GuiButton*, kBuildMenuSize> buildButtons_{};
+    GuiButton* btnConnect_ = nullptr;         // "Połącz drogą" w oknie akcji budynku
+    GuiWindow* carriersWindow_ = nullptr;     // przyciski -/+/Auto liczby tragarzy (przy oknie gospodarki)
+    GuiButton* btnCarrierAuto_ = nullptr;
     std::array<BuildingType, kBuildMenuSize> buildTypes_{};
     std::string hoverMissing_;                // podpowiedź brakujących surowców pod kursorem
 
