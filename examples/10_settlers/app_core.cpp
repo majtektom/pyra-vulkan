@@ -52,7 +52,7 @@ bool SettlersApp::initialize() {
         LOG_INFO("[autoplay] start: {} s czasu gry, przyspieszenie x{}", autoplaySeconds_, autoplaySpeed_);
     }
 
-    // Pomocnicze: SETTLERS_OPEN=settings|controls|help otwiera okno od razu po starcie
+    // Pomocnicze: SETTLERS_OPEN=settings|controls|help|economy|demo|game - okno lub partia od razu po starcie
     if (const char* open = std::getenv("SETTLERS_OPEN")) {
         const std::string what = open;
         if (what == "settings") openSubWindow(settingsWindow_, menuWindow_);
@@ -60,6 +60,7 @@ bool SettlersApp::initialize() {
         if (what == "help") showHelp_ = true;
         if (what == "economy") showEconomy_ = true;
         if (what == "demo") startNewGame(true);
+        if (what == "game") startNewGame();
         }
         if (std::getenv("SETTLERS_SHOWCASE")) {
             if (!gameStarted_) startNewGame();
@@ -267,7 +268,6 @@ void SettlersApp::hideAllWindows() {
     settingsWindow_->setVisible(false);
     controlsWindow_->setVisible(false);
     subWindow_ = nullptr;
-    buildWindow_->setVisible(false);
     barracksWindow_->setVisible(false);
     actionsWindow_->setVisible(false);
     carriersWindow_->setVisible(false);
@@ -289,7 +289,6 @@ void SettlersApp::showMenu() {
 void SettlersApp::enterGame() {
     mode_ = Mode::Game;
     hideAllWindows();
-    buildWindow_->setVisible(!spectator_);
     gui_->enableCursor(true);
 }
 
@@ -327,6 +326,15 @@ void SettlersApp::showGameOver() {
 // GŁÓWNA FUNKCJA KLATKI - wywoływana przez silnik przed renderowaniem sceny.
 void SettlersApp::update(float dt, Engine& e) {
     const auto& in = e.input();
+
+    // Pomocnicze (zrzuty ekranu): SETTLERS_HOVERBAR=<n> - po chwili kursor nad n-tym przyciskiem paska budowy
+    // (0-8 budynki jak klawisze 1-9, -1 droga).
+    static int hoverFrames = 0;
+    if (const char* hb = std::getenv("SETTLERS_HOVERBAR"); hb && ++hoverFrames >= 30 && hoverFrames % 5 == 0) {
+        float hx, hy;
+        const int n = std::atoi(hb);
+        if (buildBarSlotCenter(n < 0 ? kBarRoad : n, hx, hy)) pushMouseMotion(hx, hy);
+    }
 
     // 1. Rozmiar okna mógł się zmienić (zmiana rozdzielczości, pełny ekran) - przestawiamy okna GUI.
     if (static_cast<int>(renderer_->width()) != lastW_ || static_cast<int>(renderer_->height()) != lastH_) {

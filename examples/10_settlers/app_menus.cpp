@@ -27,7 +27,9 @@ void SettlersApp::setupGui() {
     gui_->setTextDrawFn([this](const std::string& text, float x, float y, float scale, std::array<float, 4> color, float z) {
         engine_.setTextLabel(text, kFont, x, y, scale, color, z);
     });
+    gui_->setTextMeasureFn([this](const std::string& text, float scale) { return engine_.measureText(text, scale); });
     renderer_->addFeature(gui_);
+    setupBuildBar();
 
     // Menu główne
     menuWindow_ = gui_->addWindow("Osadnicy", 0, 0, 340, 420);
@@ -70,17 +72,7 @@ void SettlersApp::setupGui() {
     makeButton(gameOverWindow_, "quit", 196, 100, 160, 36, "Wyjście", []() { pushQuitEvent(); });
 
     // Panel budowy
-    buildWindow_ = gui_->addWindow("Budowa", 0, 0, 250, (kBuildMenuSize + 1) * 36 + 8);
-    for (int i = 0; i < kBuildMenuSize; ++i) {
-        const BuildingType t = kBuildMenu[i];
-        const BuildingDef& def = buildingDef(t);
-        const std::string label = std::to_string(i + 1) + ". " + def.name + "  (" + costText(def.cost) + ")";
-        buildButtons_[i] = makeButton(buildWindow_, "b" + std::to_string(i), 8, 8 + i * 36, 234, 30, label,
-                                      [this, t]() { beginPlacement(t); });
-        buildTypes_[i] = t;
-    }
-    makeButton(buildWindow_, "road", 8, 8 + kBuildMenuSize * 36, 234, 30, "T. Droga (od flagi / budynku)",
-               [this]() { beginRoad(); });
+    // Panel budowy to dolny pasek rysowany jako HUD (app_buildbar.cpp) - bez okna GUI.
 
     // Koszary
     barracksWindow_ = gui_->addWindow("Koszary", 0, 0, 250, 96);
@@ -141,19 +133,9 @@ GuiStaticText* SettlersApp::label(GuiWindow* w, int x, int y, const std::string&
     return s;
 }
 
-// Lista rozdzielczości mieszczących się na ekranie
+// Lista rozdzielczości mieszczących się na ekranie (GameSettings z silnika).
 void SettlersApp::buildResolutionList() {
-    static const int modes[][2] = {{1024, 768}, {1280, 720}, {1280, 800}, {1366, 768}, {1440, 900}, {1600, 900},
-                                   {1680, 1050}, {1920, 1080}, {1920, 1200}, {2560, 1440}, {3840, 2160}};
-    uint32_t dw = 0, dh = 0;
-    const bool known = engine_.getDisplaySize(dw, dh);
-    resolutions_.clear();
-    for (const auto& m : modes) {
-        if (!known || (static_cast<uint32_t>(m[0]) <= dw && static_cast<uint32_t>(m[1]) <= dh)) {
-            resolutions_.push_back({m[0], m[1]});
-        }
-    }
-    if (resolutions_.empty()) resolutions_.push_back({1280, 720});
+    resolutions_ = GameSettings::resolutionList(engine_);
 }
 
 // Okno ustawień: dźwięk (pola wyboru i suwaki) oraz grafika (pełny ekran, cienie,
@@ -226,14 +208,13 @@ void SettlersApp::setupSettingsWindow() {
         engine_.setFrameRateLimit(settings_.fpsLimit);
     });
     comboSync_ = new GuiComboBox(w, "sync", 12, comboY[2], 300);
-    for (const char* s : {"Standard (fence)", "Timeline (semafory)", "Wyłączona"}) comboSync_->addItem(s);
+    for (const auto& s : GameSettings::syncModeNames()) comboSync_->addItem(s);
     comboSync_->setOnSelect([this](const std::string&) {
         settings_.syncMode = comboSync_->selectedIdx();
         applySyncMode();
     });
     comboPresent_ = new GuiComboBox(w, "present", 12, comboY[1], 300);
-    for (const char* s : {"FIFO - VSync włączony", "Immediate - VSync wyłączony", "Mailbox - potrójne buforowanie"})
-        comboPresent_->addItem(s);
+    for (const auto& s : GameSettings::presentModeNames()) comboPresent_->addItem(s);
     comboPresent_->setOnSelect([this](const std::string&) {
         settings_.presentMode = comboPresent_->selectedIdx();
         applyPresentMode();
@@ -312,97 +293,39 @@ void SettlersApp::setupControlsWindow() {
     w->setVisible(false);
 }
 
-// Przekazuje głośności i włączenie muzyki/efektów do systemu dźwięku.
+// Ustawienia gracza to engine3d::GameSettings (core/game_settings.h): zapis/odczyt JSON i stosowanie
+// w silniku są wspólne dla gier; tutaj tylko dopięcie do stanu aplikacji (muzyka, tryby testowe).
+
 void SettlersApp::applyAudioSettings() {
     musicEnabled_ = settings_.musicOn;
-    if (!audio_) return;
-    audio_->setMasterVolume(settings_.masterVolume / 100.0f);
-    audio_->setMusicVolume(settings_.musicVolume / 100.0f);
-    audio_->setSfxVolume(settings_.sfxOn ? settings_.sfxVolume / 100.0f : 0.0f);
-    if (!settings_.musicOn) audio_->stopMusic(0.6f);
+    settings_.applyAudio(audio_);
 }
 
-// Synchronizacja pionowa (tryb prezentacji swapchaina).
 void SettlersApp::applyPresentMode() {
-    static const PresentMode modes[] = {PresentMode::Fifo, PresentMode::Immediate, PresentMode::Mailbox};
-    engine_.setPresentMode(modes[std::clamp(settings_.presentMode, 0, 2)]);
+    settings_.applyPresentMode(engine_);
 }
 
-// Synchronizacja CPU-GPU w rendererze.
 void SettlersApp::applySyncMode() {
-    static const SynchronizationMode modes[] = {SynchronizationMode::Standard, SynchronizationMode::Timeline,
-                                                SynchronizationMode::Off};
-    engine_.setSynchronizationMode(modes[std::clamp(settings_.syncMode, 0, 2)]);
+    settings_.applySyncMode(engine_);
 }
 
 // Stosuje wszystkie ustawienia (przy starcie gry i po przycisku 'Domyślne').
 void SettlersApp::applySettings(bool startup) {
     applyAudioSettings();
-    engine_.setShadowsEnabled(settings_.shadows);
-    engine_.setFrameRateLimit(settings_.fpsLimit);
-    if (settings_.presentMode != 0) applyPresentMode();
-    if (settings_.syncMode != 0) applySyncMode();
-    if (!startup) {
-        applyPresentMode();
-        applySyncMode();
-    }
-    if (!settings_.fullscreen &&
-        (static_cast<int>(renderer_->width()) != settings_.windowW || static_cast<int>(renderer_->height()) != settings_.windowH)) {
-        engine_.setWindowSize(static_cast<uint32_t>(settings_.windowW), static_cast<uint32_t>(settings_.windowH));
-    }
-    if (engine_.isFullscreen() != settings_.fullscreen) engine_.setFullscreen(settings_.fullscreen);
+    settings_.applyDisplay(engine_, startup);
 }
 
-// Wczytuje ustawienia z pliku JSON (brakujące pola zostają domyślne, wartości są przycinane do zakresu).
-// W trybach testowych plik jest pomijany - testy zawsze startują z ustawień domyślnych.
+// Testy automatyczne startują zawsze na ustawieniach domyślnych (niezależnie od pliku gracza).
 void SettlersApp::loadSettings() {
-    // Testy automatyczne startują zawsze na ustawieniach domyślnych (niezależnie od pliku gracza)
     if (std::getenv("SETTLERS_UITEST") || std::getenv("SETTLERS_AUTOPLAY")) return;
-    std::ifstream f(kSettingsPath);
-    if (!f) return;
-    try {
-        nlohmann::json j;
-        f >> j;
-        Settings s;
-        s.musicOn = j.value("musicOn", s.musicOn);
-        s.sfxOn = j.value("sfxOn", s.sfxOn);
-        s.musicVolume = std::clamp(j.value("musicVolume", s.musicVolume), 0, 100);
-        s.sfxVolume = std::clamp(j.value("sfxVolume", s.sfxVolume), 0, 100);
-        s.masterVolume = std::clamp(j.value("masterVolume", s.masterVolume), 0, 100);
-        s.windowW = std::clamp(j.value("windowW", s.windowW), 640, 7680);
-        s.windowH = std::clamp(j.value("windowH", s.windowH), 480, 4320);
-        s.fullscreen = j.value("fullscreen", s.fullscreen);
-        s.presentMode = std::clamp(j.value("presentMode", s.presentMode), 0, 2);
-        s.syncMode = std::clamp(j.value("syncMode", s.syncMode), 0, 2);
-        s.fpsLimit = std::clamp(j.value("fpsLimit", s.fpsLimit), 0, 1000);
-        s.shadows = j.value("shadows", s.shadows);
-        settings_ = s;
-        LOG_INFO("Wczytano ustawienia z {}", kSettingsPath);
-    } catch (const std::exception& ex) {
-        LOG_WARN("Nie udało się wczytać ustawień {}: {}", kSettingsPath, ex.what());
-    }
+    settings_.load(kSettingsPath);
 }
 
-// Zapisuje ustawienia do pliku JSON (nie w trybach testowych).
+// Zapis do pliku JSON (nie w trybach testowych - testy nie nadpisują ustawień gracza).
 void SettlersApp::saveSettings() {
-    if (uiTest_ || autoplaySeconds_ > 0.0f) return;   // testy nie nadpisują ustawień gracza
+    if (uiTest_ || autoplaySeconds_ > 0.0f) return;
     settings_.fullscreen = engine_.isFullscreen();
-    nlohmann::json j = {
-        {"musicOn", settings_.musicOn},       {"sfxOn", settings_.sfxOn},
-        {"musicVolume", settings_.musicVolume}, {"sfxVolume", settings_.sfxVolume},
-        {"masterVolume", settings_.masterVolume}, {"windowW", settings_.windowW},
-        {"windowH", settings_.windowH},       {"fullscreen", settings_.fullscreen},
-        {"presentMode", settings_.presentMode}, {"syncMode", settings_.syncMode},
-        {"fpsLimit", settings_.fpsLimit},     {"shadows", settings_.shadows},
-    };
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(kSettingsPath).parent_path(), ec);
-    std::ofstream f(kSettingsPath);
-    if (f) {
-        f << j.dump(2);
-    } else {
-        LOG_WARN("Nie można zapisać ustawień do {}", kSettingsPath);
-    }
+    settings_.save(kSettingsPath);
 }
 
 // Rozmieszcza okna względem rozmiaru ekranu (menu na środku, panel budowy w lewym dolnym rogu...).
@@ -416,9 +339,8 @@ void SettlersApp::layoutGui() {
     settingsWindow_->setPosition(w / 2 - settingsWindow_->width() / 2, std::max(40, h / 2 - settingsWindow_->height() / 2));
     controlsWindow_->setPosition(w / 2 - controlsWindow_->width() / 2, std::max(40, h / 2 - controlsWindow_->height() / 2));
     gameOverWindow_->setPosition(w / 2 - 190, h / 2 - 100);
-    buildWindow_->setPosition(14, h - buildWindow_->height() - 14);
-    barracksWindow_->setPosition(14 + 250 + 20, h - 96 - 14 - 148);
-    actionsWindow_->setPosition(14 + 250 + 20, h - 134 - 14);
+    barracksWindow_->setPosition(14, h - 96 - 14 - 148);
+    actionsWindow_->setPosition(14, h - 134 - 14);
 }
 
 } // namespace settlers

@@ -322,4 +322,32 @@ struct Matrix4 {
     return {clipX / clipW, clipY / clipW, clipZ / clipW};
 }
 
+// --- Pomocnicze funkcje dla gier (płaszczyzna XZ = poziom, Y = wysokość) ---
+
+// Odległość w poziomie (bez wysokości) - zasięgi, wyszukiwanie najbliższych obiektów na mapie.
+[[nodiscard]] inline float distanceXZ(const Vec3& a, const Vec3& b) {
+    const float dx = a.x - b.x, dz = a.z - b.z;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+// Płynne przejście 0..1, gdy x rośnie od e0 do e1 (działa też dla e0 > e1).
+[[nodiscard]] inline float smoothstep(float e0, float e1, float x) {
+    float t = (x - e0) / (e1 - e0);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Obrót wektora wokół osi Y o kąt a (zgodny z TransformComponent::rotation.y).
+[[nodiscard]] inline Vec3 rotateY(const Vec3& v, float a) {
+    const float c = std::cos(a), s = std::sin(a);
+    return {c * v.x + s * v.z, v.y, -s * v.x + c * v.z};
+}
+
+// Interpolacja kąta najkrótszą drogą (350° -> 10° obraca się o 20°, a nie o 340°).
+[[nodiscard]] inline float angleLerp(float from, float to, float t) {
+    float d = std::fmod(to - from + PI, 2.0f * PI);
+    if (d < 0.0f) d += 2.0f * PI;
+    return from + (d - PI) * t;
+}
+
 }  // namespace engine3d

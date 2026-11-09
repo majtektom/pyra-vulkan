@@ -9,13 +9,16 @@
 
 namespace settlers {
 
-// Linia ekranowa z małych prostokątów (GUI ma tylko prostokąty).
+// Linia ekranowa: GuiMgr::addOverlayLine z silnika (gap > 0 = linia przerywana z kropek).
 void SettlersApp::debugLine(float x0, float y0, float x1, float y1, const Color& c, float thick, float gap) {
+    if (gap <= 0.0f) {
+        gui_->addOverlayLine(x0, y0, x1, y1, thick, c);
+        return;
+    }
     const float dx = x1 - x0, dy = y1 - y0;
     const float len = std::sqrt(dx * dx + dy * dy);
     if (len < 0.5f || len > 4000.0f) return;
-    const float step = std::max(2.0f, thick + gap);
-    const int n = std::min(800, static_cast<int>(len / step) + 1);
+    const int n = std::min(800, static_cast<int>(len / (thick + gap)) + 1);
     for (int i = 0; i <= n; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(n);
         gui_->addOverlayRect(x0 + dx * t - thick * 0.5f, y0 + dy * t - thick * 0.5f, thick, thick, c, 0.949f);

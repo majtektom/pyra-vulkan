@@ -625,7 +625,9 @@ void SettlersApp::runUiTestStep() {
             r.wood = 0;
             world_->debugSetStock(kPlayer, r);
         }
-        pushMouseMotion(static_cast<float>(buildWindow_->x() + 60), static_cast<float>(buildWindow_->y() + 20));
+        float hx = 0.0f, hy = 0.0f;
+        buildBarSlotCenter(0, hx, hy);   // przycisk "Dom" na dolnym pasku
+        pushMouseMotion(hx, hy);
     } else if (f == 94) {
         uiCheck("podpowiedź pokazuje brakujące surowce", hoverMissing_.find("20 drewna") != std::string::npos);
         LOG_INFO("[uitest] podpowiedź: \"{}\"", hoverMissing_);
@@ -811,7 +813,7 @@ void SettlersApp::runUiTestStep() {
         pushMouseButton(SDL_BUTTON_LEFT, false);
     } else if (f == 306) {
         uiCheck("przycisk Pokaz uruchamia AI kontra AI",
-                mode_ == Mode::Game && spectator_ && world_->aiControlsPlayer && !buildWindow_->isVisible() && gameSpeed_ == 4);
+                mode_ == Mode::Game && spectator_ && world_->aiControlsPlayer && !buildBarVisible() && gameSpeed_ == 4);
     } else if (f == 600) {
         int playerSites = 0;
         for (const auto& b : world_->buildings) playerSites += (b.alive && b.faction == kPlayer) ? 1 : 0;

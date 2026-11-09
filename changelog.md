@@ -5,6 +5,13 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - `feature/gui/gui_toolbar.h` — `GuiToolbar` (pasek z grupami ikon, skrótami, stanem enabled/active) i `GuiCard`
+   (karta informacji: tytuł, opis, żetony kosztu, ostrzeżenie); `feature/gui/gui_pixel_icon.h` — ikony pixel-art z tekstu
+   z domyślną paletą; demo w `05_gui_demo`
+ - `GuiMgr::addOverlayLine/addOverlayBar/addOverlayText/addOverlayTextCentered`, `setTextMeasureFn`/`measureText`
+ - `core/game_settings.h` — `GameSettings`: ustawienia gracza (dźwięk, okno, VSync, synchronizacja, FPS, cienie),
+   JSON load/save, stosowanie w silniku i audio, lista rozdzielczości (przeniesione z 10_settlers)
+ - `core/noise.h` — `ValueNoise` (value noise + fbm), `core/math.h` — `distanceXZ`, `smoothstep`, `rotateY`, `angleLerp`
  - `camera/camera_picking.h` — `screenPointToRay`, `worldToScreen`, `rayPlaneY`, `raySphere`
  - `camera/rts_camera_controller.h` — kamera strategiczna (pan/zoom/obrót/nachylenie z wygładzaniem, granice, wysokość terenu)
  - `CameraComponent::aspectRatio` / `autoAspect` — proporcje rzutowania zgodne z oknem (wcześniej na sztywno 4:3)
@@ -14,6 +21,9 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: dolny pasek budowy zamiast okna (`app_buildbar.cpp`) — ikony pixel-art w grupach Mieszkańcy/Surowce/
+   Logistyka/Wojsko, karta informacji z opisem i kosztem (brakujące surowce na czerwono), klawisze skrótu na ikonach;
+   panel zaznaczenia nad paskiem, okna akcji przy lewej krawędzi
  - Osadnicy: drogi, flagi i tragarze (`world_roads.cpp`) — towary z warsztatów czekają na fladze (max 8, pełna flaga
    wstrzymuje produkcję); wspólna pula tragarzy (liczba ustawiana w oknie Gospodarka (I): −/+/Auto) — wolny tragarz
    niesie towar całą trasą po drogach do najbliższego magazynu z miejscem, a materiały z magazynu na place budowy

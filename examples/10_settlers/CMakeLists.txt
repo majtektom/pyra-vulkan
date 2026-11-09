@@ -18,6 +18,7 @@ add_executable(10_settlers_example
     app_menus.cpp
     app_input.cpp
     app_hud.cpp
+    app_buildbar.cpp
     app_audio.cpp
     app_debug.cpp
     app_tests.cpp

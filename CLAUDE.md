@@ -20,11 +20,11 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
 
 | Katalog | Zawartość |
 |---|---|
-| `core/` | `Engine` (pętla, `onUpdate`, wejście/akcje, tekst HUD, ustawienia), `Entity`/`Component`/`TransformComponent`, `MeshManager`, `MeshBuilder` (proceduralne low-poly z kolorem w wierzchołkach), `math.h` (Vec3: `add/subtract/multiply/normalize/dot/cross/lerp`), logger (`LOG_INFO/WARN/ERROR`) |
+| `core/` | `Engine` (pętla, `onUpdate`, wejście/akcje, tekst HUD, ustawienia), `Entity`/`Component`/`TransformComponent`, `MeshManager`, `MeshBuilder` (proceduralne low-poly z kolorem w wierzchołkach), `math.h` (Vec3: `add/subtract/multiply/normalize/dot/cross/lerp`, dla gier: `distanceXZ`, `smoothstep`, `rotateY`, `angleLerp`), `noise.h` (`ValueNoise`: value noise + fbm), `game_settings` (`GameSettings`: dźwięk/okno/VSync/FPS/cienie, JSON load/save, apply), logger (`LOG_INFO/WARN/ERROR`) |
 | `camera/` | `CameraComponent` (`autoAspect`), `camera_picking` (`screenPointToRay`, `worldToScreen`, `rayPlaneY`, `raySphere`), `RtsCameraController` |
 | `render/` | `renderer_core.cpp` (G-Buffer, cienie: 4 kaskady słońca + atlas 2x2 dla 4 świateł lokalnych), materiały (`MaterialManager::add(Material)`), shadery |
 | `scene/` | `Scene` (`createEntity`, `createDirectionalLight`, `setActiveCamera`), `SceneManager` |
-| `feature/` | `ai/nav_grid` (A*, przeszkody zliczane, regiony), `audio/audio_system` (SDL3 + stb_vorbis OGG, dźwięk 3D, muzyka), `gui/` (okna, przyciski, overlay HUD), `particle/`, `font/`, `fog/` |
+| `feature/` | `ai/nav_grid` (A*, przeszkody zliczane, regiony), `audio/audio_system` (SDL3 + stb_vorbis OGG, dźwięk 3D, muzyka), `gui/` (okna i widgety; overlay HUD: `addOverlayRect/Frame/Line/Bar/Text/TextCentered`; `GuiToolbar` - pasek z grupami ikon i kartą `GuiCard`; `PixelIcon` - ikony pixel-art z tekstu), `particle/`, `font/`, `fog/` |
 | `object/` | teren (`Terrain::raycast/getNormal/setHeightmap`), ocean, skydome, roślinność, modele 3ds/md2/gltf |
 | `platform/` | SDL3: okno, zdarzenia, rozmiar ekranu |
 
@@ -43,6 +43,8 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
 
 Podział: `World` (`settlers_world.h`, pliki `world_*.cpp`) = symulacja, bez wejścia i GUI;
 `SettlersApp` (`settlers_app.h`, pliki `app_*.cpp`) = prezentacja, wejście, HUD, dźwięk, debug, testy.
+Panel budowy to `GuiToolbar` z silnika (`app_buildbar.cpp` dostarcza tylko ikony i treść kart).
+Zasada: elementy przydatne innym grom (GUI, ustawienia, szum, matematyka) trafiają do `engine/`, a nie do przykładu.
 Mapa plików i opis każdego modułu: komentarz na górze `main.cpp`, `settlers_world.h`, `settlers_app.h`.
 Wszystkie liczby balansu: `settlers_defs.h/.cpp`.
 
@@ -55,7 +57,8 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_AUTOPLAY=<s>` + `SETTLERS_SPEED=<x>` | AI gra za obie strony, log `[autoplay]` co 30 s gry |
 | `SETTLERS_FLAGDUMP=1` | przy końcu autoplay wypisuje flagi z towarami |
 | `SETTLERS_DEBUG=1|2` | tryb debug od startu (jak F3) |
-| `SETTLERS_OPEN=settings|controls|help|demo|economy` | otwiera okno od razu |
+| `SETTLERS_OPEN=settings|controls|help|demo|economy|game` | otwiera okno / rozpoczyna partię od razu |
+| `SETTLERS_HOVERBAR=<n>` | kursor nad n-tym przyciskiem paska budowy (0-8, -1 droga) - do zrzutów karty informacji |
 | `SETTLERS_CAMERA=<odl>` | odległość kamery (do zrzutów ekranu) |
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
 

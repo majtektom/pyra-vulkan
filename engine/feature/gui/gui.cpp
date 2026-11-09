@@ -2,6 +2,7 @@
 #include "platform/platform.h"
 #include "render/renderer.h"
 #include <algorithm>
+#include <cmath>
 
 namespace engine3d {
 
@@ -164,6 +165,38 @@ void GuiMgr::addOverlayFrame(float x, float y, float w, float h, float t, std::a
     addOverlayRect(x, y + h - t, w, t, color, depth);
     addOverlayRect(x, y + t, t, h - 2.0f * t, color, depth);
     addOverlayRect(x + w - t, y + t, t, h - 2.0f * t, color, depth);
+}
+
+void GuiMgr::addOverlayLine(float x0, float y0, float x1, float y1, float t, std::array<float, 4> color, float depth) {
+    const float dx = x1 - x0, dy = y1 - y0;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 0.5f || len > 4000.0f) return;
+    const float step = std::max(2.0f, t);
+    const int n = std::min(800, static_cast<int>(len / step) + 1);
+    for (int i = 0; i <= n; ++i) {
+        const float k = static_cast<float>(i) / static_cast<float>(n);
+        addOverlayRect(x0 + dx * k - t * 0.5f, y0 + dy * k - t * 0.5f, t, t, color, depth);
+    }
+}
+
+void GuiMgr::addOverlayBar(float x, float y, float w, float h, float frac, std::array<float, 4> fill, float depth) {
+    frac = frac < 0.0f ? 0.0f : (frac > 1.0f ? 1.0f : frac);
+    addOverlayRect(x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, {0.0f, 0.0f, 0.0f, 0.75f}, depth + 0.001f);
+    addOverlayRect(x, y, w * frac, h, fill, depth);
+}
+
+void GuiMgr::addOverlayText(const std::string& text, float x, float y, float scale, std::array<float, 4> color, float depth) {
+    if (textFn_) textFn_(text, x, y, scale, color, depth);
+}
+
+void GuiMgr::addOverlayTextCentered(const std::string& text, float cx, float y, float scale, std::array<float, 4> color,
+                                    float depth) {
+    addOverlayText(text, cx - measureText(text, scale) * 0.5f, y, scale, color, depth);
+}
+
+float GuiMgr::measureText(const std::string& text, float scale) const {
+    if (measureFn_) return measureFn_(text, scale);
+    return static_cast<float>(text.size()) * 22.0f * scale;   // przybliżenie bez czcionki
 }
 
 void GuiMgr::renderGui() {

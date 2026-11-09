@@ -19,6 +19,7 @@
  *   app_menus.cpp  - okna GUI: menu główne, pauza, ustawienia, sterowanie; zapis ustawień
  *   app_input.cpp  - kamera, zaznaczanie jednostek, rozkazy, stawianie budynków
  *   app_hud.cpp    - rysowanie HUD: górny pasek, komunikaty, paski życia, minimapa, panel, pomoc
+ *   app_buildbar.cpp - dolny pasek budowy: ikony budynków (pixel-art), karta informacji, kliknięcia
  *   app_audio.cpp  - efekty dźwiękowe i muzyka zależna od sytuacji w grze
  *   app_debug.cpp  - tryb debug (F3): ścieżki, stany, siatka kolizji; zrzut stanu (F9)
  *   app_tests.cpp  - testy automatyczne (SETTLERS_UITEST) i rozgrywka AI z logami (SETTLERS_AUTOPLAY)
@@ -55,6 +56,7 @@
 #include "camera/camera_picking.h"
 #include "camera/rts_camera_controller.h"
 #include "core/engine.h"
+#include "core/game_settings.h"
 #include "core/entity.h"
 #include "core/light_component.h"
 #include "core/logger.h"
@@ -67,6 +69,7 @@
 #include "feature/gui/gui_check_box.h"
 #include "feature/gui/gui_combo_box.h"
 #include "feature/gui/gui_static_text.h"
+#include "feature/gui/gui_toolbar.h"
 #include "feature/gui/gui_track_bar.h"
 #include "object/ocean_renderer.h"
 #include "object/skydome_renderer.h"
@@ -179,20 +182,8 @@ inline const ControlLine kControls[] = {
 // Ustawienia gracza (zapisywane w save/settlers_settings.json)
 // ======================================================================================
 
-struct Settings {
-    bool musicOn = true;
-    bool sfxOn = true;
-    int musicVolume = 55;   // w procentach
-    int sfxVolume = 90;
-    int masterVolume = 100;
-    int windowW = 1440;     // rozdzielczość okna (w trybie okienkowym)
-    int windowH = 900;
-    bool fullscreen = false;
-    int presentMode = 0;    // 0 FIFO (VSync), 1 Immediate, 2 Mailbox
-    int syncMode = 0;       // 0 Standard, 1 Timeline, 2 wyłączona
-    int fpsLimit = 0;       // 0 = bez limitu
-    bool shadows = true;
-};
+// Ustawienia gracza: engine3d::GameSettings (core/game_settings.h) - wspólne dla gier na silniku.
+using Settings = GameSettings;
 
 // ======================================================================================
 // Funkcje pomocnicze
@@ -420,6 +411,26 @@ private:
     void drawSelectionPanel();
     // Pomoc F1: sterowanie i zasady gry.
     void drawHelp();
+
+    // ----------------------------------------------------------------------------------
+    // app_buildbar.cpp - dolny pasek budowy
+    // ----------------------------------------------------------------------------------
+
+    // Pasek to GuiToolbar z silnika (feature/gui/gui_toolbar.h); gra dostarcza ikony i treść kart.
+    // Identyfikatory przycisków: indeks w kBuildMenu (0-8, jak klawisze 1-9) albo kBarRoad.
+    static constexpr int kBarRoad = 100;
+    // Czy pasek jest widoczny (gra, nie pokaz AI).
+    [[nodiscard]] bool buildBarVisible() const { return mode_ == Mode::Game && !spectator_; }
+    // Tworzy przyciski paska (ikony, opisy) - raz, w setupGui.
+    void setupBuildBar();
+    // Co klatkę: układ, stan przycisków (stać nas? aktywny?) i karty z kosztem.
+    void refreshBuildBar();
+    [[nodiscard]] bool mouseOverBuildBar(int mx, int my) const;
+    // Środek przycisku (dla testów UI i zrzutów).
+    bool buildBarSlotCenter(int id, float& x, float& y) const;
+    // Klik w pasek: true = kliknięcie obsłużone (nie trafia w świat).
+    bool handleBuildBar(Engine& e, const InputSnapshot& in);
+    void drawBuildBar();
     // Okno gospodarki (I): towary w magazynach / na flagach / w drodze, magazyny, tragarze, przestoje.
     void drawEconomy();
     void economyPanelRect(float& x, float& y, float& w, float& h) const;
@@ -525,7 +536,8 @@ private:
     int selectedBuilding_ = -1;
     bool dragging_ = false;                   // trwa przeciąganie ramki zaznaczenia
     int dragStartX_ = 0, dragStartY_ = 0;
-    int selPanelX_ = 0, selPanelY_ = 0, selPanelW_ = 0;
+    int selPanelX_ = 0, selPanelY_ = 0, selPanelW_ = 0, selPanelH_ = 0;
+    GuiToolbar buildBar_;                     // dolny pasek budowy (komponent GUI silnika)
     bool placing_ = false;                    // tryb stawiania budynku
     BuildingType placeType_ = BuildingType::House;
     float placeRot_ = 0.0f;
@@ -550,7 +562,6 @@ private:
     GuiWindow* menuWindow_ = nullptr;
     GuiWindow* pauseWindow_ = nullptr;
     GuiWindow* gameOverWindow_ = nullptr;
-    GuiWindow* buildWindow_ = nullptr;
     GuiWindow* barracksWindow_ = nullptr;
     GuiWindow* actionsWindow_ = nullptr;
     GuiWindow* settingsWindow_ = nullptr;
@@ -561,12 +572,10 @@ private:
     GuiButton* btnSpeed_ = nullptr;
     GuiStaticText* gameOverText_ = nullptr;
     GuiStaticText* gameOverStats_ = nullptr;
-    std::array<GuiButton*, kBuildMenuSize> buildButtons_{};
     GuiButton* btnConnect_ = nullptr;         // "Połącz drogą" w oknie akcji budynku
     GuiWindow* carriersWindow_ = nullptr;     // przyciski -/+/Auto liczby tragarzy (przy oknie gospodarki)
     GuiButton* btnCarrierAuto_ = nullptr;
-    std::array<BuildingType, kBuildMenuSize> buildTypes_{};
-    std::string hoverMissing_;                // podpowiedź brakujących surowców pod kursorem
+    std::string hoverMissing_;                // brakujące surowce budynku pod kursorem (karta na pasku budowy)
 
     // --- Okno ustawień ---
     Settings settings_;

@@ -46,7 +46,7 @@ Binaria lądują w `bin/`:
 | `rotating_cube` | Obracający się sześcian z teksturą |
 | `flyaround` | Lot nad sceną z modelami 3DS, MD2, GLTF |
 | `particles` | System cząsteczek |
-| `gui_demo` | Widgety GUI (button, checkbox, combobox, memo, scrollbar) |
+| `gui_demo` | Widgety GUI (button, checkbox, combobox, memo, scrollbar), pasek narzędzi z ikonami, elementy HUD |
 | `terrain` | Teren z generatorów (Plasma/Fault/Deposition) + multi-texturing z maskami |
 | `10_settlers` | Gra strategiczna w stylu "Osadników": budowa osady, ekonomia, wojsko i walka z AI |
 
@@ -70,6 +70,7 @@ pokazuje towary w magazynach, na flagach i w drodze, zapełnienie magazynów, tr
 Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.
 
 Sterowanie: WSAD/krawędź ekranu — kamera, Q/E/środkowy przycisk — obrót, kółko — zoom,
+Budowanie: dolny pasek z ikonami budynków pogrupowanymi tematycznie (karta z opisem i kosztem po najechaniu).
 LPM — zaznaczanie (ramka), PPM — ruch/atak, Ctrl+PPM — marsz bojowy, 1–9 — budowa, T — droga,
 R — obrót budynku, Del — zburzenie / usunięcie flagi, Tab — całe wojsko, I — gospodarka, M — muzyka, F1 — pomoc, ESC — pauza.
 
@@ -113,7 +114,8 @@ cd bin
 - MD2 loader z animacją klatkową
 - 3DS loader
 - System terenu (QuadTree LOD, generatory, multi-texturing z maskami, wygładzanie krawędzi)
-- GUI (okna, buttony, checkboxy, combobox, memo, scrollbar, trackbar)
+- GUI (okna, buttony, checkboxy, combobox, memo, scrollbar, trackbar, pasek narzędzi `GuiToolbar` z ikonami pixel-art i kartami informacji, elementy HUD: paski, linie, napisy)
+- Ustawienia gracza `GameSettings` (JSON, okno, VSync, FPS, dźwięk), szum `ValueNoise` do terenu proceduralnego
 - Tekstowy overlay 2D z atlasu glifów (UTF-8)
 - Font manager (TTF przez SDL3_ttf)
 - Kamera RTS (`RtsCameraController`), picking myszą (`screenPointToRay`, `worldToScreen`, `Terrain::raycast`)

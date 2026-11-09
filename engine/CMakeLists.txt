@@ -12,6 +12,7 @@ add_library(engine3d SHARED
     camera/camera_picking.cpp
     camera/rts_camera_controller.cpp
     core/mesh_builder.cpp
+    core/game_settings.cpp
     feature/ai/nav_grid.cpp
     feature/audio/audio_system.cpp
     feature/audio/stb_vorbis_impl.cpp
@@ -62,6 +63,8 @@ add_library(engine3d SHARED
     feature/gui/gui_memo.cpp
     feature/gui/gui_track_bar.cpp
     feature/gui/gui_scroll_bar.cpp
+    feature/gui/gui_pixel_icon.cpp
+    feature/gui/gui_toolbar.cpp
     feature/gui/gui_renderer.cpp
     feature/fog/volumetric_fog_renderer.cpp
     scene/scene.cpp

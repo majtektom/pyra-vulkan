@@ -18,6 +18,7 @@ struct InputSnapshot;
 
 using TextDrawFn = std::function<void(const std::string& text, float x, float y, float scale, std::array<float,4> color)>;
 using EngineTextDrawFn = std::function<void(const std::string& text, float x, float y, float scale, std::array<float,4> color, float z)>;
+using TextMeasureFn = std::function<float(const std::string& text, float scale)>;
 
 static constexpr int kTitleBarH = 25;
 
@@ -59,6 +60,9 @@ public:
     Stage getStage() const override { return Stage::Overlay; }
 
     void setTextDrawFn(EngineTextDrawFn textFn) { textFn_ = std::move(textFn); }
+    // Szerokość napisu w pikselach (zwykle Engine::measureText). Bez niej używane jest przybliżenie.
+    void setTextMeasureFn(TextMeasureFn fn) { measureFn_ = std::move(fn); }
+    [[nodiscard]] float measureText(const std::string& text, float scale) const;
 
     GuiWindow* addWindow(const std::string& name, int x, int y, int w, int h);
     bool removeWindow(const std::string& name);
@@ -89,6 +93,15 @@ public:
     void addOverlayRect(float x, float y, float w, float h, std::array<float, 4> color, float depth = 0.95f);
     // Ramka (obrys) prostokąta o grubości thickness.
     void addOverlayFrame(float x, float y, float w, float h, float thickness, std::array<float, 4> color, float depth = 0.95f);
+    // Linia (z małych kwadratów - GUI rysuje tylko prostokąty): ścieżki, podglądy tras, wskaźniki.
+    void addOverlayLine(float x0, float y0, float x1, float y1, float thickness, std::array<float, 4> color, float depth = 0.949f);
+    // Pasek postępu / życia: czarne tło + wypełnienie proporcjonalne do frac (0..1).
+    void addOverlayBar(float x, float y, float w, float h, float frac, std::array<float, 4> fill, float depth = 0.95f);
+    // Napis HUD (y = linia bazowa tekstu). Wymaga setTextDrawFn.
+    void addOverlayText(const std::string& text, float x, float y, float scale, std::array<float, 4> color, float depth = 0.93f);
+    // Napis wyśrodkowany względem cx.
+    void addOverlayTextCentered(const std::string& text, float cx, float y, float scale, std::array<float, 4> color,
+                                float depth = 0.93f);
 
     // Czy kursor znajduje się nad widocznym oknem GUI (do blokowania kliknięć w świat gry).
     [[nodiscard]] bool isPointerOverGui() const { return hoveredWindow_ != nullptr; }
@@ -115,6 +128,7 @@ private:
 
     GuiRenderer guiRenderer_;
     EngineTextDrawFn textFn_;
+    TextMeasureFn measureFn_;
     float screenW_ = 1024.0f, screenH_ = 768.0f;
     Renderer* renderer_ = nullptr;
 };

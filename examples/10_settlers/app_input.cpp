@@ -70,8 +70,9 @@ bool SettlersApp::mouseInMinimap(int mx, int my, Vec3* worldPos) const {
 
 // Czy kursor jest nad elementem interfejsu - wtedy kliknięcie nie trafia w świat gry.
 bool SettlersApp::mouseOverUi(int mx, int my) const {
-    return gui_->isPointerOverGui() || mouseInMinimap(mx, my) || static_cast<float>(my) < kTopBarH ||
-           (hasSelectionPanel() && mx > selPanelX_ && mx < selPanelX_ + selPanelW_ && my > selPanelY_);
+    return gui_->isPointerOverGui() || mouseInMinimap(mx, my) || static_cast<float>(my) < kTopBarH || mouseOverBuildBar(mx, my) ||
+           (hasSelectionPanel() && mx > selPanelX_ && mx < selPanelX_ + selPanelW_ && my > selPanelY_ &&
+            my < selPanelY_ + selPanelH_);
 }
 
 // Promień od kamery przez piksel pod kursorem - podstawa wskazywania obiektów myszą.
@@ -88,7 +89,7 @@ void SettlersApp::handleGameInput(Engine& e, const InputSnapshot& in) {
 
     // Skróty budowy
     for (int i = 0; i < kBuildMenuSize; ++i) {
-        if (e.actionPressed("build." + std::to_string(i + 1))) beginPlacement(buildTypes_[i]);
+        if (e.actionPressed("build." + std::to_string(i + 1))) beginPlacement(kBuildMenu[i]);
     }
     if (e.actionPressed(kActDemolish)) demolishSelected();
     if (e.actionPressed(kActHalt)) haltSelected();
@@ -104,6 +105,9 @@ void SettlersApp::handleGameInput(Engine& e, const InputSnapshot& in) {
             beginRoad();
         }
     }
+
+    // Dolny pasek budowy (kliknięcie w pasek nie trafia w świat).
+    if (handleBuildBar(e, in)) return;
 
     if (placing_) {
         updatePlacement(e, in, overUi, shift);
@@ -439,18 +443,15 @@ void SettlersApp::updateContextWindows() {
         btnCarrierAuto_->setText(world_->factions[kPlayer].carrierAuto ? "Auto: tak" : "Auto: nie");
     }
     actionsWindow_->setVisible(actions && !spectator_);
-    // Wyszarzenie przycisków budowy, na które nie stać gracza
-    // Ustawiane co klatkę: GuiButton sam zmienia kolor przy najechaniu kursorem.
-    const auto& res = world_->factions[kPlayer].res;
-    const int mx = gui_->mouseX() - buildWindow_->x(), my = gui_->mouseY() - buildWindow_->y();
-    for (int i = 0; i < kBuildMenuSize; ++i) {
-        const bool can = res.canAfford(buildingDef(buildTypes_[i]).cost);
-        const bool hover = buildButtons_[i]->isHovered(mx, my);
-        buildButtons_[i]->color_ = can ? (hover ? Color{0.2f, 0.2f, 0.28f, 0.9f} : Color{0.3f, 0.3f, 0.38f, 0.9f})
-                                       : (hover ? Color{0.42f, 0.18f, 0.16f, 0.9f} : Color{0.32f, 0.16f, 0.16f, 0.9f});
-        if (can) continue;
-        if (hover) hoverMissing_ = std::string(buildingDef(buildTypes_[i]).name) + " - brakuje: " +
-                                   missingText(buildingDef(buildTypes_[i]).cost, res);
+    // Pasek budowy: przycisk pod kursorem i brakujące surowce (pokazywane na karcie informacji).
+    const auto& in = engine_.input();
+    refreshBuildBar();
+    buildBar_.update(in.mouseX, in.mouseY, false);
+    const int hover = buildBar_.hoveredId();
+    if (hover >= 0 && hover < kBuildMenuSize) {
+        const BuildingDef& def = buildingDef(kBuildMenu[hover]);
+        const auto& res = world_->factions[kPlayer].res;
+        if (!res.canAfford(def.cost)) hoverMissing_ = std::string(def.name) + " - brakuje: " + missingText(def.cost, res);
     }
 }
 

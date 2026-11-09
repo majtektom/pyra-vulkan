@@ -20,10 +20,9 @@ void SettlersApp::textCentered(const std::string& s, float cx, float y, float sc
     text(s, cx - engine_.measureText(s, scale) * 0.5f, y, scale, c, depth);
 }
 
-// Pasek (życie, postęp budowy): czarne tło + wypełnienie proporcjonalne do frac (0..1).
+// Pasek (życie, postęp budowy): GuiMgr::addOverlayBar z silnika.
 void SettlersApp::bar(float x, float y, float w, float h, float frac, const Color& fill) {
-    gui_->addOverlayRect(x - 1, y - 1, w + 2, h + 2, {0.0f, 0.0f, 0.0f, 0.75f}, 0.951f);
-    gui_->addOverlayRect(x, y, w * std::clamp(frac, 0.0f, 1.0f), h, fill, 0.95f);
+    gui_->addOverlayBar(x, y, w, h, frac, fill);
 }
 
 // Rysuje cały interfejs dla bieżącego trybu. W menu tylko tytuł; w grze: paski życia,
@@ -44,6 +43,7 @@ void SettlersApp::drawHud(Engine& e, const InputSnapshot& in) {
     drawMessages();
     drawMinimap();
     drawSelectionPanel();
+    drawBuildBar();
 
     if (dragging_) {
         const float x0 = static_cast<float>(std::min(dragStartX_, in.mouseX));
@@ -72,12 +72,6 @@ void SettlersApp::drawHud(Engine& e, const InputSnapshot& in) {
         }
     }
 
-    if (!hoverMissing_.empty() && mode_ == Mode::Game) {
-        const float x = static_cast<float>(in.mouseX) + 18.0f, y = static_cast<float>(in.mouseY) + 6.0f;
-        const float tw = engine_.measureText(hoverMissing_, 0.52f);
-        gui_->addOverlayRect(x - 6.0f, y - 18.0f, tw + 12.0f, 26.0f, {0.1f, 0.05f, 0.04f, 0.92f}, 0.05f);
-        text(hoverMissing_, x, y, 0.52f, {1.0f, 0.6f, 0.45f, 1.0f}, 0.04f);
-    }
 
     if (showHelp_) drawHelp();
     if (showEconomy_) drawEconomy();
@@ -258,7 +252,10 @@ void SettlersApp::drawSelectionPanel() {
     selPanelW_ = 470;
     selPanelX_ = static_cast<int>(screenW_ * 0.5f) - selPanelW_ / 2;
     const int panelH = 132;
-    selPanelY_ = static_cast<int>(screenH_) - panelH - 12;
+    selPanelH_ = panelH;
+    // Panel stoi nad paskiem budowy (albo przy dolnej krawędzi, gdy paska nie ma - pokaz AI).
+    const float bottom = buildBarVisible() ? buildBar_.y() - 14.0f : screenH_ - 12.0f;
+    selPanelY_ = static_cast<int>(bottom) - panelH;
     if (!hasSelectionPanel()) return;
     const float px = static_cast<float>(selPanelX_), py = static_cast<float>(selPanelY_);
     gui_->addOverlayRect(px - 3, py - 3, selPanelW_ + 6.0f, panelH + 6.0f, {0.55f, 0.45f, 0.25f, 0.95f}, 0.97f);

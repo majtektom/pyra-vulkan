@@ -85,8 +85,9 @@ engine.getMeshManager()->loadMesh("nazwa", b.build());
 
 ## 6. HUD i okna GUI
 
-- HUD w trybie immediate (co klatkę od nowa): `engine.setTextLabel(text, font, x, y, scale, color, depth)`,
-  `engine.measureText(text, scale)`, `gui->addOverlayRect/addOverlayFrame(x, y, w, h, ..., depth)`.
+- HUD w trybie immediate (co klatkę od nowa), wszystko w `GuiMgr`:
+  `addOverlayRect/addOverlayFrame/addOverlayLine/addOverlayBar` (pasek życia/postępu),
+  `addOverlayText/addOverlayTextCentered` (wymaga `setTextDrawFn` i `setTextMeasureFn` -> `engine.measureText`).
   Głębokość: mniejsza = bliżej. Okna GUI leżą w 0.1..0.9, HUD ~0.93-0.97. Elementy na tle panelu
   muszą mieć głębokość MNIEJSZĄ niż tło panelu, inaczej znikną pod nim.
 - Okna: `gui = std::make_shared<GuiMgr>(); gui->setTextDrawFn(...); renderer->addFeature(gui);`
@@ -94,6 +95,14 @@ engine.getMeshManager()->loadMesh("nazwa", b.build());
   (nazwy widgetów unikalne). Okna twórz raz, tryby gry tylko je pokazują (`setVisible`) i ustawiają (`setPosition`
   w `layoutGui` po zmianie rozdzielczości). Kolor przycisku ustawiaj co klatkę (hover go nadpisuje).
 - Rozmiar ekranu bierz z renderera co klatkę (fullscreen/zmiana okna).
+- Pasek narzędzi / budowy: `GuiToolbar` (`feature/gui/gui_toolbar.h`) - grupy przycisków z ikonami `PixelIcon`
+  (ikona = wiersze tekstu, znak = piksel z palety `defaultPixelPalette()`), skrót w rogu, stan `enabled/active`,
+  karta `GuiCard` po najechaniu (tytuł, opis, żetony kosztu, ostrzeżenie, stopka). Co klatkę: `layout`,
+  `update(mx, my, klik)` (zwraca KLIKNIĘTY id, najechany: `hoveredId()`), `draw(gui)`; kliknięcia w pasek
+  blokuj dla świata przez `contains(mx, my)`. Wzory: `05_gui_demo` i `10_settlers/app_buildbar.cpp`.
+- Ustawienia gracza: `GameSettings` (`core/game_settings.h`) - `load/save` JSON, `applyDisplay(engine, startup)`,
+  `applyAudio(audio)`, `resolutionList(engine)`, nazwy trybów do list wyboru. Nie pisz tego od nowa w grze.
+- Zasada: kod przydatny wielu grom (widgety, ustawienia, szum, matematyka) dodawaj do `engine/`, nie do przykładu.
 
 ## 7. Dźwięk
 
@@ -109,6 +118,8 @@ dopisz autorów do `CREDITS.md` obok plików.
 
 ## 8. Teren, nawigacja, cienie
 
+- Proceduralna heightmapa: `ValueNoise n{seed}; n.fbm(x / 230.0f, z / 230.0f, 5)` (`core/noise.h`), łącz warstwy
+  przez `smoothstep` (`core/math.h`): niziny, masywy, wybrzeże.
 - Teren z heightmapy w pamięci: `terrain->setHeightmap(data, size); setScale(xz, y, ...); buildMesh(); uploadTo(meshManager)`.
   Wysokość/normalna: `getHeight(x,z)`, `getNormal(x,z)`.
 - `NavGrid`: `init`, `setStaticBlocked` (woda, strome zbocza), `addObstacle/removeObstacle` (zliczane!),

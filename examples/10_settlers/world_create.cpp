@@ -8,48 +8,13 @@
  *   4. lasy i skały (surowce),
  *   5. zamki, startowi osadnicy i żołnierze obu stron.
  */
+#include "core/noise.h"
 #include "world_internal.h"
 
 namespace settlers {
 
-namespace {
-
-// --- Szum wartości (value noise) do generowania terenu ---
-struct Noise {
-    uint32_t seed = 1;
-
-    float hash(int x, int z) const {
-        uint32_t h = static_cast<uint32_t>(x) * 374761393u + static_cast<uint32_t>(z) * 668265263u + seed * 2246822519u;
-        h = (h ^ (h >> 13)) * 1274126177u;
-        h ^= h >> 16;
-        return static_cast<float>(h & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu) * 2.0f - 1.0f;
-    }
-
-    float value(float x, float z) const {
-        const int ix = static_cast<int>(std::floor(x));
-        const int iz = static_cast<int>(std::floor(z));
-        const float fx = x - static_cast<float>(ix);
-        const float fz = z - static_cast<float>(iz);
-        const float ux = fx * fx * (3.0f - 2.0f * fx);
-        const float uz = fz * fz * (3.0f - 2.0f * fz);
-        const float a = hash(ix, iz), b = hash(ix + 1, iz);
-        const float c = hash(ix, iz + 1), d = hash(ix + 1, iz + 1);
-        return (a + (b - a) * ux) * (1.0f - uz) + (c + (d - c) * ux) * uz;
-    }
-
-    float fbm(float x, float z, int octaves) const {
-        float sum = 0.0f, amp = 0.5f, freq = 1.0f, norm = 0.0f;
-        for (int i = 0; i < octaves; ++i) {
-            sum += value(x * freq + i * 17.3f, z * freq - i * 9.1f) * amp;
-            norm += amp;
-            amp *= 0.5f;
-            freq *= 2.03f;
-        }
-        return sum / norm;
-    }
-};
-
-} // namespace
+// Szum do generowania terenu: engine3d::ValueNoise (core/noise.h).
+using Noise = ValueNoise;
 
 // Tworzy nową partię: teren, nawigację, surowce, zamki z jednostkami startowymi
 // i (zależnie od poziomu trudności) gotowe budynki przeciwnika.

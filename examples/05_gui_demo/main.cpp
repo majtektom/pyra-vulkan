@@ -1,5 +1,6 @@
 #include <SDL3/SDL.h>
 #include <chrono>
+#include <cmath>
 #include <sstream>
 #include "core/engine.h"
 #include "core/entity.h"
@@ -17,6 +18,7 @@
 #include "feature/gui/gui_combo_box.h"
 #include "feature/gui/gui_scroll_bar.h"
 #include "feature/gui/gui_memo.h"
+#include "feature/gui/gui_toolbar.h"
 
 using namespace engine3d;
 
@@ -65,6 +67,8 @@ int main() {
         engine.setTextLabel(text, "times", x, y, scale, color, z);
     };
     guiMgr->setTextDrawFn(drawText); // Przekazanie metody silnika rysującej teksty za pomocą Plutosvg / FreeType
+    // Pomiar szerokości napisów (wyśrodkowanie tekstu, rozmiar kart informacji na pasku narzędzi)
+    guiMgr->setTextMeasureFn([&engine](const std::string& text, float scale) { return engine.measureText(text, scale); });
     engine.getRenderer()->addFeature(guiMgr);
 
     // KROK 3: UTWORZENIE OKIEN I WIDGETÓW
@@ -225,6 +229,43 @@ int main() {
         logIdx++;
     });
 
+    // Pasek narzędzi na dole ekranu (GuiToolbar): grupy przycisków z ikonami pixel-art, skróty w rogu
+    // i karta informacji po najechaniu. To ten sam komponent, którego używa pasek budowy w 10_settlers.
+    GuiToolbar toolbar;
+    {
+        auto tool = [](int id, const char* key, const char* title, const char* desc, std::vector<std::string> rows) {
+            GuiToolbar::Item it;
+            it.id = id;
+            it.hotkey = key;
+            it.icon.rows = std::move(rows);
+            it.card.title = title;
+            it.card.lines = {{desc}};
+            it.card.footer = "LPM: wybierz narzędzie";
+            return it;
+        };
+        GuiToolbar::Item sword = tool(2, "3", "Miecz", "Przykład przycisku nieaktywnego (enabled = false).",
+                                      {"..........S.", ".........S..", "........S...", ".......S....", "......S.....",
+                                       ".....S......", "..D.S.......", "...D........", "..D.D.......", ".D..........",
+                                       "D...........", "............"});
+        sword.enabled = false;
+        sword.card.chipsLabel = "Koszt:";
+        sword.card.chips = {{{0.75f, 0.5f, 0.25f, 1.0f}, "10 drewna", true}, {{0.72f, 0.72f, 0.75f, 1.0f}, "5 stali", false}};
+        sword.card.warning = "Brakuje: 5 stali";
+        toolbar.setGroups({
+            {"Teren", {tool(0, "1", "Drzewo", "Sadzi drzewo w wskazanym miejscu.",
+                            {".....gg.....", "....gGGg....", "...gGGGGg...", "..gGGGGGGg..", "...gGGGGg...", "..gGGGGGGg..",
+                             ".gGGGGGGGGg.", "..gggggggg..", ".....DD.....", ".....DD.....", ".....DD.....", "..TTTTTTTT.."}),
+                       tool(1, "2", "Kamień", "Stawia głaz.",
+                            {"............", "............", "....sss.....", "...sSSSs....", "..sSSSSSs...", ".sSSSwSSSs..",
+                             ".sSSSSSSSs..", "sSSSSSSSSSs.", "sSSSSSSSSSs.", ".ssssssssss.", "............", "............"})}},
+            {"Wojsko", {sword}},
+            {"Budynki", {tool(3, "4", "Dom", "Zwykły dom z czerwonym dachem.",
+                              {"............", ".....RR.....", "....RRRR....", "...RRRRRR...", "..RRRRRRRR..", ".RRRRRRRRRR.",
+                               "..WWWWWWWW..", "..WKKWWBBW..", "..WKKWWBBW..", "..WWWWWBBW..", "..WWWWWBBW..", ".gggggggggg."})}},
+        });
+    }
+    int activeTool = -1;
+
     // GŁÓWNA PĘTLA
     engine.onUpdate = [&](float dt, Engine& e) {
         const auto& snap = e.input();
@@ -273,7 +314,26 @@ int main() {
         prevF2 = snap.keys[SDL_SCANCODE_F2];
 
         // Aktualizacja stanów GUI (podświetlenia pod myszą, kliknięcia, przeciągania)
-        guiMgr->update(e.input(), *e.getPlatform(), (float)e.getRenderer()->width(), (float)e.getRenderer()->height());
+        const float sw = (float)e.getRenderer()->width(), sh = (float)e.getRenderer()->height();
+        guiMgr->update(e.input(), *e.getPlatform(), sw, sh);
+
+        // Pasek narzędzi: układ, najechanie, kliknięcie (wybrane narzędzie ma złotą ramkę)
+        toolbar.layout(sw, sh);
+        const int clicked = toolbar.update(snap.mouseX, snap.mouseY, e.mousePressed(0));
+        if (clicked != GuiToolbar::kNone && toolbar.item(clicked)->enabled) {
+            if (auto* prev = toolbar.item(activeTool)) prev->active = false;
+            activeTool = clicked == activeTool ? -1 : clicked;
+            if (auto* now = toolbar.item(activeTool)) now->active = true;
+            memo->addLine("Pasek narzędzi: " + toolbar.item(clicked)->card.title);
+        }
+        toolbar.draw(*guiMgr);
+
+        // Elementy HUD z GuiMgr: pasek postępu, linia i napis wyśrodkowany
+        static float progress = 0.0f;
+        progress = std::fmod(progress + dt * 0.2f, 1.0f);
+        guiMgr->addOverlayTextCentered("Postęp (addOverlayBar)", sw * 0.5f, 26.0f, 0.5f, {1, 1, 1, 1});
+        guiMgr->addOverlayBar(sw * 0.5f - 100.0f, 34.0f, 200.0f, 8.0f, progress, {0.35f, 0.75f, 1.0f, 1.0f});
+        guiMgr->addOverlayLine(sw * 0.5f - 100.0f, 52.0f, sw * 0.5f + 100.0f, 52.0f, 2.0f, {1.0f, 0.8f, 0.3f, 0.9f});
 
         // Rysowanie HUD z liczbą klatek na sekundę
         if (showFPS) {
