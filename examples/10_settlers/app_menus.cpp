@@ -70,14 +70,12 @@ void SettlersApp::setupGui() {
     makeButton(gameOverWindow_, "quit", 196, 100, 160, 36, "Wyjście", []() { pushQuitEvent(); });
 
     // Panel budowy
-    static const BuildingType buildable[] = {BuildingType::House, BuildingType::Woodcutter, BuildingType::Quarry,
-                                             BuildingType::Farm, BuildingType::Barracks, BuildingType::Tower};
-    buildWindow_ = gui_->addWindow("Budowa", 0, 0, 250, 6 * 40 + 8);
-    for (int i = 0; i < 6; ++i) {
-        const BuildingType t = buildable[i];
+    buildWindow_ = gui_->addWindow("Budowa", 0, 0, 250, kBuildMenuSize * 36 + 8);
+    for (int i = 0; i < kBuildMenuSize; ++i) {
+        const BuildingType t = kBuildMenu[i];
         const BuildingDef& def = buildingDef(t);
         const std::string label = std::to_string(i + 1) + ". " + def.name + "  (" + costText(def.cost) + ")";
-        buildButtons_[i] = makeButton(buildWindow_, "b" + std::to_string(i), 8, 8 + i * 40, 234, 32, label,
+        buildButtons_[i] = makeButton(buildWindow_, "b" + std::to_string(i), 8, 8 + i * 36, 234, 30, label,
                                       [this, t]() { beginPlacement(t); });
         buildTypes_[i] = t;
     }

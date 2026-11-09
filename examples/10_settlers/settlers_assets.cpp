@@ -226,6 +226,51 @@ MeshData towerMesh(const Vec3& fc) {
     return b.build();
 }
 
+// Chata leśniczego: drewniany domek z zielonym dachem, grządka z sadzonkami i łopata.
+MeshData foresterMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 7.0f);
+    b.box({0.0f, 3.0f, -1.5f}, {9.0f, 5.0f, 7.5f}, shade(kWood, 1.1f));
+    b.box({-2.0f, 2.0f, 2.3f}, {2.0f, 3.2f, 0.2f}, kDarkWood);
+    b.box({2.2f, 3.6f, 2.3f}, {1.4f, 1.2f, 0.2f}, kWindow);
+    b.gableRoof({0.0f, 5.5f, -1.5f}, 10.0f, 8.6f, 3.6f, {0.22f, 0.45f, 0.2f});
+    // Grządka z sadzonkami przed chatą
+    b.box({2.5f, 0.2f, 4.8f}, {5.0f, 0.4f, 2.6f}, {0.38f, 0.26f, 0.15f});
+    for (int i = 0; i < 3; ++i) {
+        const float x = 0.9f + static_cast<float>(i) * 1.6f;
+        b.cylinder({x, 0.3f, 4.8f}, 0.12f, 0.8f, 5, kDarkWood);
+        b.cone({x, 0.9f, 4.8f}, 0.55f, 1.2f, 6, {0.2f, 0.5f, 0.2f});
+    }
+    // Łopata oparta o ścianę
+    b.box({-4.2f, 1.5f, 2.6f}, {0.15f, 3.0f, 0.15f}, kWood);
+    b.box({-4.2f, 0.3f, 2.6f}, {0.6f, 0.7f, 0.1f}, kSteel);
+    flag(b, {-5.5f, 0.0f, -5.0f}, 9.0f, fc);
+    return b.build();
+}
+
+// Kopalnia: skalny kopiec z wejściem obudowanym belkami, tory i wózek z kamieniem.
+MeshData mineMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 8.0f);
+    const Vec3 rock{0.48f, 0.47f, 0.45f};
+    // Skalny kopiec (część zbocza)
+    b.sphere({0.0f, 1.5f, -2.5f}, 7.5f, 4, 7, rock);
+    b.sphere({-4.0f, 0.5f, -1.0f}, 4.0f, 3, 6, shade(rock, 0.9f));
+    b.sphere({4.2f, 0.8f, -1.5f}, 4.2f, 3, 6, shade(rock, 1.1f));
+    // Wejście: ciemny otwór i drewniana obudowa
+    b.box({0.0f, 2.2f, 4.0f}, {3.4f, 4.4f, 1.2f}, {0.08f, 0.07f, 0.06f});
+    b.box({-2.0f, 2.4f, 4.4f}, {0.6f, 4.8f, 0.6f}, kDarkWood);
+    b.box({2.0f, 2.4f, 4.4f}, {0.6f, 4.8f, 0.6f}, kDarkWood);
+    b.box({0.0f, 5.0f, 4.4f}, {4.8f, 0.7f, 0.8f}, kDarkWood);
+    // Tory i wózek z urobkiem
+    b.box({-0.6f, 0.15f, 6.5f}, {0.2f, 0.2f, 4.0f}, kSteel);
+    b.box({0.6f, 0.15f, 6.5f}, {0.2f, 0.2f, 4.0f}, kSteel);
+    b.box({0.0f, 0.9f, 7.0f}, {1.8f, 1.1f, 2.2f}, kWood);
+    b.box({0.0f, 1.6f, 7.0f}, {1.5f, 0.5f, 1.8f}, kStone);
+    flag(b, {4.5f, 0.0f, 5.5f}, 9.0f, fc);
+    return b.build();
+}
+
 // Osadnik w słomkowym kapeluszu; wariant z niesionym surowcem (drewno / kamień / worek zboża).
 MeshData settlerMesh(const Vec3& fc, CarryType carry) {
     MeshBuilder b;
@@ -415,6 +460,8 @@ void buildGameMeshes(Engine& engine) {
         mm->loadMesh(buildingMeshName(BuildingType::Farm, f), farmMesh(fc));
         mm->loadMesh(buildingMeshName(BuildingType::Barracks, f), barracksMesh(fc));
         mm->loadMesh(buildingMeshName(BuildingType::Tower, f), towerMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Forester, f), foresterMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Mine, f), mineMesh(fc));
 
         for (int c = 0; c <= 3; ++c) {
             const auto carry = static_cast<CarryType>(c);

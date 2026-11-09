@@ -64,15 +64,43 @@ int World::pickBuilding(const Ray& ray) const {
     return best;
 }
 
-// Czy punkt leży w promieniu terytorium któregoś z ukończonych budynków frakcji (zamek, wieże).
-bool World::isInTerritory(int faction, const Vec3& p, float margin) const {
+// Właściciel terenu: spośród ukończonych zamków i wież, w których zasięgu leży punkt, wygrywa ten,
+// w którego zasięgu punkt leży najgłębiej (największe "promień - odległość"). Granica dwóch frakcji
+// wypada więc w środku pasa, gdzie ich zasięgi się nakładają - nie ma ziemi wspólnej ani niczyjej.
+int World::territoryOwnerAt(const Vec3& p) const {
+    int owner = -1;
+    float bestDepth = 0.0f;
     for (const auto& b : buildings) {
-        if (!b.alive || b.faction != faction || !b.constructed) continue;
+        if (!b.alive || !b.constructed) continue;
         const float r = buildingDef(b.type).territoryRadius;
         if (r <= 0.0f) continue;
-        if (dist2D(p, b.pos) <= r - margin) return true;
+        const float depth = r - dist2D(p, b.pos);
+        if (depth > bestDepth) {
+            bestDepth = depth;
+            owner = b.faction;
+        }
     }
-    return false;
+    return owner;
+}
+
+// Czy punkt leży na terytorium frakcji. Margines sprawdzamy próbkami na dwóch okręgach wokół punktu:
+// margin > 0 - cały krąg musi należeć do frakcji, margin < 0 - wystarczy dowolny jego fragment.
+bool World::isInTerritory(int faction, const Vec3& p, float margin) const {
+    bool any = territoryOwnerAt(p) == faction;
+    bool all = any;
+    const float m = std::abs(margin);
+    if (m > 0.0f) {
+        for (int ring = 1; ring <= 2; ++ring) {
+            const float rr = m * static_cast<float>(ring) * 0.5f;
+            for (int k = 0; k < 8; ++k) {
+                const float a = static_cast<float>(k) * PI * 0.25f + static_cast<float>(ring) * 0.39f;
+                const bool o = territoryOwnerAt({p.x + std::cos(a) * rr, 0.0f, p.z + std::sin(a) * rr}) == faction;
+                any = any || o;
+                all = all && o;
+            }
+        }
+    }
+    return margin >= 0.0f ? all : any;
 }
 
 // Czy obrys budynku (z marginesem 2) leży na samych wolnych komórkach nawigacji.
@@ -106,7 +134,14 @@ bool World::canPlace(BuildingType type, const Vec3& pos, int faction, std::strin
         maxH = std::max(maxH, y);
     }
     if (minH < kWaterLevel + 1.5f) return fail("Za blisko wody");
-    if (maxH - minH > 6.5f) return fail("Teren zbyt nierówny");
+    if (maxH > kSnowLine - 1.0f) return fail("Ośnieżony szczyt - tu nie da się budować");
+    if (type == BuildingType::Mine) {
+        // Kopalnia wchodzi w zbocze góry - musi stać w górach i może stać na bardziej nierównym terenie.
+        if (heightAt(pos.x, pos.z) < kMountainLevel) return fail("Kopalnię stawia się w górach (szare skały)");
+        if (maxH - minH > 11.0f) return fail("Zbocze zbyt strome");
+    } else if (maxH - minH > 6.5f) {
+        return fail("Teren zbyt nierówny");
+    }
     if (!buildingAreaFree(type, pos)) return fail("Miejsce zajęte");
     // Nowy budynek nie może zasłonić wejścia innego budynku
     for (const auto& other : buildings) {
@@ -147,7 +182,7 @@ int World::findNearestNode(NodeKind kind, const Vec3& from, float radius) const 
     for (size_t i = 0; i < nodes.size(); ++i) {
         const auto& n = nodes[i];
         if (!n.alive || n.kind != kind || n.amount <= 0 || n.fallTimer >= 0.0f || n.reserved >= maxReserve) continue;
-        if (n.blockedUntil > gameTime) continue;
+        if (n.blockedUntil > gameTime || n.growth < 1.0f) continue;   // nieosiągalne lub sadzonka jeszcze rośnie
         const float d = dist2D(from, n.pos);
         if (d < bestD) {
             bestD = d;
@@ -162,6 +197,7 @@ int World::countNodesInRange(NodeKind kind, const Vec3& from, float radius) cons
     int count = 0;
     for (const auto& n : nodes) {
         if (!n.alive || n.kind != kind || n.amount <= 0 || n.fallTimer >= 0.0f || n.blockedUntil > gameTime) continue;
+        if (n.growth < 1.0f) continue;
         if (dist2D(from, n.pos) <= radius) ++count;
     }
     return count;
@@ -202,6 +238,51 @@ int World::repairersOf(int building) const {
 }
 
 // Najbliższy bezczynny osadnik frakcji (-1 = brak).
+// Liczba rosnących sadzonek w promieniu.
+int World::countSaplingsInRange(const Vec3& from, float radius) const {
+    int count = 0;
+    for (const auto& n : nodes) {
+        if (n.alive && n.kind == NodeKind::Tree && n.growth < 1.0f && dist2D(from, n.pos) <= radius) ++count;
+    }
+    return count;
+}
+
+// Leśniczy: losuje miejsce na sadzonkę w zasięgu chaty. Miejsce musi być przechodnie, poniżej granicy lasu,
+// z dala od innych drzew (6 j.) i budynków (5 j.). Gdy las w okolicy jest już gęsty (45 drzew), nie sadzimy.
+bool World::findPlantingSpot(const Building& forester, Vec3& out) {
+    const float radius = buildingDef(BuildingType::Forester).workRadius;
+    int treesAround = 0;
+    for (const auto& n : nodes) {
+        if (n.alive && n.kind == NodeKind::Tree && dist2D(forester.pos, n.pos) <= radius) ++treesAround;
+    }
+    if (treesAround >= 45) return false;
+
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        const float angle = randf(0.0f, 2.0f * PI);
+        const float r = randf(14.0f, radius);
+        const Vec3 p{forester.pos.x + std::cos(angle) * r, 0.0f, forester.pos.z + std::sin(angle) * r};
+        if (!nav_.isWalkableWorld(p.x, p.z)) continue;
+        const float h = heightAt(p.x, p.z);
+        if (h < kWaterLevel + 3.0f || h > kMountainLevel + 6.0f) continue;
+        bool free = true;
+        for (const auto& n : nodes) {
+            if (n.alive && dist2D(p, n.pos) < 6.0f + n.radius) {
+                free = false;
+                break;
+            }
+        }
+        for (const auto& b : buildings) {
+            if (!free) break;
+            if (b.alive && (distanceToBuilding(p, b) < 5.0f || dist2D(p, b.door()) < 6.0f)) free = false;
+        }
+        if (free) {
+            out = p;
+            return true;
+        }
+    }
+    return false;
+}
+
 int World::findIdleSettler(int faction, const Vec3& near) const {
     int best = -1;
     float bestD = std::numeric_limits<float>::max();

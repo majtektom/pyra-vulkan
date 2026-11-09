@@ -56,12 +56,13 @@ Binaria lądują w `bin/`:
 ./bin/10_settlers_example
 ```
 
-Osadnicy sami budują i pracują (drwal, kamieniarz, farma), domy podnoszą limit ludności,
-koszary szkolą mieczników i łuczników, wieże poszerzają terytorium i strzelają do wrogów.
+Osadnicy sami budują i pracują (drwal, leśniczy sadzący las, kamieniarz, kopalnia w górach, farma), domy podnoszą limit ludności,
+koszary szkolą mieczników i łuczników, wieże poszerzają terytorium i strzelają do wrogów; wieża przy granicy odbiera wrogowi pas ziemi
+(granica wypada w połowie nakładania się zasięgów), a budynki na przejętym terenie płoną.
 Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.
 
 Sterowanie: WSAD/krawędź ekranu — kamera, Q/E/środkowy przycisk — obrót, kółko — zoom,
-LPM — zaznaczanie (ramka), PPM — ruch/atak, Ctrl+PPM — marsz bojowy, 1–6 — budowa,
+LPM — zaznaczanie (ramka), PPM — ruch/atak, Ctrl+PPM — marsz bojowy, 1–8 — budowa,
 R — obrót budynku, Del — zburzenie, Tab — całe wojsko, M — muzyka, F1 — pomoc, ESC — pauza.
 
 Menu (główne i pauza) ma okna **Ustawienia** (muzyka/efekty wł./wył. i głośność, głośność ogólna, rozdzielczość okna,

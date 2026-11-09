@@ -14,6 +14,11 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: przejmowanie terenu — gdy zasięgi zamków/wież się nakładają, punkt należy do budynku, w którego zasięgu
+   leży najgłębiej (`World::territoryOwnerAt`); wspólna granica z dwukolorowymi słupkami, budynki na przejętym terenie płoną
+ - Osadnicy: teren jako wyspa (brzegi schodzą do morza), masywy górskie z łagodnymi zboczami (dostępne do chodzenia
+   i budowy) i ośnieżonymi, niedostępnymi szczytami; nowe budynki: Kopalnia (kamień z wnętrza góry, tylko w górach)
+   i Leśniczy (sadzi drzewa, które po 2 min drwal może ściąć); panel budowy 1-8; tryb SETTLERS_SHOWCASE=1
  - Mapy cieni: 5 warstw zamiast 64 (ok. 80 MB zamiast ok. 1 GB VRAM) - kaskady tylko dla słońca (pierwsze światło
    kierunkowe), światła lokalne w atlasie 2x2 (1024^2 każde, do 4 najbliższych kamerze świateł, których zasięg
    sięga obszaru cieni); przy cieniu światła lokalnego rysowane są tylko obiekty w jego zasięgu

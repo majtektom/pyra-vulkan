@@ -60,6 +60,10 @@ bool SettlersApp::initialize() {
         if (what == "help") showHelp_ = true;
         if (what == "demo") startNewGame(true);
         }
+        if (std::getenv("SETTLERS_SHOWCASE")) {
+            if (!gameStarted_) startNewGame();
+            showcaseBuildings();
+        }
         // Pomocnicze: SETTLERS_CAMERA=<odległość> ustawia odległość kamery (np. zbliżenie na zamek)
         if (const char* camDist = std::getenv("SETTLERS_CAMERA")) {
             cam_.setDistance(static_cast<float>(std::atof(camDist)));
@@ -108,9 +112,9 @@ void SettlersApp::setupInput() {
     map.bindKey(kActSlower, SDL_SCANCODE_LEFTBRACKET);
     map.bindKey(kActFaster, SDL_SCANCODE_RIGHTBRACKET);
     map.bindKey(kActDebugDump, SDL_SCANCODE_F9);
-    static const SDL_Scancode numKeys[] = {SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3,
-                                            SDL_SCANCODE_4, SDL_SCANCODE_5, SDL_SCANCODE_6};
-    for (int i = 0; i < 6; ++i) {
+    static const SDL_Scancode numKeys[] = {SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
+                                            SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8};
+    for (int i = 0; i < kBuildMenuSize; ++i) {
         map.bindKey("build." + std::to_string(i + 1), numKeys[i]);
     }
 }

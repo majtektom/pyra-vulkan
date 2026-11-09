@@ -315,7 +315,12 @@ void World::updateNodes(float dt) {
         if (!n.alive || !n.entity) continue;
         auto& tr = n.entity->transform();
         if (n.kind == NodeKind::Tree) {
-            if (n.fallTimer >= 0.0f) {
+            if (n.growth < 1.0f) {
+                // Sadzonka rośnie: od 15% do pełnego rozmiaru w kTreeGrowSeconds.
+                n.growth = std::min(1.0f, n.growth + dt / kTreeGrowSeconds);
+                const float s = n.baseScale * (0.15f + 0.85f * n.growth);
+                tr.scale = {s, s, s};
+            } else if (n.fallTimer >= 0.0f) {
                 n.fallTimer += dt;
                 const float k = std::min(1.0f, n.fallTimer / 1.4f);
                 tr.rotation.x = k * k * (PI * 0.5f);
@@ -412,6 +417,10 @@ void World::syncVisuals(float dt) {
     (void)dt;
     for (auto& u : units) {
         if (!u.alive || !u.entity) continue;
+        // Górnik przy pracy jest wewnątrz kopalni - chowamy jego model.
+        const bool insideMine = u.state == UnitState::Gathering && u.building >= 0 &&
+                                buildings[u.building].alive && buildings[u.building].type == BuildingType::Mine;
+        u.entity->setActive(!insideMine);
         u.pos.y = heightAt(u.pos.x, u.pos.z);
         auto& tr = u.entity->transform();
         Vec3 p = u.pos;
@@ -461,28 +470,57 @@ void World::syncVisuals(float dt) {
     }
 }
 
-// Słupki granicy terytorium: punkty na okręgach terytorium, z pominięciem tych wewnątrz
-// innego okręgu tej samej frakcji. Wszystkie słupki frakcji to jedna siatka (jedna encja).
+// Słupki granicy terytorium. Dwa rodzaje granic:
+//  1. zewnętrzna - punkty na okręgach zasięgu, które nie leżą w zasięgu żadnego innego budynku,
+//  2. granica z wrogiem - linia, na której własność terenu zmienia się z frakcji f na wrogą.
+//     Szukamy jej na siatce co 4 jednostki, a dokładne miejsce na krawędzi siatki - bisekcją.
+//     Każda frakcja stawia słupki po swojej stronie linii, więc widać podwójną, dwukolorową granicę.
+// Wszystkie słupki frakcji to jedna siatka (jedna encja).
 void World::rebuildTerritory() {
     territoryDirty_ = false;
+    burnBuildingsOnLostLand();
     auto* mm = engine_.getMeshManager();
     ++territoryMeshVersion_;
+
+    struct Src {
+        Vec3 p;
+        float r;
+        int faction;
+    };
+    std::vector<Src> sources;
+    for (const auto& b : buildings) {
+        if (!b.alive || !b.constructed) continue;
+        const float r = buildingDef(b.type).territoryRadius;
+        if (r > 0.0f) sources.push_back({b.pos, r, b.faction});
+    }
+
+    constexpr float kPostSpacing = 8.0f;
+    constexpr float kGridStep = 4.0f;
     for (int f = 0; f < kFactionCount; ++f) {
-        struct Src {
-            Vec3 p;
-            float r;
-        };
-        std::vector<Src> sources;
-        for (const auto& b : buildings) {
-            if (!b.alive || b.faction != f || !b.constructed) continue;
-            const float r = buildingDef(b.type).territoryRadius;
-            if (r > 0.0f) sources.push_back({b.pos, r});
-        }
         MeshBuilder mb;
         const Vec3 fc = factionColor(f);
-        int posts = 0;
+        std::vector<Vec3> posts;
+        // Słupek nie stoi w wodzie ani bliżej niż kPostSpacing od innego słupka tej frakcji.
+        auto addPost = [&](float x, float z) {
+            for (const auto& q : posts) {
+                if ((q.x - x) * (q.x - x) + (q.z - z) * (q.z - z) < kPostSpacing * kPostSpacing) return;
+            }
+            const float h = heightAt(x, z);
+            if (h < kWaterLevel) return;
+            posts.push_back({x, h, z});
+            mb.cylinder({x, h - 0.5f, z}, 0.4f, 3.4f, 5, {0.45f, 0.32f, 0.2f});
+            mb.box({x, h + 3.2f, z}, {1.0f, 0.8f, 1.0f}, fc);
+        };
+
+        // 1. Zewnętrzna granica.
+        float minX = 1e9f, minZ = 1e9f, maxX = -1e9f, maxZ = -1e9f;
         for (size_t i = 0; i < sources.size(); ++i) {
             const auto& s = sources[i];
+            if (s.faction != f) continue;
+            minX = std::min(minX, s.p.x - s.r);
+            maxX = std::max(maxX, s.p.x + s.r);
+            minZ = std::min(minZ, s.p.z - s.r);
+            maxZ = std::max(maxZ, s.p.z + s.r);
             const int count = std::max(12, static_cast<int>(2.0f * PI * s.r / 10.0f));
             for (int k = 0; k < count; ++k) {
                 const float a = 2.0f * PI * static_cast<float>(k) / static_cast<float>(count);
@@ -491,16 +529,49 @@ void World::rebuildTerritory() {
                 for (size_t j = 0; j < sources.size() && !inside; ++j) {
                     if (j != i && dist2D(p, sources[j].p) < sources[j].r - 2.0f) inside = true;
                 }
-                if (inside) continue;
-                const float h = heightAt(p.x, p.z);
-                if (h < kWaterLevel) continue;
-                mb.cylinder({p.x, h - 0.5f, p.z}, 0.4f, 3.4f, 5, {0.45f, 0.32f, 0.2f});
-                mb.box({p.x, h + 3.2f, p.z}, {1.0f, 0.8f, 1.0f}, fc);
-                ++posts;
+                if (!inside) addPost(p.x, p.z);
             }
         }
+        if (posts.empty() && minX > maxX) {
+            territoryEntity_[f]->setActive(false);
+            continue;
+        }
+
+        // 2. Granica z wrogiem: siatka właścicieli w prostokącie obejmującym zasięgi frakcji.
+        const int nx = static_cast<int>((maxX - minX) / kGridStep) + 2;
+        const int nz = static_cast<int>((maxZ - minZ) / kGridStep) + 2;
+        std::vector<int> owner(static_cast<size_t>(nx) * nz);
+        for (int iz = 0; iz < nz; ++iz) {
+            for (int ix = 0; ix < nx; ++ix) {
+                owner[iz * nx + ix] = territoryOwnerAt({minX + ix * kGridStep, 0.0f, minZ + iz * kGridStep});
+            }
+        }
+        for (int iz = 0; iz < nz; ++iz) {
+            for (int ix = 0; ix < nx; ++ix) {
+                if (owner[iz * nx + ix] != f) continue;
+                const int nbr[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (const auto& d : nbr) {
+                    const int jx = ix + d[0], jz = iz + d[1];
+                    if (jx < 0 || jz < 0 || jx >= nx || jz >= nz) continue;
+                    const int o = owner[jz * nx + jx];
+                    if (o < 0 || o == f) continue;
+                    // Bisekcja na odcinku: t=0 nasz punkt, t=1 punkt wroga.
+                    const float ax = minX + ix * kGridStep, az = minZ + iz * kGridStep;
+                    float lo = 0.0f, hi = 1.0f;
+                    for (int it = 0; it < 6; ++it) {
+                        const float mid = (lo + hi) * 0.5f;
+                        const Vec3 q{ax + d[0] * kGridStep * mid, 0.0f, az + d[1] * kGridStep * mid};
+                        (territoryOwnerAt(q) == f ? lo : hi) = mid;
+                    }
+                    // Słupek 1,2 jednostki od linii granicy, po naszej stronie.
+                    const float t = std::max(0.0f, lo - 1.2f / kGridStep);
+                    addPost(ax + d[0] * kGridStep * t, az + d[1] * kGridStep * t);
+                }
+            }
+        }
+
         auto* mc = territoryEntity_[f]->getComponent<MeshComponent>();
-        if (posts > 0) {
+        if (!posts.empty()) {
             const std::string name = "territory_" + std::to_string(f) + "_" + std::to_string(seed_);
             mm->loadMesh(name, mb.build());
             mc->meshName = name;
@@ -508,6 +579,29 @@ void World::rebuildTerritory() {
         } else {
             territoryEntity_[f]->setActive(false);
         }
+    }
+}
+
+// Budynki (także w budowie) stojące na terenie, który przejął wróg, płoną - jak w Settlers.
+// Ukończone zamki i wieże są chronione: ich własny zasięg zawsze wygrywa tuż przy nich.
+void World::burnBuildingsOnLostLand() {
+    int burnedPlayer = 0, burnedEnemy = 0;
+    for (size_t i = 0; i < buildings.size(); ++i) {
+        const Building& b = buildings[i];
+        if (!b.alive) continue;
+        if (b.constructed && buildingDef(b.type).territoryRadius > 0.0f) continue;
+        const int owner = territoryOwnerAt(b.pos);
+        if (owner < 0 || owner == b.faction) continue;
+        (b.faction == kPlayer ? burnedPlayer : burnedEnemy)++;
+        destroyBuilding(static_cast<int>(i), owner);
+    }
+    if (burnedPlayer > 0) {
+        pushMessage("Wróg przejął część terenu - budynki na nim spłonęły (" + std::to_string(burnedPlayer) + ")",
+                    {1.0f, 0.5f, 0.4f, 1.0f});
+    }
+    if (burnedEnemy > 0) {
+        pushMessage("Przejęto teren wroga - jego budynki spłonęły (" + std::to_string(burnedEnemy) + ")",
+                    {0.6f, 1.0f, 0.6f, 1.0f});
     }
 }
 

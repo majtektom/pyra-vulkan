@@ -135,7 +135,8 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
 // Na końcu dwa przebiegi wygładzania.
 void World::generateHeightmap(uint32_t seed) {
     Noise base{seed * 7u + 1u};
-    Noise ridge{seed * 13u + 5u};
+    Noise mountains{seed * 13u + 5u};
+    Noise detail{seed * 29u + 9u};
     const int n = kHeightmapSize;
     heightmap_.assign(static_cast<size_t>(n) * n, 0.0f);
 
@@ -148,17 +149,20 @@ void World::generateHeightmap(uint32_t seed) {
             const float x = (static_cast<float>(ix) - n * 0.5f) * kScaleXZ;
             const float z = (static_cast<float>(iz) - n * 0.5f) * kScaleXZ;
 
-            float h = 44.0f + base.fbm(x / 230.0f, z / 230.0f, 5) * 40.0f;
+            // Niziny: łagodne pagórki 20..48 (najniższe miejsca poniżej poziomu wody to jeziora).
+            float h = 34.0f + base.fbm(x / 230.0f, z / 230.0f, 5) * 14.0f;
 
-            // Grzbiety górskie
-            const float r = 1.0f - std::abs(ridge.fbm(x / 340.0f, z / 340.0f, 4)) * 2.2f;
-            if (r > 0.0f) h += r * r * r * 60.0f;
-
-            // Pierścień gór na krawędzi mapy
-            const float edge = std::max(std::abs(x), std::abs(z)) / kWorldHalf;
-            if (edge > 0.8f) {
-                const float e = (edge - 0.8f) / 0.2f;
-                h += e * e * 95.0f;
+            // Masywy górskie z szumu o niskiej częstotliwości (raw ok. -0,5..0,5). Profil góry:
+            //  - zbocza i wyżyny (raw -0,12..0,25): szeroki, łagodny wzrost do wyżyny ~88, zawsze poniżej
+            //    linii śniegu - tu da się chodzić i budować, a powyżej kMountainLevel stawia się kopalnie,
+            //  - szczyty (raw > 0,3, rzadkie): wyrastają ponad linię śniegu - ośnieżone i niedostępne.
+            const float raw = mountains.fbm(x / 320.0f, z / 320.0f, 3);
+            const float m = smoothstep(-0.12f, 0.25f, raw);
+            if (m > 0.0f) {
+                const float upland = 88.0f + detail.fbm(x / 60.0f, z / 60.0f, 3) * 5.0f;
+                h = h + (upland - h) * m;
+                const float peak = smoothstep(0.3f, 0.45f, raw);
+                h += 34.0f * peak * peak;
             }
 
             // Płaskowyże pod bazy
@@ -166,6 +170,17 @@ void World::generateHeightmap(uint32_t seed) {
                 const float d = dist2D({x, 0, z}, s);
                 const float w = smoothstep(175.0f, 85.0f, d);
                 h = h + (46.0f + base.fbm(x / 60.0f, z / 60.0f, 2) * 3.0f - h) * w;
+            }
+
+            // Gwarantowany masyw przy każdej bazie (miejsce na kopalnię): dodawany PO spłaszczeniu płaskowyżu,
+            // w bok od drogi do wroga, tak by jego skaliste zbocze leżało w zasięgu terytorium zamku.
+            for (const auto& s : startPos) {
+                const Vec3 toCenter = normalize(Vec3{-s.x, 0.0f, -s.z});
+                const Vec3 dir = rotateY(toCenter, 65.0f * PI / 180.0f);
+                const Vec3 c{s.x + dir.x * 170.0f, 0.0f, s.z + dir.z * 170.0f};
+                const float d = dist2D({x, 0, z}, c);
+                // Szeroki (sigma 110), łagodny masyw: nachylenie zboczy <= ok. 0,55, więc kopalnia zmieści się na zboczu.
+                h = std::max(h, 30.0f + 70.0f * std::exp(-(d * d) / (110.0f * 110.0f)));
             }
 
             // Lądowy korytarz między bazami (gwarantuje drogę do wroga)
@@ -176,6 +191,15 @@ void World::generateHeightmap(uint32_t seed) {
             const float corridorH = 40.0f + base.fbm(x / 90.0f, z / 90.0f, 2) * 6.0f;
             if (h < corridorH) h = h + (corridorH - h) * wc;
             if (h > corridorH + 20.0f) h = h + (corridorH + 20.0f - h) * wc * 0.8f;
+
+            // Wyspa: przy krawędzi mapy teren łagodnie schodzi pod wodę (morze dookoła).
+            // Odległość od środka to mieszanka "kwadratowej" i okrągłej, zaburzona szumem - brzeg jest
+            // zaokrąglony i nieregularny (zatoki, półwyspy), a narożniki mapy to otwarte morze.
+            const float square = std::max(std::abs(x), std::abs(z)) / kWorldHalf;
+            const float round = std::sqrt(x * x + z * z) / kWorldHalf * 0.8f;
+            const float edge = std::max(square, round) + detail.fbm(x / 140.0f, z / 140.0f, 3) * 0.12f;
+            const float coast = smoothstep(0.72f, 0.93f, edge);
+            h = h + (8.0f - h) * coast;
 
             heightmap_[static_cast<size_t>(iz) * n + ix] = std::clamp(h / kScaleY, 0.0f, 255.0f);
         }
@@ -226,8 +250,9 @@ void World::createTerrainEntity() {
 
             maskVariation[i] = 255.0f * smoothstep(0.05f, 0.45f, patches.fbm(x / 70.0f, z / 70.0f, 3));
             maskSand[i] = 255.0f * smoothstep(kWaterLevel + 5.0f, kWaterLevel + 1.0f, h);
-            maskRock[i] = 255.0f * std::max(smoothstep(0.12f, 0.25f, slope), smoothstep(78.0f, 92.0f, h));
-            maskSnow[i] = 255.0f * smoothstep(112.0f, 125.0f, h);
+            // Skała: strome zbocza i góry powyżej linii lasu; śnieg: szczyty powyżej kSnowLine (niedostępne).
+            maskRock[i] = 255.0f * std::max(smoothstep(0.15f, 0.3f, slope), smoothstep(kMountainLevel - 6.0f, kMountainLevel + 2.0f, h));
+            maskSnow[i] = 255.0f * smoothstep(kSnowLine - 5.0f, kSnowLine + 1.0f, h);
         }
     }
 
@@ -280,7 +305,8 @@ void World::buildNavGrid() {
             const float h = heightAt(c.x, c.z);
             const Vec3 nrm = terrain_->getNormal(c.x, c.z);
             const bool edge = std::abs(c.x) > kWorldHalf - 16.0f || std::abs(c.z) > kWorldHalf - 16.0f;
-            const bool blocked = edge || h < kWaterLevel + 1.2f || nrm.y < 0.8f;
+            // Nieprzechodnie: krawędź mapy, woda, ośnieżone szczyty i bardzo strome zbocza (> ok. 48°).
+            const bool blocked = edge || h < kWaterLevel + 1.2f || h > kSnowLine || nrm.y < 0.66f;
             nav_.setStaticBlocked(cx, cz, blocked);
         }
     }
@@ -324,6 +350,10 @@ void World::placeResources() {
         }
         return true;
     };
+    // Drzewa rosną tylko poniżej granicy lasu (wyżej są nagie skały i śnieg).
+    auto treeSpot = [&](const Vec3& p, float minDistToBase) {
+        return suitable(p, minDistToBase) && heightAt(p.x, p.z) < kMountainLevel + 6.0f;
+    };
 
     // Lasy z szumu
     for (float z = -kWorldHalf + 30.0f; z < kWorldHalf - 30.0f; z += 11.0f) {
@@ -331,7 +361,7 @@ void World::placeResources() {
             const float f = forest.fbm(x / 140.0f, z / 140.0f, 3);
             if (f < 0.12f || randf(0.0f, 1.0f) > (f - 0.12f) * 2.4f) continue;
             const Vec3 p{x + randf(-4.5f, 4.5f), 0.0f, z + randf(-4.5f, 4.5f)};
-            if (!suitable(p, 75.0f)) continue;
+            if (!treeSpot(p, 75.0f)) continue;
             addNode(NodeKind::Tree, p, static_cast<int>(randf(0.0f, 3.99f)), randf(0.85f, 1.3f));
             if (nodes.size() > 520) break;
         }
@@ -346,7 +376,7 @@ void World::placeResources() {
             for (int i = 0; i < 22; ++i) {
                 const float ra = randf(0.0f, 2.0f * PI), rr = std::sqrt(randf(0.0f, 1.0f)) * 32.0f;
                 const Vec3 p{c.x + std::cos(ra) * rr, 0.0f, c.z + std::sin(ra) * rr};
-                if (suitable(p, 60.0f)) addNode(NodeKind::Tree, p, static_cast<int>(randf(0.0f, 3.99f)), randf(0.85f, 1.25f));
+                if (treeSpot(p, 60.0f)) addNode(NodeKind::Tree, p, static_cast<int>(randf(0.0f, 3.99f)), randf(0.85f, 1.25f));
             }
         }
         const float ra = baseAngle + 4.4f;
@@ -381,9 +411,9 @@ void World::buildMinimap() {
                 c = {0.12f, 0.28f, 0.5f};
             } else if (h < kWaterLevel + 4.0f) {
                 c = {0.75f, 0.68f, 0.45f};
-            } else if (h > 112.0f) {
+            } else if (h > kSnowLine) {
                 c = {0.9f, 0.9f, 0.92f};
-            } else if (terrain_->getNormal(wx, wz).y < 0.8f || h > 85.0f) {
+            } else if (terrain_->getNormal(wx, wz).y < 0.75f || h > kMountainLevel) {
                 c = {0.45f, 0.43f, 0.4f};
             } else {
                 const float t = std::clamp((h - 30.0f) / 60.0f, 0.0f, 1.0f);

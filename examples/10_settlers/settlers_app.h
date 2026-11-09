@@ -112,6 +112,13 @@ inline constexpr const char* kActDebugDump = "debug.dump";
 inline constexpr const char* kActSlower = "time.slower";
 inline constexpr const char* kActFaster = "time.faster";
 
+// Budynki w panelu budowy - kolejność odpowiada klawiszom 1..8.
+inline constexpr BuildingType kBuildMenu[] = {
+    BuildingType::House, BuildingType::Woodcutter, BuildingType::Forester, BuildingType::Quarry,
+    BuildingType::Mine, BuildingType::Farm, BuildingType::Barracks, BuildingType::Tower,
+};
+inline constexpr int kBuildMenuSize = static_cast<int>(std::size(kBuildMenu));
+
 // Kolor RGBA używany przez GUI i napisy.
 using Color = std::array<float, 4>;
 
@@ -151,7 +158,7 @@ inline const ControlLine kControls[] = {
     {"PPM na minimapie", "marsz wojska we wskazane miejsce"},
     {"H", "stój (przerwanie rozkazu)"},
     {"", "BUDOWA"},
-    {"1 - 6", "Dom, Drwal, Kamieniarz, Farma, Koszary, Wieża"},
+    {"1 - 8", "Dom, Drwal, Leśniczy, Kamieniarz, Kopalnia, Farma, Koszary, Wieża"},
     {"LPM / PPM", "postawienie budynku / anulowanie"},
     {"R", "obrót budynku przed postawieniem"},
     {"Shift + LPM", "postawienie kilku budynków z rzędu"},
@@ -205,6 +212,7 @@ inline const char* stateText(const Unit& u, const World& w) {
     case UnitState::WorkWait: return "Odpoczywa w pracy";
     case UnitState::GoGather:
         if (u.building >= 0 && w.buildings[u.building].type == BuildingType::Farm) return "Idzie na pole";
+        if (u.building >= 0 && w.buildings[u.building].type == BuildingType::Forester) return "Idzie sadzić drzewo";
         return "Idzie po surowiec";
     case UnitState::Gathering:
         if (u.building >= 0) {
@@ -212,6 +220,8 @@ inline const char* stateText(const Unit& u, const World& w) {
             if (t == BuildingType::Woodcutter) return "Ścina drzewo";
             if (t == BuildingType::Quarry) return "Kuje kamień";
             if (t == BuildingType::Farm) return "Pracuje w polu";
+            if (t == BuildingType::Forester) return "Sadzi drzewo";
+            if (t == BuildingType::Mine) return "Wydobywa kamień w kopalni";
         }
         return "Zbiera";
     case UnitState::ReturnHome: return "Niesie surowiec";
@@ -442,6 +452,9 @@ private:
     // Testy symulacji wywoływane ze scenariusza UI.
     void crowdAndAccessTest();
     void repairHealResourceTest();
+    void mountainBuildingsTest();
+    void territoryCaptureTest();
+    void showcaseBuildings();
     bool constructionStressTest();
     // Log stanu partii w trybie SETTLERS_AUTOPLAY i zakończenie po zadanym czasie.
     void updateAutoplay();
@@ -510,8 +523,8 @@ private:
     GuiButton* btnSpeed_ = nullptr;
     GuiStaticText* gameOverText_ = nullptr;
     GuiStaticText* gameOverStats_ = nullptr;
-    std::array<GuiButton*, 6> buildButtons_{};
-    std::array<BuildingType, 6> buildTypes_{};
+    std::array<GuiButton*, kBuildMenuSize> buildButtons_{};
+    std::array<BuildingType, kBuildMenuSize> buildTypes_{};
     std::string hoverMissing_;                // podpowiedź brakujących surowców pod kursorem
 
     // --- Okno ustawień ---

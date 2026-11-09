@@ -87,7 +87,7 @@ void SettlersApp::handleGameInput(Engine& e, const InputSnapshot& in) {
     const bool overUi = mouseOverUi(in.mouseX, in.mouseY);
 
     // Skróty budowy
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < kBuildMenuSize; ++i) {
         if (e.actionPressed("build." + std::to_string(i + 1))) beginPlacement(buildTypes_[i]);
     }
     if (e.actionPressed(kActDemolish)) demolishSelected();
@@ -270,7 +270,7 @@ void SettlersApp::cleanupSelection() {
     if (selectedBuilding_ >= 0 && !world_->buildings[selectedBuilding_].alive) selectedBuilding_ = -1;
 }
 
-// Wejście w tryb stawiania budynku (przycisk lub klawisz 1-6), o ile stać nas na budynek.
+// Wejście w tryb stawiania budynku (przycisk lub klawisz 1-8), o ile stać nas na budynek.
 void SettlersApp::beginPlacement(BuildingType type) {
     if (mode_ != Mode::Game || spectator_) return;
     const BuildingDef& def = buildingDef(type);
@@ -393,7 +393,7 @@ void SettlersApp::updateContextWindows() {
     // Ustawiane co klatkę: GuiButton sam zmienia kolor przy najechaniu kursorem.
     const auto& res = world_->factions[kPlayer].res;
     const int mx = gui_->mouseX() - buildWindow_->x(), my = gui_->mouseY() - buildWindow_->y();
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < kBuildMenuSize; ++i) {
         const bool can = res.canAfford(buildingDef(buildTypes_[i]).cost);
         const bool hover = buildButtons_[i]->isHovered(mx, my);
         buildButtons_[i]->color_ = can ? (hover ? Color{0.2f, 0.2f, 0.28f, 0.9f} : Color{0.3f, 0.3f, 0.38f, 0.9f})

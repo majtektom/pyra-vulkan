@@ -15,13 +15,15 @@ namespace {
 // Kolejność budowy komputerowego przeciwnika.
 const BuildingType kAiBuildOrder[] = {
     BuildingType::Woodcutter, BuildingType::House, BuildingType::Quarry, BuildingType::Woodcutter,
-    BuildingType::Farm, BuildingType::Quarry, BuildingType::Barracks, BuildingType::House,
+    BuildingType::Farm, BuildingType::Forester, BuildingType::Mine, BuildingType::Barracks, BuildingType::House,
     BuildingType::Woodcutter, BuildingType::Tower, BuildingType::House, BuildingType::Farm,
-    BuildingType::Barracks, BuildingType::Quarry, BuildingType::Tower, BuildingType::House,
+    BuildingType::Barracks, BuildingType::Forester, BuildingType::Mine, BuildingType::Tower, BuildingType::House,
 };
+// Po wyczerpaniu listy AI powtarza ten cykl. Kopalnia, dla której nie ma gór w terytorium, jest
+// pomijana po kilku nieudanych próbach (placementFailures).
 const BuildingType kAiLateCycle[] = {
     BuildingType::House, BuildingType::Woodcutter, BuildingType::Tower, BuildingType::House, BuildingType::Barracks,
-    BuildingType::Quarry, BuildingType::Farm,
+    BuildingType::Quarry, BuildingType::Farm, BuildingType::Forester, BuildingType::Mine,
 };
 
 } // namespace

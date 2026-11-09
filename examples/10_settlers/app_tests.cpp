@@ -184,6 +184,144 @@ void SettlersApp::repairHealResourceTest() {
     uiCheck("komunikat o braku drzew", msg);
 }
 
+// SETTLERS_SHOWCASE=1: nowa gra z gotową kopalnią i leśniczym przy bazie, kamera skierowana na kopalnię
+// (do oglądania modeli i pracy górnika/leśniczego).
+void SettlersApp::showcaseBuildings() {
+    World& w = *world_;
+    const Vec3 castlePos = w.buildings[w.factions[kPlayer].castle].pos;
+    Vec3 focus = castlePos;
+    for (BuildingType type : {BuildingType::Forester, BuildingType::Mine}) {
+        bool placed = false;
+        for (float r = 40.0f; r < 175.0f && !placed; r += 8.0f) {
+            for (int k = 0; k < 48 && !placed; ++k) {
+                const float a = static_cast<float>(k) * 2.0f * PI / 48.0f;
+                const Vec3 p = w.snapToGrid(add(castlePos, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                if (w.canPlace(type, p, kPlayer)) {
+                    w.placeBuilding(type, p, kPlayer, true);
+                    if (type == BuildingType::Mine) focus = p;
+                    placed = true;
+                }
+            }
+        }
+    }
+    cam_.setFocus(focus);
+    cam_.setDistance(90.0f);
+}
+
+// Góry, kopalnia i leśniczy:
+//  1. ośnieżone szczyty są nieprzechodnie, a zbocza poniżej linii śniegu w większości dostępne,
+//  2. kopalnia w górach (w terytorium gracza) daje kamień bez skał na powierzchni,
+//  3. leśniczy sadzi drzewa, które po kTreeGrowSeconds wyrastają.
+void SettlersApp::mountainBuildingsTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    w.factions[kPlayer].res = {5000, 5000, 5000};
+    const auto& nav = w.nav();
+
+    // 1. Śnieg i zbocza
+    int snowCells = 0, snowWalkable = 0, slopeCells = 0, slopeWalkable = 0;
+    for (int cz = 0; cz < nav.height(); ++cz) {
+        for (int cx = 0; cx < nav.width(); ++cx) {
+            const Vec3 c = nav.cellCenter(cx, cz);
+            const float h = w.heightAt(c.x, c.z);
+            if (h > kSnowLine) {
+                ++snowCells;
+                if (nav.isWalkable(cx, cz)) ++snowWalkable;
+            } else if (h > kMountainLevel) {
+                ++slopeCells;
+                if (!nav.isStaticBlocked(cx, cz)) ++slopeWalkable;
+            }
+        }
+    }
+    LOG_INFO("[uitest] teren: śnieg {} komórek (dostępnych {}), góry poniżej śniegu {} komórek (dostępnych {}%)", snowCells,
+             snowWalkable, slopeCells, slopeCells > 0 ? slopeWalkable * 100 / slopeCells : 0);
+    uiCheck("ośnieżone szczyty są niedostępne", snowWalkable == 0);
+    uiCheck("zbocza gór w większości dostępne", slopeCells > 0 && slopeWalkable * 100 / slopeCells >= 60);
+
+    // Miejsce na budynek w terytorium gracza (pierścienie wokół zamku)
+    const Vec3 castlePos = w.buildings[w.factions[kPlayer].castle].pos;
+    auto findSpot = [&](BuildingType type, Vec3& out) {
+        for (float r = 40.0f; r < 175.0f; r += 8.0f) {
+            for (int k = 0; k < 48; ++k) {
+                const float a = static_cast<float>(k) * 2.0f * PI / 48.0f;
+                const Vec3 p = w.snapToGrid(add(castlePos, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                if (w.canPlace(type, p, kPlayer)) {
+                    out = p;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // 2. Kopalnia
+    Vec3 mineSpot;
+    const bool haveMine = findSpot(BuildingType::Mine, mineSpot);
+    uiCheck("jest miejsce na kopalnię w górach przy bazie", haveMine);
+    std::string reason;
+    w.canPlace(BuildingType::Mine, add(castlePos, {0.0f, 0.0f, 40.0f}), kPlayer, &reason);   // nizina przy zamku
+    LOG_INFO("[uitest] kopalnia na nizinie: \"{}\"", reason);
+    if (haveMine) {
+        const int mine = w.placeBuilding(BuildingType::Mine, mineSpot, kPlayer, true);
+        for (int i = 0; i < 2400 && w.buildings[mine].produced < 2; ++i) w.update(0.1f);
+        LOG_INFO("[uitest] kopalnia: wysokość {:.0f}, dostaw kamienia: {}", w.buildings[mine].pos.y, w.buildings[mine].produced);
+        uiCheck("kopalnia wydobywa kamień", w.buildings[mine].produced >= 2);
+    }
+
+    // 3. Leśniczy
+    Vec3 forestSpot;
+    if (findSpot(BuildingType::Forester, forestSpot)) {
+        const int forester = w.placeBuilding(BuildingType::Forester, forestSpot, kPlayer, true);
+        const float until = w.gameTime + 60.0f + kTreeGrowSeconds + 10.0f;
+        while (w.gameTime < until) w.update(0.1f);
+        int growing = 0;
+        for (const auto& n : w.nodes) {
+            if (n.alive && n.kind == NodeKind::Tree && n.growth < 1.0f) ++growing;
+        }
+        const int planted = w.buildings[forester].produced;
+        LOG_INFO("[uitest] leśniczy: posadzone {}, nadal rośnie {}, wyrosło {}", planted, growing, planted - growing);
+        uiCheck("leśniczy sadzi drzewa", planted >= 3);
+        uiCheck("posadzone drzewa wyrastają", planted - growing >= 1);
+    } else {
+        uiCheck("jest miejsce na leśniczego", false);
+    }
+}
+
+// Przejmowanie terenu: wieża gracza postawiona tuż za granicą wroga odbiera mu pas ziemi,
+// a wrogi dom na tym pasie płonie. Zburzenie wieży oddaje teren z powrotem.
+void SettlersApp::territoryCaptureTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    const Vec3 enemyCastle = w.buildings[w.factions[kEnemy].castle].pos;
+    const Vec3 playerCastle = w.buildings[w.factions[kPlayer].castle].pos;
+    Vec3 dir = subtract(playerCastle, enemyCastle);
+    dir.y = 0.0f;
+    dir = normalize(dir);
+    const float castleR = buildingDef(BuildingType::Castle).territoryRadius;
+    const Vec3 housePos = w.snapToGrid(add(enemyCastle, multiply(dir, castleR - 30.0f)));
+    const Vec3 towerPos = w.snapToGrid(add(enemyCastle, multiply(dir, castleR + 20.0f)));
+
+    const int house = w.placeBuilding(BuildingType::House, housePos, kEnemy, true);
+    w.update(0.1f);
+    uiCheck("dom wroga stoi na jego terenie", w.buildings[house].alive && w.territoryOwnerAt(housePos) == kEnemy);
+    const int ownerBefore = w.territoryOwnerAt(towerPos);
+
+    const int tower = w.placeBuilding(BuildingType::Tower, towerPos, kPlayer, true);
+    w.update(0.1f);
+    LOG_INFO("[uitest] przejęcie terenu: właściciel pola wieży przed {} / po {}, dom wroga {}", ownerBefore,
+             w.territoryOwnerAt(towerPos), w.buildings[house].alive ? "stoi" : "spłonął");
+    uiCheck("wieża przejmuje pas terenu wroga", w.territoryOwnerAt(housePos) == kPlayer);
+    uiCheck("wrogi dom na przejętym terenie płonie", !w.buildings[house].alive);
+    uiCheck("zamek wroga zostaje na jego terenie", w.territoryOwnerAt(enemyCastle) == kEnemy);
+    // Granica w środku nakładania się zasięgów: punkt w połowie drogi wieża-zamek należy do kogoś (brak ziemi niczyjej).
+    uiCheck("brak ziemi niczyjej między wieżą a zamkiem wroga",
+            w.territoryOwnerAt(multiply(add(towerPos, enemyCastle), 0.5f)) >= 0);
+
+    w.demolish(tower);
+    w.update(0.1f);
+    uiCheck("po zburzeniu wieży teren wraca do wroga", w.territoryOwnerAt(housePos) == kEnemy);
+}
+
 // Stawia po kilka placów budowy każdego typu i symuluje świat - wszystkie muszą zostać ukończone.
 bool SettlersApp::constructionStressTest() {
     World& w = *world_;
@@ -345,6 +483,8 @@ void SettlersApp::runUiTestStep() {
         crowdAndAccessTest();
         uiCheck("każdy typ budynku zostaje ukończony przez osadników", constructionStressTest());
         repairHealResourceTest();
+        mountainBuildingsTest();
+        territoryCaptureTest();
         showPause();
         uiOrigW_ = static_cast<int>(renderer_->width());
         uiOrigH_ = static_cast<int>(renderer_->height());

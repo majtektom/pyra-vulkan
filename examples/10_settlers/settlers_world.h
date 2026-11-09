@@ -192,6 +192,7 @@ struct ResourceNode {
     float fallTimer = -1.0f;     // >= 0: animacja przewracania ściętego drzewa
     float blockedUntil = -1.0f;  // surowiec chwilowo nieosiągalny (pracownik nie mógł dojść)
     float shake = 0.0f;          // drganie drzewa przy ścinaniu
+    float growth = 1.0f;         // < 1: sadzonka posadzona przez leśniczego (rośnie, nie można jej ściąć)
 };
 
 // Strzała lecąca po łuku od strzelca do celu.
@@ -281,7 +282,12 @@ public:
     // Najbliższa jednostka / budynek trafiony promieniem (-1 = brak).
     int pickUnit(const Ray& ray) const;
     int pickBuilding(const Ray& ray) const;
-    // Czy punkt leży na terytorium frakcji (margin > 0 wymaga zapasu od granicy).
+    // Właściciel terenu w punkcie (-1 = ziemia niczyja). Gdy zasięgi budynków wojskowych się
+    // nakładają, teren należy do budynku, w którego zasięgu punkt leży "najgłębiej" (promień - odległość),
+    // więc nowa wieża przy granicy odbiera wrogowi część jego ziemi.
+    [[nodiscard]] int territoryOwnerAt(const Vec3& p) const;
+    // Czy punkt leży na terytorium frakcji (margin > 0 wymaga zapasu od granicy,
+    // margin < 0 - wystarczy, że terytorium jest w promieniu |margin| od punktu).
     [[nodiscard]] bool isInTerritory(int faction, const Vec3& p, float margin = 0.0f) const;
     // Czy można postawić budynek; w reason powód odmowy ("Teren zbyt nierówny"...).
     bool canPlace(BuildingType type, const Vec3& pos, int faction, std::string* reason = nullptr, float rotY = 0.0f) const;
@@ -414,8 +420,10 @@ private:
     void updateNodes(float dt);
     // Przepisuje pozycje/obroty/animacje obiektów do encji 3D.
     void syncVisuals(float dt);
-    // Słupki granic terytorium obu frakcji (jedna siatka na frakcję).
+    // Słupki granic terytorium obu frakcji (jedna siatka na frakcję); budynki, które znalazły
+    // się na terenie przejętym przez wroga, płoną.
     void rebuildTerritory();
+    void burnBuildingsOnLostLand();
     void checkVictory();
     // Drwal/kamieniarz: liczy surowce w zasięgu, ostrzega o ich końcu.
     void checkWorkResources(Building& b);
@@ -498,6 +506,14 @@ private:
 
     int findNearestNode(NodeKind kind, const Vec3& from, float radius) const;
     int countNodesInRange(NodeKind kind, const Vec3& from, float radius) const;
+    // Liczba sadzonek (rosnących drzew) w promieniu - informacja dla gracza przy drwalu/leśniczym.
+    int countSaplingsInRange(const Vec3& from, float radius) const;
+    // Leśniczy: losowe wolne miejsce na sadzonkę w zasięgu chaty (false = brak miejsca).
+    bool findPlantingSpot(const Building& forester, Vec3& out);
+public:
+    // Ile sadzonek rośnie w okolicy (panel informacji budynku).
+    [[nodiscard]] int saplingsNear(const Vec3& p, float radius) const { return countSaplingsInRange(p, radius); }
+private:
     int findIdleSettler(int faction, const Vec3& near) const;
     int findEnemyUnitNear(int faction, const Vec3& p, float radius) const;
     int findEnemyBuildingNear(int faction, const Vec3& p, float radius) const;

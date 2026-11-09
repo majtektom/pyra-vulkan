@@ -45,6 +45,10 @@ const BuildingDef& buildingDef(BuildingType type) {
          "Szkoli mieczników i łuczników."},
         {"Wieża",       "b_tower",      {25, 40, 0},  20.0f, 750,  5.5f,  125.0f, false, 0,  0.0f,   120.0f,9.0f, 1.3f, 32.0f,
          "Poszerza terytorium i razi wrogów strzałami."},
+        {"Leśniczy",    "b_forester",   {20, 5, 0},   12.0f, 240,  7.0f,  0.0f,   true,  0,  60.0f,  0.0f,  0.0f, 0.0f, 13.0f,
+         "Pracownik sadzi drzewa w okolicy - las odrasta dla drwala."},
+        {"Kopalnia",    "b_mine",       {25, 10, 0},  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
+         "Wydobywa kamień z wnętrza góry. Tylko w górach (powyżej linii lasu)."},
     }};
     return defs[static_cast<int>(type)];
 }

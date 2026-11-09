@@ -267,6 +267,23 @@ void World::settlerWorkWait(Unit& u, int id, float dt) {
         u.resourceNode = node;
         u.state = UnitState::GoGather;
         u.path.clear();
+    } else if (b->type == BuildingType::Mine) {
+        // Górnik: wchodzi do kopalni i wydobywa kamień z wnętrza góry (nie potrzebuje skał na powierzchni).
+        u.state = UnitState::Gathering;
+        u.timer = 7.0f;
+        u.path.clear();
+    } else if (b->type == BuildingType::Forester) {
+        // Leśniczy: wolne miejsce na sadzonkę w okolicy chaty.
+        Vec3 spot;
+        if (!findPlantingSpot(*b, spot)) {
+            u.timer = 8.0f;   // las jest gęsty albo brak miejsca - spróbujemy później
+            return;
+        }
+        u.workSpot = spot;
+        u.state = UnitState::GoGather;
+        u.resourceNode = -1;
+        u.path.clear();
+        setPath(u, spot);
     } else if (b->type == BuildingType::Farm) {
         // Rolnik: losowe miejsce na polu (pole jest częścią modelu farmy, przed zagrodą).
         u.workSpot = add(b->pos, rotateY({randf(-9.0f, 9.0f), 0.0f, randf(-1.0f, 9.5f)}, b->rotY));
@@ -284,6 +301,29 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
     Building* b = workplaceOf(u, id);
     if (!b) {
         becomeIdleSettler(u);
+        return;
+    }
+
+    if (b->type == BuildingType::Forester) {
+        // Marsz na miejsce sadzenia (zwykła nawigacja). Gdy nie da się dojść - wracamy po nowe miejsce.
+        const float distance = dist2D(u.pos, u.workSpot);
+        if (distance < 2.0f || (!u.path.empty() && u.pathIndex >= u.path.size() && distance < 6.0f)) {
+            u.state = UnitState::Gathering;
+            u.timer = 4.0f;   // sadzenie
+            u.path.clear();
+            return;
+        }
+        if (pathFinished(u)) {
+            u.stuckTimer += dt;
+            if (u.stuckTimer > 2.0f) {
+                u.stuckTimer = 0.0f;
+                u.state = UnitState::WorkWait;
+                u.timer = 2.0f;
+                return;
+            }
+            setPath(u, u.workSpot);
+        }
+        followPath(u, dt, 0.5f);
         return;
     }
 
@@ -358,6 +398,29 @@ void World::settlerGather(Unit& u, int id, float dt) {
         if (u.timer <= 0.0f) {
             u.carry = CarryType::Food;
             u.state = UnitState::ReturnHome;
+            u.path.clear();
+        }
+        return;
+    }
+    if (b->type == BuildingType::Mine) {
+        // Górnik pracuje we wnętrzu (model ukryty w syncVisuals), słychać tylko kilof.
+        playWorkSound(u, "mine", b->pos, 1.0f, 1.4f, 0.5f, dt);
+        if (u.timer <= 0.0f) {
+            u.carry = CarryType::Stone;
+            u.state = UnitState::ReturnHome;   // wychodzi przed wejście i oddaje urobek
+            u.path.clear();
+        }
+        return;
+    }
+    if (b->type == BuildingType::Forester) {
+        faceTowards(u, u.workSpot, dt);
+        if (u.timer <= 0.0f) {
+            // Posadzona sadzonka to drzewo z growth ~0 - rośnie w updateNodes, drwal zetnie je po wyrośnięciu.
+            const int tree = addNode(NodeKind::Tree, u.workSpot, static_cast<int>(randf(0.0f, 3.99f)), randf(0.85f, 1.2f));
+            nodes[tree].growth = 0.02f;
+            nodes[tree].entity->transform().scale = multiply(Vec3{1, 1, 1}, nodes[tree].baseScale * 0.15f);
+            u.carry = CarryType::None;
+            u.state = UnitState::ReturnHome;   // powrót do chaty (deliverCarriedResource liczy posadzone drzewa)
             u.path.clear();
         }
         return;

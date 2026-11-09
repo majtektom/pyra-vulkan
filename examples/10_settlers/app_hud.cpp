@@ -259,14 +259,22 @@ void SettlersApp::drawSelectionPanel() {
             status = "W budowie: " + std::to_string(static_cast<int>(b.progress * 100.0f)) + "%";
         } else if (def.needsWorker) {
             status = (b.worker >= 0 && w.units[b.worker].alive) ? "Pracownik: jest" : "Pracownik: brak (czeka na osadnika)";
-            if (b.produced > 0) status += "   Dostarczono: " + std::to_string(b.produced);
+            if (b.produced > 0) {
+                status += (b.type == BuildingType::Forester ? "   Posadzono: " : "   Dostarczono: ") + std::to_string(b.produced);
+            }
+            if (b.type == BuildingType::Forester) {
+                resLine = "Rosnące sadzonki w okolicy: " + std::to_string(w.saplingsNear(b.pos, def.workRadius)) +
+                          " (rosną ok. " + std::to_string(static_cast<int>(kTreeGrowSeconds / 60.0f)) + " min)";
+            }
             if (b.type == BuildingType::Woodcutter || b.type == BuildingType::Quarry) {
                 const bool tree = b.type == BuildingType::Woodcutter;
                 if (b.lacksResources) {
-                    resLine = tree ? "BRAK DRZEW w zasięgu - postaw drwala bliżej lasu" : "BRAK SKAŁ w zasięgu - postaw kamieniarza przy skałach";
+                    resLine = tree ? "BRAK DRZEW - postaw leśniczego obok albo drwala bliżej lasu"
+                                   : "BRAK SKAŁ - postaw kamieniarza przy skałach albo kopalnię w górach";
                     resColor = {1.0f, 0.5f, 0.35f, 1.0f};
                 } else if (b.resourcesInRange >= 0) {
                     resLine = std::string(tree ? "Drzewa" : "Skały") + " w zasięgu pracy: " + std::to_string(b.resourcesInRange);
+                    if (tree) resLine += ", rośnie: " + std::to_string(w.saplingsNear(b.pos, def.workRadius));
                     if (b.resourcesInRange <= 2) resColor = {1.0f, 0.85f, 0.45f, 1.0f};
                 }
             }

@@ -22,7 +22,10 @@ constexpr int kHeightmapSize = 256;      // rozdzielczość heightmapy
 constexpr float kScaleXZ = 4.0f;         // jednostki świata na piksel heightmapy
 constexpr float kScaleY = 0.5f;          // wysokość świata na jednostkę heightmapy (0..255)
 constexpr float kWorldHalf = kHeightmapSize * kScaleXZ * 0.5f;   // 512
-constexpr float kWaterLevel = 26.0f;     // poziom wody w jednostkach świata
+constexpr float kWaterLevel = 26.0f;     // poziom wody (morze wokół wyspy i jeziora)
+constexpr float kMountainLevel = 62.0f;  // od tej wysokości teren to góry (tu stawia się kopalnie)
+constexpr float kSnowLine = 98.0f;       // powyżej - ośnieżone szczyty, niedostępne dla ludzi i budynków
+constexpr float kTreeGrowSeconds = 120.0f; // ile rośnie sadzonka posadzona przez leśniczego
 constexpr float kNavCell = 4.0f;         // rozmiar komórki siatki nawigacji
 
 enum class Difficulty { Easy = 0, Normal = 1, Hard = 2 };
@@ -55,7 +58,7 @@ std::string missingText(const Resources& cost, const Resources& have);
 enum class CarryType { None = 0, Wood = 1, Stone = 2, Food = 3 };
 
 // --- Budynki ---
-enum class BuildingType { Castle = 0, House, Woodcutter, Quarry, Farm, Barracks, Tower, Count };
+enum class BuildingType { Castle = 0, House, Woodcutter, Quarry, Farm, Barracks, Tower, Forester, Mine, Count };
 constexpr int kBuildingTypeCount = static_cast<int>(BuildingType::Count);
 
 struct BuildingDef {
