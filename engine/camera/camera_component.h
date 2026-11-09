@@ -39,6 +39,8 @@ public:
     float fieldOfViewDegrees = 45.0f;   // Kąt widzenia pionowego w stopniach (FOV).
     float nearPlane = 0.1f;             // Odległość do najbliższej płaszczyzny obcinania (bliżej obiekty są ignorowane).
     float farPlane = 10.0f;             // Odległość do najdalszej płaszczyzny obcinania (dalej obiekty nie są rysowane).
+    float aspectRatio = 4.0f / 3.0f;    // Proporcje ekranu (szerokość / wysokość).
+    bool autoAspect = true;             // Gdy true, Engine co klatkę ustawia aspectRatio na proporcje okna.
 };
 
 } // namespace engine3d

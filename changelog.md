@@ -1,5 +1,21 @@
 # changelog
 
+## 0.7.0
+
+Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
+
+Nowe w silniku:
+ - `camera/camera_picking.h` — `screenPointToRay`, `worldToScreen`, `rayPlaneY`, `raySphere`
+ - `camera/rts_camera_controller.h` — kamera strategiczna (pan/zoom/obrót/nachylenie z wygładzaniem, granice, wysokość terenu)
+ - `CameraComponent::aspectRatio` / `autoAspect` — proporcje rzutowania zgodne z oknem (wcześniej na sztywno 4:3)
+ - `Terrain::raycast`, `getNormal`, `containsXZ`, `setHeightmap` (heightmapa z pamięci)
+ - `feature/ai/nav_grid.h` — siatka nawigacyjna z A* (8 kierunków, przeszkody zliczane referencyjnie, wygładzanie ścieżki)
+ - `core/mesh_builder.h` — budowanie siatek low-poly z prymitywów z kolorami w wierzchołkach
+ - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
+ - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
+ - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - `Engine::mouseDown/mousePressed/mouseReleased`, obsługa środkowego przycisku myszy, `Engine::measureText`
+
 ## 0.6.0
 
 Implementacja Volumetrycznej Mgły (Froxel-based)

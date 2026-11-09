@@ -12,9 +12,9 @@ Matrix4 CameraComponent::getViewMatrix() const {
 }
 
 Matrix4 CameraComponent::getProjectionMatrix() const {
-    // Proporcje ekranu (aspect ratio) - na stałe ustawione na 4:3, w pełnym silniku
-    // pobierane byłyby dynamicznie z wymiarów okna swapchaina.
-    float aspect = 4.0f / 3.0f;
+    // Proporcje ekranu (aspect ratio) - aktualizowane przez Engine na podstawie
+    // wymiarów okna, gdy autoAspect == true.
+    const float aspect = aspectRatio > 0.0001f ? aspectRatio : 4.0f / 3.0f;
     
     // Budujemy macierz rzutowania perspektywicznego, konwertując FOV ze stopni na radiany.
     return perspective(radians(fieldOfViewDegrees), aspect, nearPlane, farPlane);

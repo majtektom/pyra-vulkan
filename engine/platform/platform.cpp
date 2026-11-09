@@ -55,6 +55,7 @@ void Platform::processEvents() {
     input_.mouseDeltaX = 0;
     input_.mouseDeltaY = 0;
     input_.mouseWheel = 0;
+    input_.mouseWheelF = 0.0f;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -100,10 +101,12 @@ void Platform::processEvents() {
             }
             if (event.button.button == SDL_BUTTON_LEFT)  input_.mouseButtons[0] = true;
             if (event.button.button == SDL_BUTTON_RIGHT) input_.mouseButtons[1] = true;
+            if (event.button.button == SDL_BUTTON_MIDDLE) input_.mouseButtons[2] = true;
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
             if (event.button.button == SDL_BUTTON_LEFT)  input_.mouseButtons[0] = false;
             if (event.button.button == SDL_BUTTON_RIGHT) input_.mouseButtons[1] = false;
+            if (event.button.button == SDL_BUTTON_MIDDLE) input_.mouseButtons[2] = false;
             break;
         case SDL_EVENT_MOUSE_MOTION:
             if (pointerGrabbed_) {
@@ -114,7 +117,17 @@ void Platform::processEvents() {
             input_.mouseY = static_cast<int>(event.motion.y);
             break;
         case SDL_EVENT_MOUSE_WHEEL:
-            input_.mouseWheel += static_cast<int>(event.wheel.y);
+        {
+            // SDL3 raportuje kółko jako float - precyzyjne myszy i touchpady dają ułamki,
+            // które przy rzutowaniu na int ginęły. Akumulujemy resztę między zdarzeniami.
+            float wy = event.wheel.y;
+            if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
+            input_.mouseWheelF += wy;
+            wheelRemainder_ += wy;
+            const int steps = static_cast<int>(wheelRemainder_);
+            input_.mouseWheel += steps;
+            wheelRemainder_ -= static_cast<float>(steps);
+        }
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             if (pointerGrabbed_) {
@@ -164,6 +177,24 @@ void Platform::setFullscreen(bool fullscreen) {
 }
 
 bool Platform::isFullscreen() const { return fullscreen_; }
+
+void Platform::setWindowSize(uint32_t width, uint32_t height) {
+    if (!window_ || width == 0 || height == 0) return;
+    SDL_SetWindowSize(window_, static_cast<int>(width), static_cast<int>(height));
+    SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    SDL_SyncWindow(window_);
+    resized_ = true;
+}
+
+bool Platform::usableDisplaySize(uint32_t& width, uint32_t& height) const {
+    if (!window_) return false;
+    const SDL_DisplayID display = SDL_GetDisplayForWindow(window_);
+    SDL_Rect r{};
+    if (display == 0 || !SDL_GetDisplayUsableBounds(display, &r)) return false;
+    width = static_cast<uint32_t>(r.w);
+    height = static_cast<uint32_t>(r.h);
+    return true;
+}
 
 InputSnapshot Platform::pollInput() {
     return input_;

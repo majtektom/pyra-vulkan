@@ -15,6 +15,7 @@
 #include "core/entity.h"
 #include "core/mesh_manager.h"
 #include "camera/camera_component.h"
+#include "camera/camera_picking.h"
 #include "object/terrain/terrain.h"
 #include "object/terrain/terrain_index_generator.h"
 #include "object/terrain/terrain_heightmap_generator.h"
@@ -564,6 +565,70 @@ float Terrain::getHeight(float x, float z) const {
     float h00 = heightmap_[iz * hmSize_ + ix], h10 = heightmap_[iz * hmSize_ + ix + 1];
     float h01 = heightmap_[(iz+1) * hmSize_ + ix], h11 = heightmap_[(iz+1) * hmSize_ + ix + 1];
     return ((h00 * (1-fx) + h10 * fx) * (1-fz) + (h01 * (1-fx) + h11 * fx) * fz) * scaleY_;
+}
+
+bool Terrain::containsXZ(float x, float z) const {
+    if (hmSize_ == 0) return false;
+    const float half = (hmSize_ * 0.5f - 1.0f) * scaleXZ_;
+    return x > -half && x < half && z > -half && z < half;
+}
+
+Vec3 Terrain::getNormal(float x, float z) const {
+    const float e = scaleXZ_;
+    const float hl = getHeight(x - e, z);
+    const float hr = getHeight(x + e, z);
+    const float hd = getHeight(x, z - e);
+    const float hu = getHeight(x, z + e);
+    return normalize(Vec3{hl - hr, 2.0f * e, hd - hu});
+}
+
+bool Terrain::raycast(const Ray& ray, float maxDistance, Vec3& outHit) const {
+    if (hmSize_ == 0) return false;
+
+    // Krok marszu: pół komórki heightmapy - wystarczająco gęsto, by nie przeskoczyć wzgórza.
+    const float step = std::max(0.25f, scaleXZ_ * 0.5f);
+    float prevT = 0.0f;
+    bool prevAbove = true;
+    bool havePrev = false;
+
+    for (float t = 0.0f; t <= maxDistance; t += step) {
+        const Vec3 p = ray.at(t);
+        if (!containsXZ(p.x, p.z)) {
+            havePrev = false;
+            continue;
+        }
+        const bool above = p.y > getHeight(p.x, p.z);
+        if (havePrev && prevAbove && !above) {
+            // Bisekcja w przedziale [prevT, t]
+            float lo = prevT, hi = t;
+            for (int i = 0; i < 12; ++i) {
+                const float mid = 0.5f * (lo + hi);
+                const Vec3 m = ray.at(mid);
+                if (m.y > getHeight(m.x, m.z)) lo = mid; else hi = mid;
+            }
+            outHit = ray.at(hi);
+            outHit.y = getHeight(outHit.x, outHit.z);
+            return true;
+        }
+        if (!havePrev && !above) {
+            // Start pod terenem (np. kamera w zboczu) - traktujemy jako trafienie.
+            outHit = p;
+            outHit.y = getHeight(p.x, p.z);
+            return true;
+        }
+        prevT = t;
+        prevAbove = above;
+        havePrev = true;
+    }
+    return false;
+}
+
+void Terrain::setHeightmap(const std::vector<float>& data, int size) {
+    if (size <= 0 || static_cast<int>(data.size()) < size * size) return;
+    heightmap_.assign(data.begin(), data.begin() + static_cast<size_t>(size) * size);
+    hmSize_ = size;
+    sizeX = size;
+    sizeZ = size;
 }
 
 // --- Generators (unchanged) ---

@@ -9,6 +9,12 @@ add_library(engine3d SHARED
     core/mesh_manager.cpp
     camera/camera_component.cpp
     camera/camera_controller.cpp
+    camera/camera_picking.cpp
+    camera/rts_camera_controller.cpp
+    core/mesh_builder.cpp
+    feature/ai/nav_grid.cpp
+    feature/audio/audio_system.cpp
+    feature/audio/stb_vorbis_impl.cpp
     platform/platform.cpp
     render/renderer_core.cpp
     render/vulkan_util.cpp

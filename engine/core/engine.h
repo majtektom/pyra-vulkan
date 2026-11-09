@@ -37,6 +37,7 @@ class GltfSkinnedInstance;
 class Renderer;
 class FontManager;
 class ShaderHotReload;
+class AudioSystem;
 
 /**
  * @brief Główna klasa silnika (Orkiestrator).
@@ -91,6 +92,8 @@ public:
     MaterialSystem* getMaterialSystem() { return materialSystem.get(); }
     MeshManager* getMeshManager() { return meshManager.get(); }
     CameraController* getCameraController() { return &cameraController; }
+    // System dźwięku (zawsze dostępny; gdy brak urządzenia audio - wywołania są no-op).
+    AudioSystem* getAudio() { return audio_.get(); }
 
     float getCurrentFPS() const { return currentFPS; }
     const InputSnapshot& input() const { return currentInput_; }
@@ -98,6 +101,11 @@ public:
     bool actionDown(std::string_view action) const;
     bool actionPressed(std::string_view action) const;
     bool actionReleased(std::string_view action) const;
+
+    // Stan przycisków myszy: 0 = lewy, 1 = prawy, 2 = środkowy.
+    bool mouseDown(int button) const;
+    bool mousePressed(int button) const;   // wciśnięty w tej klatce
+    bool mouseReleased(int button) const;  // puszczony w tej klatce
     InputActionMap& inputActions() { return inputActions_; }
     const InputActionMap& inputActions() const { return inputActions_; }
 
@@ -106,6 +114,9 @@ public:
                       float x, float y, float scale = 1.0f,
                       const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f},
                       float depth = 0.0f);
+
+    // Szerokość napisu w pikselach przy danej skali (do wyrównywania tekstu HUD).
+    float measureText(const std::string& text, float scale = 1.0f) const;
 
     void enableShaderHotReload(bool enable);
     void reloadShader(const std::string& shaderName);
@@ -123,6 +134,9 @@ public:
 
     void setFullscreen(bool fullscreen);
     bool isFullscreen() const;
+    // Rozdzielczość okna (tryb okienkowy) i użyteczny rozmiar ekranu.
+    void setWindowSize(uint32_t width, uint32_t height);
+    bool getDisplaySize(uint32_t& width, uint32_t& height) const;
 
     void setShadowsEnabled(bool enabled);
     bool shadowsEnabled() const;
@@ -213,6 +227,7 @@ private:
     std::shared_ptr<TextOverlayRenderer> textOverlayRenderer_;
     std::shared_ptr<VolumetricFogRenderer> volumetricFogRenderer_;
     std::unique_ptr<ShaderHotReload> shaderHotReload_;
+    std::unique_ptr<AudioSystem> audio_;
 
     std::shared_ptr<SkydomeRenderer> currentSkydome_;
     std::shared_ptr<OceanRenderer> currentOcean_;

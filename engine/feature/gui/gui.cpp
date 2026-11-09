@@ -53,6 +53,7 @@ bool GuiMgr::removeWindow(const std::string& name) {
     GuiWindow* ptr = it->second.get();
     windowOrder_.erase(std::remove(windowOrder_.begin(), windowOrder_.end(), ptr), windowOrder_.end());
     if (activeWindow_ == ptr) activeWindow_ = nullptr;
+    if (hoveredWindow_ == ptr) hoveredWindow_ = nullptr;
     windows_.erase(it);
     return true;
 }
@@ -98,6 +99,8 @@ void GuiMgr::update(const InputSnapshot& snap, Platform& platform, float screenW
     bool leftUp = !leftDown && prevLeft;
     prevLeft = leftDown;
 
+    hoveredWindow_ = nullptr;
+
     if (cursorEnabled_)
         platform.grabPointer(cursorMode_ == CursorMode::Custom);
 
@@ -127,6 +130,8 @@ void GuiMgr::update(const InputSnapshot& snap, Platform& platform, float screenW
         }
     }
 
+    hoveredWindow_ = hoveredWindow;
+
     // 2. Aktywuj okno po kliknięciu w nie
     if (leftClick && hoveredWindow) {
         setActive(hoveredWindow->name());
@@ -149,7 +154,27 @@ void GuiMgr::update(const InputSnapshot& snap, Platform& platform, float screenW
     }
 }
 
+void GuiMgr::addOverlayRect(float x, float y, float w, float h, std::array<float, 4> color, float depth) {
+    if (w <= 0.0f || h <= 0.0f) return;
+    overlayRects_.push_back({x, y, w, h, color, depth});
+}
+
+void GuiMgr::addOverlayFrame(float x, float y, float w, float h, float t, std::array<float, 4> color, float depth) {
+    addOverlayRect(x, y, w, t, color, depth);
+    addOverlayRect(x, y + h - t, w, t, color, depth);
+    addOverlayRect(x, y + t, t, h - 2.0f * t, color, depth);
+    addOverlayRect(x + w - t, y + t, t, h - 2.0f * t, color, depth);
+}
+
 void GuiMgr::renderGui() {
+    // Prostokąty HUD (pod oknami)
+    for (const auto& r : overlayRects_) {
+        const float nx = (r.x / screenW_) * 2.0f - 1.0f;
+        const float ny = (r.y / screenH_) * 2.0f - 1.0f;
+        guiRenderer_.addRect(nx, ny, (r.w / screenW_) * 2.0f, (r.h / screenH_) * 2.0f, r.color, r.depth);
+    }
+    overlayRects_.clear();
+
     for (size_t i = 0; i < windowOrder_.size(); ++i) {
         auto* w = windowOrder_[i];
         if (!w->isVisible()) continue;

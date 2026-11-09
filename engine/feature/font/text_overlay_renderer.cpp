@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -278,6 +279,23 @@ void TextOverlayRenderer::addText(const std::string& text, float x, float y, flo
                                    float screenWidth, float screenHeight, float depth) {
     if (!fontLoaded_ || fontAtlas_.glyphs.empty()) return;
     labels_.push_back({text, x, y, scale, color, screenWidth, screenHeight, depth});
+}
+
+float TextOverlayRenderer::measureText(const std::string& text, float scale) const {
+    if (!fontLoaded_) return 0.0f;
+    float width = 0.0f;
+    float lineWidth = 0.0f;
+    const float fallbackAdvance = static_cast<float>(fontAtlas_.lineHeight) * 0.5f;
+    for (uint32_t cp : utf8::decode(text)) {
+        if (cp == '\n') {
+            width = std::max(width, lineWidth);
+            lineWidth = 0.0f;
+            continue;
+        }
+        auto it = fontAtlas_.glyphs.find(cp);
+        lineWidth += (it != fontAtlas_.glyphs.end() ? static_cast<float>(it->second.advanceX) : fallbackAdvance) * scale;
+    }
+    return std::max(width, lineWidth);
 }
 
 void TextOverlayRenderer::clearTexts() {

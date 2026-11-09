@@ -48,6 +48,38 @@ Binaria lądują w `bin/`:
 | `particles` | System cząsteczek |
 | `gui_demo` | Widgety GUI (button, checkbox, combobox, memo, scrollbar) |
 | `terrain` | Teren z generatorów (Plasma/Fault/Deposition) + multi-texturing z maskami |
+| `10_settlers` | Gra strategiczna w stylu "Osadników": budowa osady, ekonomia, wojsko i walka z AI |
+
+### 10_settlers — Osadnicy
+
+```bash
+./bin/10_settlers_example
+```
+
+Osadnicy sami budują i pracują (drwal, kamieniarz, farma), domy podnoszą limit ludności,
+koszary szkolą mieczników i łuczników, wieże poszerzają terytorium i strzelają do wrogów.
+Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.
+
+Sterowanie: WSAD/krawędź ekranu — kamera, Q/E/środkowy przycisk — obrót, kółko — zoom,
+LPM — zaznaczanie (ramka), PPM — ruch/atak, Ctrl+PPM — marsz bojowy, 1–6 — budowa,
+R — obrót budynku, Del — zburzenie, Tab — całe wojsko, M — muzyka, F1 — pomoc, ESC — pauza.
+
+Menu (główne i pauza) ma okna **Ustawienia** (muzyka/efekty wł./wył. i głośność, głośność ogólna, rozdzielczość okna,
+pełny ekran, synchronizacja pionowa, synchronizacja GPU-CPU, limit FPS, cienie — zapis w `save/settlers_settings.json`)
+oraz **Sterowanie** z pełną listą klawiszy.
+
+Prędkość czasu: klawisze **[** i **]** (x1, x2, x4, x8, x16) albo przycisk w menu pauzy. W menu głównym
+**Pokaz: AI kontra AI** — komputer gra za obie strony, a gracz ogląda (domyślnie x4).
+
+Debugowanie: **F3** przełącza tryby (1: ścieżki, cele, stany jednostek, wejścia budynków, panel statystyk;
+2: dodatkowo siatka kolizji wokół kamery), **F9** zrzuca do konsoli pełny stan zaznaczonych i zawieszonych jednostek.
+`SETTLERS_DEBUG=1|2` włącza tryb debug od startu. Symulacja sama wykrywa zawieszone jednostki (log `[zawieszenie]`)
+i próbuje je odblokować.
+
+Muzyka (RandomMind) i efekty (Kenney) są na licencji CC0 — szczegóły w `assets/sound/settlers/CREDITS.md`.
+
+Tryby testowe: `SETTLERS_AUTOPLAY=<sekundy> SETTLERS_SPEED=<mnożnik>` (AI gra za obie strony, stan w logu),
+`SETTLERS_UITEST=1` (wstrzykuje zdarzenia klawiatury/myszy i sprawdza picking, budowanie, zaznaczanie i rozkazy).
 
 ## Uruchamianie
 
@@ -71,4 +103,9 @@ cd bin
 - GUI (okna, buttony, checkboxy, combobox, memo, scrollbar, trackbar)
 - Tekstowy overlay 2D z atlasu glifów (UTF-8)
 - Font manager (TTF przez SDL3_ttf)
+- Kamera RTS (`RtsCameraController`), picking myszą (`screenPointToRay`, `worldToScreen`, `Terrain::raycast`)
+- Nawigacja: siatka `NavGrid` z wyszukiwaniem ścieżek A* i wygładzaniem
+- `MeshBuilder` — proceduralne modele low-poly z prymitywów (box, walec, stożek, sfera, dach)
+- `AudioSystem` (`Engine::getAudio()`) — efekty WAV/OGG z wariantami i limitami, dźwięk przestrzenny, strumieniowana muzyka OGG z przenikaniem (SDL3 + stb_vorbis)
+- HUD w trybie immediate (`GuiMgr::addOverlayRect/addOverlayFrame`)
 - Obsługa tekstur: DDS (DXT1/3/5), BMP, TGA

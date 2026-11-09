@@ -1,4 +1,5 @@
 #include "core/engine.h"
+#include "feature/audio/audio_system.h"
 #include "render/renderer.h"
 #include "feature/font/font_manager.h"
 #include "core/mesh_component.h"
@@ -42,6 +43,10 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
             LOG_ERROR("Failed to create platform");
             return false;
         }
+
+        // Dźwięk jest opcjonalny - brak urządzenia audio nie blokuje startu silnika.
+        audio_ = std::make_unique<AudioSystem>();
+        audio_->init();
 
         vulkanContext = std::make_shared<VulkanContext>();
         if (!vulkanContext->initialize(appName, enableValidationLayers)) {
@@ -140,6 +145,9 @@ void Engine::run() {
 }
 
 void Engine::cleanup() {
+    // Audio przed platformą (SDL_Quit) - wątek miksera musi się zatrzymać wcześniej.
+    if (audio_) audio_->shutdown();
+
     // Zwolnienie zasobów mapy przed zniszczeniem renderera i kontekstu Vulkan
     if (renderer) {
         renderer->waitIdle();
@@ -214,6 +222,17 @@ void Engine::update(TimeDelta deltaTime) {
 
     // Odliczanie wieku buforów zastąpionych w poprzednich klatkach (bezpieczne ponowne użycie).
     if (meshManager) meshManager->beginFrame();
+
+    // Proporcje kamery zgodne z oknem (przed onUpdate, aby picking myszą liczył się poprawnie).
+    if (renderer && renderer->height() > 0) {
+        const float windowAspect = static_cast<float>(renderer->width()) / static_cast<float>(renderer->height());
+        for (const auto& [sceneName, scenePtr] : sceneManager.scenes()) {
+            if (!scenePtr) continue;
+            if (auto* cam = scenePtr->activeCamera(); cam && cam->autoAspect) {
+                cam->aspectRatio = windowAspect;
+            }
+        }
+    }
 
     // Callback użytkownika (np. skryptowanie w pętli głównej)
     if (onUpdate) {
@@ -361,6 +380,11 @@ void Engine::setTextLabel(const std::string& text, const std::string&, float x, 
     textOverlayRenderer_->addText(text, x, y, scale, color, sw, sh, depth);
 }
 
+float Engine::measureText(const std::string& text, float scale) const {
+    if (!textOverlayRenderer_ || !textOverlayRenderer_->isReady()) return 0.0f;
+    return textOverlayRenderer_->measureText(text, scale);
+}
+
 void Engine::reloadShader(const std::string&) {
     if (!materialSystem) return;
 
@@ -426,6 +450,14 @@ void Engine::setFullscreen(bool fullscreen) {
 
 bool Engine::isFullscreen() const {
     return platform ? platform->isFullscreen() : false;
+}
+
+void Engine::setWindowSize(uint32_t width, uint32_t height) {
+    if (platform) platform->setWindowSize(width, height);
+}
+
+bool Engine::getDisplaySize(uint32_t& width, uint32_t& height) const {
+    return platform && platform->usableDisplaySize(width, height);
 }
 
 void Engine::setShadowsEnabled(bool enabled) {
@@ -555,6 +587,21 @@ bool Engine::actionPressed(std::string_view action) const {
 
 bool Engine::actionReleased(std::string_view action) const {
     return inputActions_.wasReleased(previousInput_, currentInput_, action);
+}
+
+bool Engine::mouseDown(int button) const {
+    if (button < 0 || button >= 5) return false;
+    return currentInput_.mouseButtons[button];
+}
+
+bool Engine::mousePressed(int button) const {
+    if (button < 0 || button >= 5) return false;
+    return currentInput_.mouseButtons[button] && !previousInput_.mouseButtons[button];
+}
+
+bool Engine::mouseReleased(int button) const {
+    if (button < 0 || button >= 5) return false;
+    return !currentInput_.mouseButtons[button] && previousInput_.mouseButtons[button];
 }
 
 

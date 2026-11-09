@@ -15,7 +15,8 @@ struct InputSnapshot {
     bool mouseButtons[5] = {};
     int mouseX = 0;
     int mouseY = 0;
-    int mouseWheel = 0;
+    int mouseWheel = 0;          // pełne "ząbki" kółka (z akumulacją ułamków)
+    float mouseWheelF = 0.0f;    // dokładna wartość (myszy wysokiej rozdzielczości, touchpady)
 };
 
 class Platform {
@@ -41,6 +42,11 @@ public:
     void setFullscreen(bool fullscreen);
     bool isFullscreen() const;
 
+    // Rozmiar okna w trybie okienkowym (okno jest wyśrodkowywane). Swapchain odtworzy się po zdarzeniu resize.
+    void setWindowSize(uint32_t width, uint32_t height);
+    // Użyteczny obszar ekranu, na którym jest okno (bez paska zadań).
+    bool usableDisplaySize(uint32_t& width, uint32_t& height) const;
+
 private:
     SDL_Window* window_ = nullptr;
     SDL_Cursor* invisibleCursor_ = nullptr;
@@ -51,6 +57,7 @@ private:
 
     InputSnapshot input_;
     bool pointerGrabbed_ = false;
+    float wheelRemainder_ = 0.0f;
     bool fullscreen_ = false;
 };
 

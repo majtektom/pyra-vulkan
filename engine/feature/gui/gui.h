@@ -78,6 +78,22 @@ public:
 
     void renderGui();
     void build(uint32_t frameIndex);
+
+    /**
+     * @brief Natychmiastowe (immediate-mode) prostokąty HUD w pikselach ekranu.
+     *
+     * Rysowane pod oknami GUI w najbliższym wywołaniu renderGui(), potem kasowane.
+     * Służą do pasków życia, ramki zaznaczenia, minimapy, paneli HUD itp.
+     * Domyślna głębokość 0.95 (okna leżą w zakresie 0.1..0.9, mniejsza = bliżej).
+     */
+    void addOverlayRect(float x, float y, float w, float h, std::array<float, 4> color, float depth = 0.95f);
+    // Ramka (obrys) prostokąta o grubości thickness.
+    void addOverlayFrame(float x, float y, float w, float h, float thickness, std::array<float, 4> color, float depth = 0.95f);
+
+    // Czy kursor znajduje się nad widocznym oknem GUI (do blokowania kliknięć w świat gry).
+    [[nodiscard]] bool isPointerOverGui() const { return hoveredWindow_ != nullptr; }
+    [[nodiscard]] float screenWidth() const { return screenW_; }
+    [[nodiscard]] float screenHeight() const { return screenH_; }
     [[nodiscard]] bool isGuiReady() const { return guiRenderer_.isReady() && textFn_ != nullptr; }
 
 private:
@@ -86,6 +102,13 @@ private:
     std::map<std::string, std::unique_ptr<GuiWindow>> windows_;
     std::vector<GuiWindow*> windowOrder_;
     GuiWindow* activeWindow_ = nullptr;
+    GuiWindow* hoveredWindow_ = nullptr;
+    struct OverlayRect {
+        float x, y, w, h;
+        std::array<float, 4> color;
+        float depth;
+    };
+    std::vector<OverlayRect> overlayRects_;
     int mouseX_ = 0, mouseY_ = 0;
     bool cursorEnabled_ = true;
     CursorMode cursorMode_ = CursorMode::Custom;
@@ -110,6 +133,8 @@ public:
     // Każde okno ma tytuł i prostokątne tło, chyba że ukryte przez setChromeVisible(false)
     int x() const { return x_; } int y() const { return y_; }
     int width() const { return w_; } int height() const { return h_; }
+    void setPosition(int x, int y) { x_ = x; y_ = y; }
+    void setSize(int w, int h) { w_ = w; h_ = h; }
 
     void setChromeVisible(bool v) { chromeVisible_ = v; }
     [[nodiscard]] bool isChromeVisible() const { return chromeVisible_; }

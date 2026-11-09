@@ -12,6 +12,7 @@ namespace engine3d {
 
 class MeshManager;
 class CameraComponent;
+struct Ray;
 
 /**
  * @brief Warstwa tekstury terenu (Terrain Layer).
@@ -331,6 +332,36 @@ public:
      * @return Wysokość Y terenu w zadanym punkcie.
      */
     float getHeight(float x, float z) const;
+
+    /**
+     * @brief Czy punkt (x, z) w przestrzeni świata leży nad terenem.
+     */
+    bool containsXZ(float x, float z) const;
+
+    /**
+     * @brief Przybliżona normalna powierzchni terenu w punkcie (różnice centralne).
+     */
+    Vec3 getNormal(float x, float z) const;
+
+    /**
+     * @brief Przecięcie promienia z powierzchnią terenu (ray marching + bisekcja).
+     *
+     * Używane m.in. do wskazywania punktu na terenie myszą (picking w grach RTS).
+     *
+     * @param ray Promień w przestrzeni świata (kierunek znormalizowany).
+     * @param maxDistance Maksymalna długość promienia.
+     * @param outHit Punkt trafienia.
+     * @return true, gdy promień trafił w teren.
+     */
+    bool raycast(const Ray& ray, float maxDistance, Vec3& outHit) const;
+
+    /**
+     * @brief Ustawia heightmapę bezpośrednio z pamięci (np. z własnego generatora).
+     *
+     * Wartości w zakresie 0..255 (jak w heightmapach BMP). Po wywołaniu należy
+     * ustawić skalę (setScale) i zbudować siatkę (buildMesh).
+     */
+    void setHeightmap(const std::vector<float>& data, int size);
 
     // =========================================================================
     // Gettery

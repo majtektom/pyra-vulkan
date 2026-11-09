@@ -70,6 +70,8 @@ public:
     void addText(const std::string& text, float x, float y, float scale,
                  const std::array<float, 4>& color, float screenWidth, float screenHeight, float depth = 0.0f);
     void clearTexts();
+    // Szerokość napisu w pikselach (dla glifów jeszcze nie w atlasie - szacunek).
+    [[nodiscard]] float measureText(const std::string& text, float scale) const;
     void buildTexts(uint32_t frameIndex);
     void recordDrawCommands(VkCommandBuffer commandBuffer, uint32_t frameIndex) const;
 
