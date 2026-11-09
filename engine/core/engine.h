@@ -151,7 +151,9 @@ public:
     void setTextureFilter(TextureFilter filter);
     TextureFilter getTextureFilter() const;
 
-    void configureDirectionalShadow(float halfSize);
+    // Zasięg cieni słońca; startDistance - od jakiej odległości od kamery zaczynają się kaskady;
+    // splitLambda - rozkład kaskad (0 równomierny .. 1 logarytmiczny).
+    void configureDirectionalShadow(float halfSize, float startDistance = 0.0f, float splitLambda = 0.6f);
 
     void setLightingEnabled(bool enabled);
     bool isLightingEnabled() const;

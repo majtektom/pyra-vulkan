@@ -524,8 +524,8 @@ TextureFilter Engine::getTextureFilter() const {
     return renderer ? renderer->getTextureFilter() : TextureFilter::Anisotropic16x;
 }
 
-void Engine::configureDirectionalShadow(float halfSize) {
-    if (renderer) renderer->configureDirectionalShadow(halfSize);
+void Engine::configureDirectionalShadow(float halfSize, float startDistance, float splitLambda) {
+    if (renderer) renderer->configureDirectionalShadow(halfSize, startDistance, splitLambda);
 }
 
 void Engine::setLightingEnabled(bool enabled) {

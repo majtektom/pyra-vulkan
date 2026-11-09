@@ -33,12 +33,29 @@ constexpr int kMaxDescriptorSets = 64;
 constexpr int kMaxLights = 16;
 constexpr int kShadowCascades = 4;
 
+// --- Układ pamięci map cieni (jedna tablica tekstur głębokości kShadowMapSize x kShadowMapSize) ---
+// Warstwy 0..kShadowCascades-1: kaskady słońca (tylko pierwsze światło kierunkowe - cień na całej mapie).
+// Warstwa kLocalShadowLayer: atlas 2x2 dla świateł o ograniczonym zasięgu (reflektory, punktowe),
+// każde dostaje ćwiartkę (kShadowMapSize/2). Cień dostają tylko najbliższe kamerze światła lokalne.
+// Wcześniej każde z 16 świateł miało 4 warstwy (64 warstwy = ok. 1 GB VRAM), dziś 5 warstw (ok. 80 MB).
+constexpr uint32_t kLocalShadowSlots = 4;
+constexpr uint32_t kLocalShadowLayer = kShadowCascades;
+constexpr uint32_t kShadowLayerCount = kShadowCascades + 1;
+
 struct LightData {
     Matrix4 lightViewProj[kShadowCascades];
-    float position[4];    // xyz = world position (point/spot), w = shadow map index
+    float position[4];    // xyz = world position (point/spot), w = warstwa mapy cieni (-1 = światło bez cienia)
     float direction[4];   // xyz = normalized direction OF light rays, w = type: 1=dir, 2=point, 3=spot
     float color[4];       // rgb = color, w = intensity multiplier
-    float params[4];      // spot: innerCutoffCos, outerCutoffCos, range, cascadeCount
+    float params[4];      // spot: innerCutoffCos, outerCutoffCos, range; w = liczba kaskad (słońce) / ćwiartka atlasu (lokalne)
+};
+
+// Światło rzucające cień w bieżącej klatce (wynik assignShadowSlots).
+struct ShadowCaster {
+    uint32_t lightIndex;
+    uint32_t layer;
+    uint32_t cascadeCount;   // słońce: kShadowCascades, lokalne: 1
+    int atlasSlot;           // -1 dla słońca, 0..3 dla świateł lokalnych
 };
 
 struct GlobalUBO {
@@ -205,79 +222,114 @@ public:
             shadowBarrier.subresourceRange.baseMipLevel = 0;
             shadowBarrier.subresourceRange.levelCount = 1;
             shadowBarrier.subresourceRange.baseArrayLayer = 0;
-            shadowBarrier.subresourceRange.layerCount = kMaxLights * kShadowCascades;
+            shadowBarrier.subresourceRange.layerCount = kShadowLayerCount;
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                                  0, 0, nullptr, 0, nullptr, 1, &shadowBarrier);
 
-            for (uint32_t i = 0; i < std::min(storedLightCount_, (uint32_t)kMaxLights); i++) {
-                const uint32_t cascadeCount = std::max(1u, std::min(static_cast<uint32_t>(storedLights_[i].params[3]), static_cast<uint32_t>(kShadowCascades)));
-                const uint32_t baseLayer = static_cast<uint32_t>(storedLights_[i].position[3]);
-                for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
-                    VkRenderingAttachmentInfo shadowDepthAttachment{};
-                    shadowDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-                    shadowDepthAttachment.imageView = shadowMapLayerViews_[baseLayer + cascade];
-                    shadowDepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    shadowDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-                    shadowDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                    shadowDepthAttachment.clearValue.depthStencil = {1.0f, 0};
+            // Rysuje obiekty rzucające cień do bieżącego widoku cienia (macierz lvp).
+            // cullCenter/cullRadius > 0: tylko obiekty w zasięgu światła lokalnego.
+            auto drawShadowCasters = [&](const Matrix4& lvp, const Vec3& cullCenter, float cullRadius) {
+                for (const auto& packet : scene.getShadowPackets()) {
+                    if (cullRadius > 0.0f) {
+                        // Pozycja obiektu z macierzy świata; zapas 30 j. na jego rozmiar.
+                        const Vec3 p{packet.transform.values[12], packet.transform.values[13], packet.transform.values[14]};
+                        const Vec3 d = subtract(p, cullCenter);
+                        if (dot(d, d) > (cullRadius + 30.0f) * (cullRadius + 30.0f)) continue;
+                    }
+                    bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
 
-                    VkRenderingInfo shadowRenderingInfo{};
-                    shadowRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-                    shadowRenderingInfo.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
-                    shadowRenderingInfo.layerCount = 1;
-                    shadowRenderingInfo.colorAttachmentCount = 0;
-                    shadowRenderingInfo.pDepthAttachment = &shadowDepthAttachment;
-
-                    vkCmdBeginRendering(cmd, &shadowRenderingInfo);
-
-                    VkViewport shadowViewport{0.0f, 0.0f, (float)kShadowMapSize, (float)kShadowMapSize, 0.0f, 1.0f};
-                    VkRect2D shadowScissor{{0, 0}, {kShadowMapSize, kShadowMapSize}};
-                    vkCmdSetViewport(cmd, 0, 1, &shadowViewport);
-                    vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
-
-                    for (const auto& packet : scene.getShadowPackets()) {
-                        bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
-
-                        if (isSkinned) {
-                            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipeline_);
-                            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
-                            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
-                        } else {
-                            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
-                            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
-                        }
-
-                        VkBuffer vbs[] = {packet.vertexBuffer};
-                        VkDeviceSize off[] = {0};
-                        vkCmdBindVertexBuffers(cmd, 0, 1, vbs, off);
-                        if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
-                            VkBuffer skinVBs[] = {packet.skinVertexBuffer};
-                            VkDeviceSize skinOffs[] = {0};
-                            vkCmdBindVertexBuffers(cmd, 1, 1, skinVBs, skinOffs);
-                        }
-                        if (packet.indexBuffer != VK_NULL_HANDLE)
-                            vkCmdBindIndexBuffer(cmd, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-                        struct ShadowPush { Matrix4 model; Matrix4 lvp; float alphaCutoff; uint32_t texSet; float _pad[2]; } push;
-                        push.model = packet.transform;
-                        push.lvp = storedLights_[i].lightViewProj[cascade];
-                        push.alphaCutoff = packet.material && packet.material->isTransparent() ? 0.5f : 0.0f;
-                        push.texSet = packet.diffuseTextureIndex;
-                        push._pad[0] = 0; push._pad[1] = 0;
-
-                        VkPipelineLayout pushLayout = isSkinned ? shadowSkinnedPipelineLayout_ : shadowPipelineLayout_;
-                        vkCmdPushConstants(cmd, pushLayout,
-                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                           0, sizeof(push), &push);
-
-                        if (packet.indexBuffer != VK_NULL_HANDLE)
-                            vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+                    if (isSkinned) {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipeline_);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
+                    } else {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
                     }
 
+                    VkBuffer vbs[] = {packet.vertexBuffer};
+                    VkDeviceSize off[] = {0};
+                    vkCmdBindVertexBuffers(cmd, 0, 1, vbs, off);
+                    if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
+                        VkBuffer skinVBs[] = {packet.skinVertexBuffer};
+                        VkDeviceSize skinOffs[] = {0};
+                        vkCmdBindVertexBuffers(cmd, 1, 1, skinVBs, skinOffs);
+                    }
+                    if (packet.indexBuffer != VK_NULL_HANDLE)
+                        vkCmdBindIndexBuffer(cmd, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+                    struct ShadowPush { Matrix4 model; Matrix4 lvp; float alphaCutoff; uint32_t texSet; float _pad[2]; } push;
+                    push.model = packet.transform;
+                    push.lvp = lvp;
+                    push.alphaCutoff = packet.material && packet.material->isTransparent() ? 0.5f : 0.0f;
+                    push.texSet = packet.diffuseTextureIndex;
+                    push._pad[0] = 0; push._pad[1] = 0;
+
+                    VkPipelineLayout pushLayout = isSkinned ? shadowSkinnedPipelineLayout_ : shadowPipelineLayout_;
+                    vkCmdPushConstants(cmd, pushLayout,
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                       0, sizeof(push), &push);
+
+                    if (packet.indexBuffer != VK_NULL_HANDLE)
+                        vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+                }
+            };
+
+            // Rozpoczyna rysowanie do jednej warstwy tablicy cieni (z wyczyszczeniem całej warstwy).
+            auto beginShadowLayer = [&](uint32_t layer) {
+                VkRenderingAttachmentInfo shadowDepthAttachment{};
+                shadowDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+                shadowDepthAttachment.imageView = shadowMapLayerViews_[layer];
+                shadowDepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                shadowDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                shadowDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                shadowDepthAttachment.clearValue.depthStencil = {1.0f, 0};
+
+                VkRenderingInfo shadowRenderingInfo{};
+                shadowRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+                shadowRenderingInfo.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+                shadowRenderingInfo.layerCount = 1;
+                shadowRenderingInfo.colorAttachmentCount = 0;
+                shadowRenderingInfo.pDepthAttachment = &shadowDepthAttachment;
+                vkCmdBeginRendering(cmd, &shadowRenderingInfo);
+            };
+
+            // Obszar rysowania: cała warstwa (słońce) albo ćwiartka atlasu (światło lokalne).
+            auto setShadowViewport = [&](int atlasSlot) {
+                float x = 0.0f, y = 0.0f, size = static_cast<float>(kShadowMapSize);
+                if (atlasSlot >= 0) {
+                    size *= 0.5f;
+                    x = static_cast<float>(atlasSlot % 2) * size;
+                    y = static_cast<float>(atlasSlot / 2) * size;
+                }
+                VkViewport viewport{x, y, size, size, 0.0f, 1.0f};
+                VkRect2D scissor{{static_cast<int32_t>(x), static_cast<int32_t>(y)},
+                                 {static_cast<uint32_t>(size), static_cast<uint32_t>(size)}};
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+            };
+
+            // 1. Kaskady słońca - każda w osobnej warstwie.
+            for (const ShadowCaster& caster : shadowCasters_) {
+                if (caster.atlasSlot >= 0) continue;
+                for (uint32_t cascade = 0; cascade < caster.cascadeCount; ++cascade) {
+                    beginShadowLayer(caster.layer + cascade);
+                    setShadowViewport(-1);
+                    drawShadowCasters(storedLights_[caster.lightIndex].lightViewProj[cascade], Vec3{}, 0.0f);
                     vkCmdEndRendering(cmd);
                 }
             }
+
+            // 2. Światła lokalne - wszystkie w jednej warstwie-atlasie, każde w swojej ćwiartce.
+            beginShadowLayer(kLocalShadowLayer);
+            for (const ShadowCaster& caster : shadowCasters_) {
+                if (caster.atlasSlot < 0) continue;
+                const LightData& l = storedLights_[caster.lightIndex];
+                setShadowViewport(caster.atlasSlot);
+                drawShadowCasters(l.lightViewProj[0], Vec3{l.position[0], l.position[1], l.position[2]}, l.params[2]);
+            }
+            vkCmdEndRendering(cmd);
 
             shadowBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             shadowBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1466,8 +1518,30 @@ public:
 
     void setAmbientStrength(float s) { ambientStrength_ = s; }
 
-    void setDirectionalShadowConfig(float halfSize, bool /*unused*/) {
-        dirShadowHalfSize_ = halfSize;
+    void setDirectionalShadowConfig(float halfSize, float startDistance, float splitLambda) {
+        dirShadowHalfSize_ = std::max(1.0f, halfSize);
+        dirShadowStart_ = std::max(0.0f, startDistance);
+        dirShadowLambda_ = std::clamp(splitLambda, 0.0f, 1.0f);
+    }
+
+    /**
+     * Podział kaskad (Practical Split Scheme): mieszanka podziału logarytmicznego (gęstsze kaskady
+     * blisko kamery) i równomiernego, sterowana lambda. Kaskady obejmują głębokości widoku
+     * [start, koniec], gdzie start = max(near kamery, dirShadowStart_) - kamera RTS widzi teren
+     * dopiero z pewnej odległości, więc nie marnujemy rozdzielczości na pustą przestrzeń.
+     * Wynik: dirShadowSplitDepths_[i] = dalsza granica kaskady i (głębokość w przestrzeni widoku).
+     */
+    void computeCascadeSplits(float nearDepth, float farDepth) {
+        const float start = std::max(nearDepth, std::min(dirShadowStart_, farDepth - 1.0f));
+        const float end = std::max(start + 1.0f, farDepth);
+        dirShadowSplitStart_ = start;
+        for (int i = 0; i < kShadowCascades; ++i) {
+            const float p = static_cast<float>(i + 1) / static_cast<float>(kShadowCascades);
+            const float logSplit = std::max(start, 0.1f) * std::pow(end / std::max(start, 0.1f), p);
+            const float uniformSplit = start + (end - start) * p;
+            dirShadowSplitDepths_[i] = dirShadowLambda_ * logSplit + (1.0f - dirShadowLambda_) * uniformSplit;
+        }
+        dirShadowSplitDepths_[kShadowCascades - 1] = end;
     }
 
     void setAmbientColor(float r, float g, float b) {
@@ -1486,7 +1560,7 @@ public:
             }
 
             auto& dst = storedLights_[storedLightCount_];
-            dst.position[3] = static_cast<float>(storedLightCount_ * kShadowCascades);
+            dst.position[3] = -1.0f;   // warstwę mapy cieni przydziela assignShadowSlots (co klatkę)
             dst.params[3] = 1.0f;
             dst.position[0] = src.position.x;
             dst.position[1] = src.position.y;
@@ -1524,6 +1598,47 @@ public:
     }
 
     uint32_t getLightCount() const { return storedLightCount_; }
+
+    /**
+     * Wybiera światła rzucające cień w tej klatce i przydziela im miejsce w tablicy map cieni:
+     *  - pierwsze światło kierunkowe (słońce) -> kaskady w warstwach 0..kShadowCascades-1,
+     *  - światła lokalne (reflektor, punktowe): do kLocalShadowSlots najbliższych kamerze, których zasięg
+     *    sięga w obszar cieni (odległość - zasięg < zasięg cieni) -> ćwiartki atlasu w warstwie kLocalShadowLayer.
+     * Pozostałe światła oświetlają scenę normalnie, ale bez cienia (position.w = -1).
+     */
+    void assignShadowSlots(const Vec3& cameraPos) {
+        shadowCasters_.clear();
+        struct Candidate { uint32_t index; float score; };
+        std::vector<Candidate> local;
+        bool sunAssigned = false;
+        for (uint32_t i = 0; i < storedLightCount_; ++i) {
+            LightData& l = storedLights_[i];
+            l.position[3] = -1.0f;
+            const int type = static_cast<int>(l.direction[3]);
+            if (type == 1) {
+                if (!sunAssigned) {
+                    sunAssigned = true;
+                    l.position[3] = 0.0f;
+                    l.params[3] = static_cast<float>(kShadowCascades);
+                    shadowCasters_.push_back({i, 0u, static_cast<uint32_t>(kShadowCascades), -1});
+                }
+                continue;
+            }
+            const float range = l.params[2];
+            if (range <= 0.0f) continue;
+            const Vec3 d{l.position[0] - cameraPos.x, l.position[1] - cameraPos.y, l.position[2] - cameraPos.z};
+            const float distanceToRange = std::sqrt(dot(d, d)) - range;   // < 0: kamera w zasięgu światła
+            if (distanceToRange > dirShadowHalfSize_) continue;             // światło za daleko - cień niewidoczny
+            local.push_back({i, distanceToRange});
+        }
+        std::sort(local.begin(), local.end(), [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
+        for (uint32_t slot = 0; slot < local.size() && slot < kLocalShadowSlots; ++slot) {
+            LightData& l = storedLights_[local[slot].index];
+            l.position[3] = static_cast<float>(kLocalShadowLayer);
+            l.params[3] = static_cast<float>(slot);
+            shadowCasters_.push_back({local[slot].index, kLocalShadowLayer, 1u, static_cast<int>(slot)});
+        }
+    }
     IRenderFeature* getFeature(const std::string& name) {
         for (auto& f : features_) {
             if (f->getName() == name) return f.get();
@@ -1645,9 +1760,17 @@ private:
         ubo.shadowsEnabled = shadowsEnabled_ ? 1u : 0u;
         ubo.ambientStrength = ambientStrength_;
         ubo.lightCount = std::min(storedLightCount_, (uint32_t)kMaxLights);
+        assignShadowSlots(view.cameraPosition);
         ubo.directionalShadowCascadeCount = kShadowCascades;
+        {
+            // Głębokości bliskiej i dalekiej płaszczyzny kamery (do podziału kaskad).
+            const auto corners = buildCameraFrustumCorners(view);
+            const float nearDepth = std::abs(transformPoint(view.view, corners[0]).z);
+            const float cameraFar = std::abs(transformPoint(view.view, corners[4]).z);
+            computeCascadeSplits(nearDepth, std::min(cameraFar, dirShadowHalfSize_));
+        }
         for (uint32_t i = 0; i < kShadowCascades; ++i) {
-            ubo.directionalShadowSplits[i] = directionalShadowSplits_[i] * dirShadowHalfSize_;
+            ubo.directionalShadowSplits[i] = dirShadowSplitDepths_[i];
         }
         std::memcpy(ubo.ambientColor, ambientColor_, sizeof(ambientColor_));
         ubo.ambientColor[3] = 1.0f;
@@ -1671,6 +1794,7 @@ private:
             
             if (type == 1) { // Directional
                 auto frustumCorners = buildCameraFrustumCorners(view);
+                const float nearDepth = std::abs(transformPoint(view.view, frustumCorners[0]).z);
                 for (int corner = 4; corner < 8; ++corner) {
                     const Vec3 ray = subtract(frustumCorners[corner], view.cameraPosition);
                     const Vec3 farViewPosition = transformPoint(view.view, frustumCorners[corner]);
@@ -1683,9 +1807,15 @@ private:
                             multiply(ray, dirShadowHalfSize_ / farViewDepth));
                     }
                 }
-                float previousSplit = 0.0f;
+                // Narożniki dalekiej płaszczyzny leżą teraz na głębokości farUsed; punkt na promieniu
+                // z parametrem t ma głębokość nearDepth + t * (farUsed - nearDepth).
+                const float farUsed = std::abs(transformPoint(view.view, frustumCorners[4]).z);
+                auto depthToT = [&](float depth) {
+                    return std::clamp((depth - nearDepth) / std::max(farUsed - nearDepth, 0.001f), 0.0f, 1.0f);
+                };
+                float previousSplit = depthToT(dirShadowSplitStart_);
                 for (uint32_t cascade = 0; cascade < kShadowCascades; ++cascade) {
-                    const float splitFar = directionalShadowSplits_[cascade];
+                    const float splitFar = depthToT(dirShadowSplitDepths_[cascade]);
                     l.lightViewProj[cascade] = buildDirectionalCascadeMatrix(frustumCorners, lDir, previousSplit, splitFar);
                     previousSplit = splitFar;
                 }
@@ -2022,13 +2152,17 @@ private:
                         VK_FORMAT_D32_SFLOAT,
                         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        shadowMapImage_, shadowMapMemory_, kMaxLights * kShadowCascades);
+                        shadowMapImage_, shadowMapMemory_, kShadowLayerCount);
 
         shadowMapView_ = vk::createImageView(device, shadowMapImage_, VK_FORMAT_D32_SFLOAT,
-                                              VK_IMAGE_ASPECT_DEPTH_BIT, 1, kMaxLights * kShadowCascades, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+                                              VK_IMAGE_ASPECT_DEPTH_BIT, 1, kShadowLayerCount, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
 
-        shadowMapLayerViews_.resize(kMaxLights * kShadowCascades);
-        for (uint32_t i = 0; i < kMaxLights * kShadowCascades; i++) {
+        LOG_INFO("Mapy cieni: {} warstw {}x{} (D32) = {} MB VRAM (kaskady słońca: {}, atlas świateł lokalnych: {} x {}^2)",
+                 kShadowLayerCount, kShadowMapSize, kShadowMapSize,
+                 static_cast<uint64_t>(kShadowLayerCount) * kShadowMapSize * kShadowMapSize * 4 / (1024 * 1024),
+                 kShadowCascades, kLocalShadowSlots, kShadowMapSize / 2);
+        shadowMapLayerViews_.resize(kShadowLayerCount);
+        for (uint32_t i = 0; i < kShadowLayerCount; i++) {
             shadowMapLayerViews_[i] = vk::createImageView(device, shadowMapImage_, VK_FORMAT_D32_SFLOAT,
                                                            VK_IMAGE_ASPECT_DEPTH_BIT, 1, 1, VK_IMAGE_VIEW_TYPE_2D);
             // Manually set the base array layer for each view
@@ -2098,7 +2232,7 @@ private:
         barrier.subresourceRange.baseMipLevel = 0;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = kMaxLights * kShadowCascades;
+        barrier.subresourceRange.layerCount = kShadowLayerCount;
 
         VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
@@ -2379,7 +2513,7 @@ private:
                 ci.imageType = VK_IMAGE_TYPE_2D;
                 ci.extent = {ext.width, ext.height, 1};
                 ci.mipLevels = 1; ci.arrayLayers = 1;
-                ci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+                ci.format = gbufferAttachmentFormat(a);
                 ci.tiling = VK_IMAGE_TILING_OPTIMAL;
                 ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
                 ci.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2399,14 +2533,14 @@ private:
                 vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
                 vi.image = gbufferImages_[a][f];
                 vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                vi.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+                vi.format = gbufferAttachmentFormat(a);
                 vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
                 vi.subresourceRange.levelCount = 1;
                 vi.subresourceRange.layerCount = 1;
                 vkCreateImageView(device, &vi, nullptr, &gbufferViews_[a][f]);
 
                 vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                                          gbufferImages_[a][f], VK_FORMAT_R16G16B16A16_SFLOAT,
+                                          gbufferImages_[a][f], gbufferAttachmentFormat(a),
                                           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
             }
         }
@@ -2503,12 +2637,12 @@ private:
         layoutInfo.pPushConstantRanges = &pushRange;
         vkCreatePipelineLayout(device, &layoutInfo, nullptr, &gbufferPipelineLayout_);
 
-        VkFormat gbufferFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
         VkFormat depthFmt = swapchain_->depthFormat();
         VkPipelineRenderingCreateInfo renderingInfo{};
         renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
         renderingInfo.colorAttachmentCount = 4;
-        VkFormat formats[4] = {gbufferFormat, gbufferFormat, gbufferFormat, gbufferFormat};
+        VkFormat formats[4] = {gbufferAttachmentFormat(0), gbufferAttachmentFormat(1),
+                               gbufferAttachmentFormat(2), gbufferAttachmentFormat(3)};
         renderingInfo.pColorAttachmentFormats = formats;
         renderingInfo.depthAttachmentFormat = depthFmt;
 
@@ -2639,12 +2773,12 @@ private:
         layoutInfo.pPushConstantRanges = &pushRange;
         vkCreatePipelineLayout(device, &layoutInfo, nullptr, &gbufferSkinnedPipelineLayout_);
 
-        VkFormat gbufferFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
         VkFormat depthFmt = swapchain_->depthFormat();
         VkPipelineRenderingCreateInfo renderingInfo{};
         renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
         renderingInfo.colorAttachmentCount = 4;
-        VkFormat formats[4] = {gbufferFormat, gbufferFormat, gbufferFormat, gbufferFormat};
+        VkFormat formats[4] = {gbufferAttachmentFormat(0), gbufferAttachmentFormat(1),
+                               gbufferAttachmentFormat(2), gbufferAttachmentFormat(3)};
         renderingInfo.pColorAttachmentFormats = formats;
         renderingInfo.depthAttachmentFormat = depthFmt;
 
@@ -3142,7 +3276,10 @@ private:
     float tessellationLevel_ = 4.0f;
     TextureFilter textureFilter_ = TextureFilter::Anisotropic16x;
     float dirShadowHalfSize_ = 100.0f;
-    std::array<float, kShadowCascades> directionalShadowSplits_ = {0.08f, 0.22f, 0.5f, 1.0f};
+    std::array<float, kShadowCascades> dirShadowSplitDepths_ = {50.0f, 150.0f, 400.0f, 1000.0f};
+    float dirShadowSplitStart_ = 0.0f;
+    float dirShadowStart_ = 0.0f;     // od jakiej głębokości widoku zaczynają się kaskady
+    float dirShadowLambda_ = 0.6f;    // 0 = podział równomierny, 1 = logarytmiczny
     bool cleanedUp_ = false;
     bool fogEnabled_ = false;
     float fogColor_[3] = {0.8f, 0.8f, 0.8f};
@@ -3154,6 +3291,7 @@ private:
     float windStrength_ = 0.3f;
 
     LightData storedLights_[kMaxLights] = {};
+    std::vector<ShadowCaster> shadowCasters_;   // światła rzucające cień w bieżącej klatce
     uint32_t storedLightCount_ = 0;
 
     static constexpr uint32_t kShadowMapSize = 2048;
@@ -3170,6 +3308,14 @@ private:
 
     // GBuffer
     static constexpr int kGBufferAttachments = 4;
+
+    // Format bufora G-Buffera. Kolor, normalna i materiał mieszczą się w 16-bit float, ale POZYCJA ŚWIATA
+    // (bufor 3) potrzebuje 32 bitów: half float ma tylko 11 bitów mantysy, więc przy współrzędnych
+    // rzędu 256-512 krok wynosi 0,25 jednostki. Cienie liczone z tak zaokrąglonej pozycji miały
+    // regularne paski (shadow acne) niezależnie od biasu.
+    static VkFormat gbufferAttachmentFormat(int attachment) {
+        return attachment == 3 ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R16G16B16A16_SFLOAT;
+    }
     VkImage gbufferImages_[kGBufferAttachments][kMaxFrames] = {};
     VkDeviceMemory gbufferMemories_[kGBufferAttachments][kMaxFrames] = {};
     VkImageView gbufferViews_[kGBufferAttachments][kMaxFrames] = {};
@@ -3254,7 +3400,9 @@ void Renderer::setTessellationLevel(float level) { impl_->setTessellationLevel(l
 float Renderer::getTessellationLevel() const { return impl_->getTessellationLevel(); }
 void Renderer::setTextureFilter(TextureFilter filter) { impl_->setTextureFilter(filter); }
 TextureFilter Renderer::getTextureFilter() const { return impl_->getTextureFilter(); }
-void Renderer::configureDirectionalShadow(float halfSize) { impl_->setDirectionalShadowConfig(halfSize, false); }
+void Renderer::configureDirectionalShadow(float halfSize, float startDistance, float splitLambda) {
+    impl_->setDirectionalShadowConfig(halfSize, startDistance, splitLambda);
+}
 void Renderer::setLightingEnabled(bool e) { impl_->setLightingEnabled(e); }
 bool Renderer::isLightingEnabled() const { return impl_->isLightingEnabled(); }
 void Renderer::setAmbientStrength(float s) { impl_->setAmbientStrength(s); }

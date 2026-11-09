@@ -59,6 +59,10 @@ bool SettlersApp::initialize() {
         if (what == "controls") openSubWindow(controlsWindow_, menuWindow_);
         if (what == "help") showHelp_ = true;
         if (what == "demo") startNewGame(true);
+        }
+        // Pomocnicze: SETTLERS_CAMERA=<odległość> ustawia odległość kamery (np. zbliżenie na zamek)
+        if (const char* camDist = std::getenv("SETTLERS_CAMERA")) {
+            cam_.setDistance(static_cast<float>(std::atof(camDist)));
     }
     if (const char* dbg = std::getenv("SETTLERS_DEBUG")) debugMode_ = std::clamp(std::atoi(dbg), 0, 2);
 
@@ -411,16 +415,52 @@ void SettlersApp::updateSky(float dt) {
     ocean_->setTime(world_->gameTime);
     if (sun_) {
         if (auto* light = sun_->getComponent<LightComponent>()) {
-            light->direction = skydome_->getSunDirection();
+            // Kierunek słońca zmieniamy skokowo (co ~0,5°), a nie w każdej klatce: każdy obrót światła
+            // przestawia siatkę tekseli mapy cieni, przez co krawędzie cieni "pełzały" i migały.
+            const Vec3 sunDir = skydome_->getSunDirection();
+            if (dot(sunDir, shadowSunDir_) < 0.99996f) {   // cos(0,5°)
+                shadowSunDir_ = sunDir;
+                light->direction = sunDir;
+            }
             light->color = skydome_->getSunColor();
             light->intensity = std::max(1.4f, skydome_->getSunIntensity());
         }
     }
+    updateShadowRange();
     const float amb = std::max(0.3f, skydome_->getAmbientStrength());
     const Vec3 ac = skydome_->getAmbientColor();
     engine_.setAmbientStrength(amb);
     engine_.setAmbientColor(ac.x, ac.y, ac.z);
     engine_.setFogColor(0.62f, 0.72f, 0.86f);
+}
+
+// Dopasowuje kaskady cieni do tego, co widzi kamera RTS. Kamera patrzy z góry pod kątem, więc najbliższy
+// widoczny teren leży daleko od niej (np. 200 jednostek) - kaskady zaczynamy dopiero tam, a kończymy przy
+// górnej krawędzi ekranu. Cała rozdzielczość mapy cieni trafia wtedy w widoczny obszar.
+// Wartości są zaokrąglane do 20 jednostek, żeby kaskady nie zmieniały się (i nie migały) przy każdym ruchu.
+void SettlersApp::updateShadowRange() {
+    if (!camera_) return;
+    const float halfFov = radians(camera_->fieldOfViewDegrees * 0.5f);
+    const float pitch = radians(cam_.pitch());
+    const float height = cam_.distance() * std::sin(pitch);   // wysokość kamery nad punktem skupienia
+
+    // Promień przez dolną krawędź ekranu: kąt pitch + halfFov w dół; głębokość = odległość * cos(halfFov).
+    const float nearDepth = height / std::sin(std::min(pitch + halfFov, radians(89.0f))) * std::cos(halfFov);
+    // Górna krawędź ekranu: przy płaskiej kamerze widać aż po horyzont - ograniczamy do 900.
+    const float upAngle = pitch - halfFov;
+    float farDepth = 900.0f;
+    if (upAngle > radians(4.0f)) farDepth = std::min(900.0f, height / std::sin(upAngle) * std::cos(halfFov) * 1.1f);
+
+    // Zapas na wzgórza i wysokie budynki (wieża ma ~34 j.), które sięgają bliżej kamery niż płaski teren.
+    float start = std::max(0.0f, nearDepth * 0.55f);
+    float end = std::max(start + 150.0f, farDepth);
+    start = std::floor(start / 20.0f) * 20.0f;
+    end = std::ceil(end / 20.0f) * 20.0f;
+    if (start != shadowStart_ || end != shadowEnd_) {
+        shadowStart_ = start;
+        shadowEnd_ = end;
+        engine_.configureDirectionalShadow(end, start, 0.5f);
+    }
 }
 
 // W menu kamera powoli obraca się wokół punktu na mapie.

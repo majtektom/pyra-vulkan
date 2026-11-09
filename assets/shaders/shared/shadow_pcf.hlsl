@@ -29,13 +29,45 @@ float sampleShadowCascade(Texture2DArray<float> shadowMaps,
         ? normalize(light.direction.xyz)
         : normalize(light.position.xyz - worldPos);
 
-    // Bias liczymy w przestrzeni głębokości, zamiast przesuwać próbkę po normalnej,
-    // co zmniejsza "peter-panning" i odrywanie cienia od obiektów.
+    uint shadowWidth = 0;
+    uint shadowHeight = 0;
+    uint shadowLayers = 0;
+    shadowMaps.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
+
+    float4x4 lightMatrix = light.lightViewProj[cascadeIndex];
     float ndotl = saturate(dot(N, L));
-    float bias = max(0.0008, 0.0025 * (1.0 - ndotl));
-    
+    float3 samplePos = worldPos;
+    float bias;
+
+    if (light.direction.w == 1.0)
+    {
+        // SŁOŃCE (rzut ortogonalny, kaskady).
+        // Rozmiar teksela mapy cieni w jednostkach świata - odczytany z macierzy kaskady.
+        // Wiersz 0 macierzy ortho*view to (1/r) * oś X światła, więc 1/|wiersz0| = r (połowa szerokości kaskady).
+        // Dla kaskad dalekich teksel jest duży, dla bliskich mały - bias musi się z nim skalować.
+        float rowLen = length(lightMatrix[0].xyz);
+        float texelWorld = (rowLen > 1e-6) ? 2.0 / (rowLen * float(shadowWidth)) : 0.05;
+
+        // Normal offset: próbkujemy mapę cieni z punktu odsuniętego od powierzchni wzdłuż normalnej
+        // o 1,5-4 teksele (więcej dla powierzchni ustawionych bokiem do światła). To usuwa
+        // "shadow acne" - paski, w których powierzchnia zacienia samą siebie.
+        float normalOffset = texelWorld * (1.5 + 2.5 * (1.0 - ndotl));
+        samplePos = worldPos + N * normalOffset;
+
+        // Bias głębokości w jednostkach teksela (wiersz 2 = skala głębokości NDC na jednostkę świata).
+        // Rośnie dla powierzchni ustawionych bokiem do światła, bo próbki PCF obok środka trafiają
+        // wtedy w wyraźnie inną głębokość powierzchni.
+        float slope = sqrt(max(1.0 - ndotl * ndotl, 0.0)) / max(ndotl, 0.2);   // tan(kąta padania), ograniczony
+        bias = texelWorld * (0.6 + 0.6 * slope) * length(lightMatrix[2].xyz);
+    }
+    else
+    {
+        // Reflektor / światło punktowe (rzut perspektywiczny): stały bias zależny od kąta padania.
+        bias = max(0.0008, 0.0025 * (1.0 - ndotl));
+    }
+
     // Przeliczenie pozycji świata piksela na przestrzeń projekcji światła (Light Space)
-    float4 shadowPos = mul(light.lightViewProj[cascadeIndex], float4(worldPos, 1.0));
+    float4 shadowPos = mul(lightMatrix, float4(samplePos, 1.0));
     float3 projCoords = shadowPos.xyz / shadowPos.w; // Dzielenie przez w (perspektywa)
     
     // Transformacja współrzędnych NDC [-1.0, 1.0] na zakres tekstury [0.0, 1.0]
@@ -45,16 +77,31 @@ float sampleShadowCascade(Texture2DArray<float> shadowMaps,
     if (projCoords.z > 1.0) return 1.0;
     if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 1.0;
 
-    uint shadowWidth = 0;
-    uint shadowHeight = 0;
-    uint shadowLayers = 0;
-    shadowMaps.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
-
     float shadow = 0.0;
     float totalWeight = 0.0;
     float2 texelSize = 1.0 / float2(shadowWidth, shadowHeight);
-    float filterRadius = 1.5;
-    float layer = light.position.w + cascadeIndex;  // Indeks warstwy w tablicy tekstur przypisany do tego światła
+    float filterRadius = 1.0;   // odstęp próbek w tekselach (sampler sprzętowo uśrednia jeszcze 2x2)
+    float layer;
+    float2 uv = projCoords.xy;
+    float2 uvMin = float2(0.0, 0.0);
+    float2 uvMax = float2(1.0, 1.0);
+
+    if (light.direction.w == 1.0)
+    {
+        // Słońce: każda kaskada ma własną warstwę (position.w = pierwsza warstwa).
+        layer = light.position.w + cascadeIndex;
+    }
+    else
+    {
+        // Światło lokalne: ćwiartka atlasu (params.w = numer ćwiartki 0..3: kolumna = slot % 2, wiersz = slot / 2).
+        layer = light.position.w;
+        uint slot = (uint)round(light.params.w);
+        float2 atlasOrigin = float2(float(slot % 2u), float(slot / 2u)) * 0.5;
+        uv = atlasOrigin + projCoords.xy * 0.5;
+        // Próbki PCF nie mogą wyjść poza ćwiartkę (tam jest cień innego światła).
+        uvMin = atlasOrigin + texelSize;
+        uvMax = atlasOrigin + 0.5 - texelSize;
+    }
 
     // 3x3 tent PCF daje miększą krawędź bez dużego wzrostu kosztu.
     for (int x = -1; x <= 1; ++x)
@@ -65,7 +112,7 @@ float sampleShadowCascade(Texture2DArray<float> shadowMaps,
             float weight = (2.0 - abs((float)x)) * (2.0 - abs((float)y));
             shadow += shadowMaps.SampleCmpLevelZero(
                 shadowSampler,
-                float3(projCoords.xy + offset, layer),
+                float3(clamp(uv + offset, uvMin, uvMax), layer),
                 projCoords.z - bias) * weight;
             totalWeight += weight;
         }
@@ -80,8 +127,12 @@ float sampleShadowPcf(Texture2DArray<float> shadowMaps,
                       float3 worldPos,
                       float3 N)
 {
+    // Światło bez przydzielonej mapy cieni (za daleko lub poza limitem świateł z cieniem) - oświetla bez cienia.
+    if (light.position.w < 0.0) return 1.0;
+
     uint cascadeIndex = 0u;
-    uint cascadeCount = max(1u, (uint)round(light.params.w));
+    // params.w: dla słońca liczba kaskad, dla świateł lokalnych numer ćwiartki atlasu (kaskada zawsze jedna).
+    uint cascadeCount = (light.direction.w == 1.0) ? max(1u, (uint)round(light.params.w)) : 1u;
     float viewDepth = 0.0;
 
     if (light.direction.w == 1.0 && directionalShadowCascadeCount > 1u)

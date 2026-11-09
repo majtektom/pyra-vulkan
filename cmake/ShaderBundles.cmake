@@ -1,3 +1,9 @@
+# Pliki dołączane przez #include w shaderach HLSL (wspólne funkcje: cienie, światła, PBR, G-Buffer).
+# CMake nie analizuje #include w shaderach, więc ich zmiana musi jawnie przebudować shadery HLSL.
+file(GLOB SHADER_HLSL_INCLUDES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/../assets/shaders/shared/*.hlsl"
+    "${CMAKE_CURRENT_LIST_DIR}/../assets/shaders/*/*_common.hlsl")
+
 function(add_shader_bundle bundle_name)
     set(bundle_output_dir ${SHADER_BINARY_ROOT}/${bundle_name})
     file(MAKE_DIRECTORY ${bundle_output_dir})
@@ -91,14 +97,14 @@ function(add_shader_bundle bundle_name)
                 add_custom_command(
                     OUTPUT ${output_file}
                     COMMAND ${DXC_EXECUTABLE} -spirv -T ${hlsl_profile} -E ${shader_entry_point} -I ${SHADER_SOURCE_ROOT} -Fo ${output_file} ${input_file}
-                    DEPENDS ${input_file}
+                    DEPENDS ${input_file} ${SHADER_HLSL_INCLUDES}
                     VERBATIM
                 )
             elseif(GLSLANG_VALIDATOR_EXECUTABLE)
                 add_custom_command(
                     OUTPUT ${output_file}
                     COMMAND ${GLSLANG_VALIDATOR_EXECUTABLE} -V -D -I${SHADER_SOURCE_ROOT} ${input_file} -S ${shader_stage} -e ${shader_entry_point} -o ${output_file}
-                    DEPENDS ${input_file}
+                    DEPENDS ${input_file} ${SHADER_HLSL_INCLUDES}
                     VERBATIM
                 )
             else()

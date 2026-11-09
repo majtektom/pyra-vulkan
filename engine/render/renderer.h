@@ -114,7 +114,10 @@ public:
     TextureFilter getTextureFilter() const;
 
     // Konfiguracja ortogonalnej przestrzeni cieniowania światła kierunkowego.
-    void configureDirectionalShadow(float halfSize);
+    // Cienie słońca: halfSize = zasięg cieni (głębokość widoku), startDistance = od jakiej głębokości
+    // zaczynają się kaskady (np. kamera RTS widzi teren dopiero z daleka), splitLambda = rozkład kaskad
+    // (0 = równomierny, 1 = logarytmiczny - gęściej blisko kamery).
+    void configureDirectionalShadow(float halfSize, float startDistance = 0.0f, float splitLambda = 0.6f);
 
     // Włączanie/wyłączanie oświetlenia dynamicznego na scenie.
     void setLightingEnabled(bool enabled);

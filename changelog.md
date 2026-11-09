@@ -14,6 +14,13 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Mapy cieni: 5 warstw zamiast 64 (ok. 80 MB zamiast ok. 1 GB VRAM) - kaskady tylko dla słońca (pierwsze światło
+   kierunkowe), światła lokalne w atlasie 2x2 (1024^2 każde, do 4 najbliższych kamerze świateł, których zasięg
+   sięga obszaru cieni); przy cieniu światła lokalnego rysowane są tylko obiekty w jego zasięgu
+ - Cienie: bufor pozycji świata w G-Bufferze w 32-bit float (half float dawał krok 0,25 j. przy współrzędnych ~300
+   i regularne paski "shadow acne"); normal offset i bias skalowane rozmiarem teksela kaskady; podział kaskad
+   "practical split" + `configureDirectionalShadow(halfSize, startDistance, splitLambda)`; zmiana wspólnych plików
+   shaderów (`shared/*.hlsl`, `*_common.hlsl`) przebudowuje teraz zależne shadery
  - `Engine::mouseDown/mousePressed/mouseReleased`, obsługa środkowego przycisku myszy, `Engine::measureText`
 
 ## 0.6.0
