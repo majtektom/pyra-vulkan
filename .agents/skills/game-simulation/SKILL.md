@@ -60,6 +60,11 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
 - ODRZUCONY model: tragarz na każdym odcinku drogi przekazujący towar z flagi na flagę - na krótkich odcinkach
   stoją bezczynni, na ruchliwych się nie wyrabiają, a routing "najkrótszą drogą" potrafi kierować towar na odcinek
   bez tragarza (wszystko staje).
+- Dostawy opłacaj także towarem leżącym na flagach warsztatów (rezerwacja na fladze), nie tylko z magazynów -
+  inaczej przy pełnych magazynach powstaje zakleszczenie: deski stoją na fladze tartaku, magazyn pełen kamienia,
+  budowa czeka na deski "z magazynu". Do tego limity zapasu per towar (powyżej limitu nie wnosić do magazynu).
+- Komunikat o przestoju musi podawać PRAWDZIWĄ przyczynę (pełne magazyny / limit / brak tragarzy) - "za mało
+  tragarzy" przy 28 wolnych tragarzach myli gracza.
 - Surowce "na koncie" = suma zapasów magazynów (licz zawsze z magazynów, nie trzymaj osobnego licznika).
 - Łańcuchy produkcji jako DANE: tabela (zachowanie pracownika, towar wyjściowy, towary wejściowe, czas) zamiast
   `if (typ == ...)` w automacie stanów. Warsztat zamawia wejścia z magazynów do małego bufora (zlecenia dostaw),
@@ -72,6 +77,11 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
 - Własność punktu: spośród budynków wojskowych, w których zasięgu leży, wygrywa ten, w którym leży "najgłębiej"
   (promień − odległość). Granica wypada w połowie nakładania się zasięgów - brak ziemi niczyjej i wspólnej.
 - Przejęty teren: budynki cywilne/place budowy i drogi/flagi przeciwnika na nim płoną.
+- Budynki wojskowe z załogą: żołnierz w środku = osobny stan (`Garrison`, ukryty, pomijany przy zaznaczaniu,
+  rozpychaniu i szukaniu celów) + `homeTower`. Wieżę wroga się szturmuje, nie burzy: obrońca wychodzi, pustą
+  wieżę przejmuje pierwszy przy drzwiach (zmiana frakcji budynku, flagi, dróg; przeliczenie terytorium).
+  Po zmianie właściciela pozostali napastnicy MUSZĄ porzucić cel (cel już swój) - inaczej "wywołują obrońcę"
+  i wyciągają z wieży własnego zdobywcę.
 - Granicę rysuj: zewnętrzną po okręgach, a linię z wrogiem - bisekcją na siatce właścicieli.
 
 ## 7. AI
@@ -81,7 +91,8 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
 - AI używa tych samych rozkazów i zasad co gracz (koszty, drogi, tragarze). Każdy postawiony budynek od razu
   łączy drogą (`autoConnectFlag`) i okresowo naprawia brakujące połączenia (limit prób na krok).
 - Fale ataku: wymagany rozmiar armii rośnie z numerem fali, kilku obrońców zostaje.
-- Drobny dochód bierny dla AI kompensuje prostotę decyzji - zależny od poziomu trudności.
+- AI bez dochodu biernego (gracz zgłosił: "wróg ma żołnierzy bez kuźni") - ta sama ekonomia co gracz; poziom trudności
+  = zapasy startowe (bez broni), gotowe budynki na starcie, tempo i rozmiar fal.
 
 ## 8. Diagnostyka (zrób ją od razu, nie po fakcie)
 

@@ -130,11 +130,11 @@ void World::separateUnits(float dt) {
     const size_t n = units.size();
     for (size_t i = 0; i < n; ++i) {
         Unit& a = units[i];
-        if (!a.alive) continue;
+        if (!a.alive || a.state == UnitState::Garrison) continue;   // załoga wieży jest w środku
         const float ra = unitDef(a.type).radius;
         for (size_t j = i + 1; j < n; ++j) {
             Unit& b = units[j];
-            if (!b.alive) continue;
+            if (!b.alive || b.state == UnitState::Garrison) continue;
             const float rb = unitDef(b.type).radius;
             const float dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
             const float minD = (ra + rb) * 0.9f;
@@ -205,7 +205,8 @@ void World::separateUnits(float dt) {
     // Wyjątek: rolnik pracujący na polu wewnątrz obrysu swojej farmy.
     for (size_t i = 0; i < n; ++i) {
         Unit& u = units[i];
-        if (!u.alive || nav_.isWalkableWorld(u.pos.x, u.pos.z) || isWorkerOnFarm(u, static_cast<int>(i))) continue;
+        if (!u.alive || u.state == UnitState::Garrison || nav_.isWalkableWorld(u.pos.x, u.pos.z) ||
+            isWorkerOnFarm(u, static_cast<int>(i))) continue;
         // Idących nie wypychamy: ścieżka w linii prostej może ściąć róg zablokowanej komórki,
         // a wypychanie walczyłoby z ruchem (jednostka dreptałaby w miejscu).
         if (u.pathIndex < u.path.size()) continue;

@@ -132,6 +132,16 @@ constexpr int kGoodsPerTrip = 2;           // pracownik warsztatu przynosi 2 tow
 constexpr int kCarrierLoad = 2;            // tragarz przenosi do 2 towarów tego samego rodzaju naraz
 constexpr float kRoadSpeedBonus = 1.5f;    // po ubitej drodze każdy idzie szybciej
 
+// Limity zapasu: ile sztuk towaru tragarze wnoszą do magazynów. Powyżej limitu towar zostaje na fladze
+// warsztatu (produkcja staje, gdy flaga się zapełni) i trafia prosto do odbiorców - magazyny nie zapychają się
+// jednym towarem. Gracz zmienia limity w oknie Gospodarka (I).
+constexpr int kNoStockLimit = 999;         // "bez limitu"
+constexpr int kStockLimitStep = 10;
+constexpr int kStockLimitMax = 200;        // powyżej - bez limitu
+int defaultStockLimit(CarryType t);
+using StockLimits = std::array<int, kResourceSlots>;
+StockLimits defaultStockLimits();
+
 // --- Budynki ---
 enum class BuildingType {
     Castle = 0, House, Woodcutter, Quarry, Farm, Barracks, Tower, Forester, Mine, Warehouse,

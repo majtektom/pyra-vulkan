@@ -96,12 +96,13 @@ void SettlersApp::drawTopBar(Engine& e) {
         text(value, x, y, 0.6f, c);
         x += engine_.measureText(value, 0.6f) + 26.0f;
     };
-    // Najważniejsze towary (pełna lista: okno gospodarki - I).
-    item("Deski:", std::to_string(fs.res[CarryType::Planks]), {0.95f, 0.75f, 0.45f, 1.0f});
-    item("Kamień:", std::to_string(fs.res[CarryType::Stone]), {0.85f, 0.85f, 0.9f, 1.0f});
-    item("Drewno:", std::to_string(fs.res[CarryType::Wood]), {0.8f, 0.6f, 0.4f, 1.0f});
-    item("Żywność:", std::to_string(fs.res.food()), {0.95f, 0.9f, 0.4f, 1.0f});
-    item("Broń:", std::to_string(fs.res[CarryType::Weapons]), {0.85f, 0.9f, 1.0f, 1.0f});
+    // Najważniejsze towary (pełna lista: okno gospodarki - I): magazyny + wolne towary na flagach.
+    const Resources have = world_->spendable(kPlayer);
+    item("Deski:", std::to_string(have[CarryType::Planks]), {0.95f, 0.75f, 0.45f, 1.0f});
+    item("Kamień:", std::to_string(have[CarryType::Stone]), {0.85f, 0.85f, 0.9f, 1.0f});
+    item("Drewno:", std::to_string(have[CarryType::Wood]), {0.8f, 0.6f, 0.4f, 1.0f});
+    item("Żywność:", std::to_string(have.food()), {0.95f, 0.9f, 0.4f, 1.0f});
+    item("Broń:", std::to_string(have[CarryType::Weapons]), {0.85f, 0.9f, 1.0f, 1.0f});
     const int used = w.storageUsedOf(kPlayer), cap = w.storageCapacityOf(kPlayer);
     item("Magazyn:", std::to_string(used) + "/" + std::to_string(cap),
          used * 10 >= cap * 9 ? Color{1.0f, 0.5f, 0.4f, 1.0f} : Color{0.85f, 0.85f, 0.75f, 1.0f});
@@ -188,7 +189,14 @@ void SettlersApp::drawWorldBars() {
         } else if (needsRoad && !w.buildingLinked(b)) {
             label = b.type == BuildingType::Warehouse ? "! brak drogi do zamku" : "! brak drogi do magazynu";
         } else if (b.outputBlocked) {
-            label = "! pełna flaga - za mało tragarzy";
+            switch (w.flagBlockReason(b.flag)) {
+            case World::FlagBlock::StorageFull: label = "! pełna flaga - magazyny pełne"; break;
+            case World::FlagBlock::StockLimit:
+                label = "pełna flaga - limit zapasu";
+                color = {0.85f, 0.85f, 0.7f, 1.0f};   // ustawienie gracza, nie problem
+                break;
+            default: label = "! pełna flaga - za mało tragarzy"; break;
+            }
         } else if (b.lacksResources) {
             label = b.type == BuildingType::Woodcutter ? "! brak drzew" : "! brak kamienia";
         } else if (b.inputStarved && b.worker >= 0) {
@@ -238,7 +246,7 @@ void SettlersApp::drawMinimap() {
         gui_->addOverlayRect(mx - s * 0.5f, my - s * 0.5f, s, s, {fc.x, fc.y, fc.z, 1.0f}, 0.96f);
     }
     for (const auto& u : w.units) {
-        if (!u.alive) continue;
+        if (!u.alive || u.state == UnitState::Garrison) continue;
         float mx, my;
         toMap(u.pos, mx, my);
         const Vec3 fc = u.faction == kPlayer ? Vec3{0.5f, 0.75f, 1.0f} : Vec3{1.0f, 0.45f, 0.4f};
@@ -333,7 +341,10 @@ void SettlersApp::drawSelectionPanel() {
                 }
             }
         } else if (b.type == BuildingType::Barracks) {
-            status = "Kolejka: " + std::to_string(b.trainQueue.size());
+            status = "Kolejka: " + std::to_string(b.trainQueue.size()) +
+                     (b.autoTrain ? "   Auto: " + std::to_string(b.swordShare) + "% mieczników, " +
+                                        std::to_string(100 - b.swordShare) + "% łuczników"
+                                  : "   Auto: wył.");
             if (!b.trainQueue.empty() && !b.trainPaid) {
                 resLine = w.flagConnected(b.flag) ? "Czeka, aż tragarze dowiozą koszt szkolenia"
                                                   : "Brak drogi do magazynu - koszt szkolenia nie dotrze";
@@ -346,6 +357,16 @@ void SettlersApp::drawSelectionPanel() {
             }
         } else if (def.popBonus > 0) {
             status = "Mieszkańcy: +" + std::to_string(def.popBonus);
+        } else if (World::garrisonCapacity(b.type) > 0 && b.constructed) {
+            const int g = w.garrisonOf(selectedBuilding_), cap = World::garrisonCapacity(b.type);
+            status = "Załoga: " + std::to_string(g) + "/" + std::to_string(cap) + (g > 0 ? "   strzela" : "   PUSTA - nie strzela");
+            if (b.faction == kPlayer) {
+                resLine = g > 0 ? "PPM z zaznaczonym wojskiem: dołóż żołnierzy" : "Pusta wieża - wróg może ją zdobyć! Obsadź (PPM z wojskiem)";
+                resColor = g > 0 ? Color{0.8f, 0.9f, 1.0f, 1.0f} : Color{1.0f, 0.55f, 0.35f, 1.0f};
+            } else {
+                resLine = g > 0 ? "Wroga załoga - szturmuj, obrońcy wyjdą do walki" : "Pusta wieża - żołnierz, który do niej wejdzie, zdobędzie ją";
+                resColor = {1.0f, 0.85f, 0.5f, 1.0f};
+            }
         } else if (def.attackRange > 0.0f) {
             status = "Zasięg strzału: " + std::to_string(static_cast<int>(def.attackRange));
         }
@@ -390,7 +411,15 @@ void SettlersApp::drawSelectionPanel() {
                 resLine = "Brak drogi do magazynu - towary nie dotrą (T: droga, albo 'Połącz drogą')";
                 resColor = {1.0f, 0.5f, 0.35f, 1.0f};
             } else if (b.outputBlocked) {
-                resLine = "Flaga pełna - produkcja wstrzymana, czeka na tragarza";
+                switch (w.flagBlockReason(b.flag)) {
+                case World::FlagBlock::StorageFull:
+                    resLine = "Flaga pełna - magazyny pełne: zbuduj Magazyn albo obniż limity zapasu (I)";
+                    break;
+                case World::FlagBlock::StockLimit:
+                    resLine = "Flaga pełna - zapas osiągnął limit (I); towar idzie prosto do odbiorców";
+                    break;
+                default: resLine = "Flaga pełna - produkcja wstrzymana, czeka na tragarza (I: tragarze)"; break;
+                }
                 resColor = {1.0f, 0.75f, 0.4f, 1.0f};
             }
         }
@@ -465,13 +494,17 @@ void SettlersApp::drawSelectionPanel() {
 void SettlersApp::drawHelp() {
     // Dwie kolumny sterowania (wspólna lista z oknem "Sterowanie") + zasady gry
     // Poniżej strefy komunikatów (do 6 linii pod górnym paskiem)
-    const float w = std::min(screenW_ - 40.0f, 1100.0f), h = 560.0f;
+    const float w = std::min(screenW_ - 40.0f, 1100.0f), h = 640.0f;
     const float x = screenW_ * 0.5f - w * 0.5f, y = std::max(kTopBarH + 10.0f, std::min(kTopBarH + 180.0f, screenH_ - h - 20.0f));
     gui_->addOverlayRect(x - 3, y - 3, w + 6, h + 6, {0.55f, 0.45f, 0.25f, 0.95f}, 0.94f);
     gui_->addOverlayRect(x, y, w, h, {0.08f, 0.07f, 0.05f, 0.94f}, 0.935f);
     const Color headerC{1.0f, 0.9f, 0.6f, 1.0f};
     const size_t total = std::size(kControls);
-    const size_t split = 17;   // początek sekcji BUDOWA - druga kolumna
+    // Druga kolumna zaczyna się od sekcji BUDOWA (szukamy nagłówka, żeby dopisanie wiersza nie psuło podziału).
+    size_t split = 0;
+    for (size_t i = 0; i < total; ++i) {
+        if (kControls[i].key[0] == '\0' && std::string(kControls[i].desc) == "BUDOWA") split = i;
+    }
     const float colW = w * 0.5f;
     for (int col = 0; col < 2; ++col) {
         float ly = y + 30.0f;
@@ -493,11 +526,13 @@ void SettlersApp::drawHelp() {
                 "Osadnicy sami budują i pracują. Zamek przyjmuje nowych za żywność.",
                 "Warsztaty odkładają towary na fladze (max 8) - połącz je drogą z magazynem.",
                 "Tragarze niosą towary całą trasą do magazynu i materiały na budowy (I: ilu).",
-                "Po drogach chodzi się szybciej. Surowce liczą się dopiero w magazynie.",
-                "Zamek i Magazyn mieszczą po 200 towarów. Magazyn stawiaj blisko produkcji.",
+                "Po drogach chodzi się szybciej. Towar z flagi warsztatu idzie też prosto do odbiorcy.",
+                "Zamek i Magazyn mieszczą po 200 towarów. Limity zapasu (I) chronią przed zapchaniem.",
                 "Domy zwiększają limit ludności. Wieże poszerzają terytorium.",
+                "Wieża strzela tylko z załogą; pustą wieżę wroga zdobywa żołnierz.",
                 "Budowa i naprawy: deski z Tartaku (kłody od Drwala) i kamień.",
                 "Kopalnie zjadają żywność; Huta + Kuźnia robią broń dla Koszar.",
+                "Koszary: Auto-rekrutacja szkoli sama (proporcja mieczników -/+).",
                 "Jednostki poza walką leczą się - najszybciej przy zamku i koszarach.",
                 "Zniszcz wrogi zamek, by wygrać!",
             };
@@ -543,8 +578,8 @@ void SettlersApp::drawRoadPreview(const InputSnapshot& in) {
 
 // Położenie panelu gospodarki (wspólne dla rysowania i okienka z przyciskami tragarzy).
 void SettlersApp::economyPanelRect(float& x, float& y, float& w, float& h) const {
-    w = 640.0f;
-    h = 470.0f;
+    w = 680.0f;
+    h = 500.0f;
     x = screenW_ * 0.5f - w * 0.5f;
     y = std::max(kTopBarH + 10.0f, screenH_ * 0.5f - h * 0.5f - 40.0f);
 }
@@ -590,29 +625,48 @@ void SettlersApp::drawEconomy() {
     float ly = y + 32.0f;
     text("GOSPODARKA", x + 18.0f, ly, 0.65f, head, 0.93f);
     ly += 30.0f;
-    // 12 towarów w dwóch kolumnach: nazwa, w magazynach, na flagach, niesione.
+    // 12 towarów w dwóch kolumnach: nazwa, w magazynach, na flagach, niesione, limit zapasu (przyciski - / +).
+    const FactionState& fsl = w.factions[kPlayer];
+    const float mx = static_cast<float>(engine_.input().mouseX), my = static_cast<float>(engine_.input().mouseY);
+    limitButtons_.clear();
     for (int col = 0; col < 2; ++col) {
-        const float cx = x + 18.0f + col * 312.0f;
+        const float cx = x + 18.0f + col * 330.0f;
         text("Towar", cx, ly, 0.44f, dim, 0.93f);
-        text("magazyn", cx + 100.0f, ly, 0.44f, dim, 0.93f);
-        text("flagi", cx + 175.0f, ly, 0.44f, dim, 0.93f);
-        text("w drodze", cx + 225.0f, ly, 0.44f, dim, 0.93f);
+        text("magazyn", cx + 92.0f, ly, 0.44f, dim, 0.93f);
+        text("flagi", cx + 158.0f, ly, 0.44f, dim, 0.93f);
+        text("w drodze", cx + 200.0f, ly, 0.44f, dim, 0.93f);
+        text("limit", cx + 268.0f, ly, 0.44f, dim, 0.93f);
     }
     ly += 22.0f;
     const int rows = (kGoodTypeCount + 1) / 2;
     for (int t = 1; t <= kGoodTypeCount; ++t) {
         const auto g = static_cast<CarryType>(t);
         const int col = (t - 1) / rows, row = (t - 1) % rows;
-        const float cx = x + 18.0f + col * 312.0f, ry = ly + row * 20.0f;
+        const float cx = x + 18.0f + col * 330.0f, ry = ly + row * 20.0f;
         gui_->addOverlayRect(cx, ry - 10.0f, 9.0f, 9.0f, goodColor(g), 0.932f);
         text(goodName(g), cx + 14.0f, ry, 0.48f, body, 0.93f);
-        text(std::to_string(stored[g]), cx + 100.0f, ry, 0.48f, {0.7f, 1.0f, 0.7f, 1.0f}, 0.93f);
-        text(std::to_string(onFlags[g]), cx + 175.0f, ry, 0.48f, body, 0.93f);
-        text(std::to_string(carried[g]), cx + 225.0f, ry, 0.48f, body, 0.93f);
+        text(std::to_string(stored[g]), cx + 92.0f, ry, 0.48f, {0.7f, 1.0f, 0.7f, 1.0f}, 0.93f);
+        text(std::to_string(onFlags[g]), cx + 158.0f, ry, 0.48f, body, 0.93f);
+        text(std::to_string(carried[g]), cx + 200.0f, ry, 0.48f, body, 0.93f);
+        // Limit: [-] wartość [+]; osiągnięty limit na żółto.
+        const int lim = fsl.stockLimit[t];
+        const bool reached = lim < kNoStockLimit && stored[g] >= lim;
+        for (int k = 0; k < 2; ++k) {
+            const float bx = cx + (k == 0 ? 248.0f : 300.0f), by = ry - 13.0f;
+            const bool hover = mx >= bx && mx <= bx + 15.0f && my >= by && my <= by + 15.0f;
+            gui_->addOverlayRect(bx, by, 15.0f, 15.0f, hover ? Color{0.45f, 0.38f, 0.22f, 1.0f} : Color{0.25f, 0.21f, 0.13f, 1.0f}, 0.932f);
+            gui_->addOverlayTextCentered(k == 0 ? "-" : "+", bx + 7.5f, by + 12.0f, 0.46f, head, 0.93f);
+            limitButtons_.push_back({bx, by, 15.0f, g, k == 0 ? -1 : +1});
+        }
+        gui_->addOverlayTextCentered(lim >= kNoStockLimit ? "bez" : std::to_string(lim), cx + 282.0f, ry, 0.46f,
+                                     reached ? Color{1.0f, 0.85f, 0.4f, 1.0f} : body, 0.93f);
     }
     ly += rows * 20.0f;
-    text("Wydawać można tylko towary z magazynów.", x + 18.0f, ly + 4.0f, 0.44f, dim, 0.93f);
-    ly += 34.0f;
+    text("Wydawać można tylko towary z magazynów i flag. Powyżej limitu tragarze nie wnoszą towaru do magazynu -",
+         x + 18.0f, ly + 4.0f, 0.42f, dim, 0.93f);
+    text("zostaje na fladze warsztatu i idzie prosto do odbiorców (magazyny nie zapychają się jednym towarem).",
+         x + 18.0f, ly + 20.0f, 0.42f, dim, 0.93f);
+    ly += 48.0f;
 
     // Magazyny
     text("MAGAZYNY  " + std::to_string(w.storageUsedOf(kPlayer)) + " / " + std::to_string(w.storageCapacityOf(kPlayer)), x + 18.0f,

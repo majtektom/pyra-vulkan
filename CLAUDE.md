@@ -75,6 +75,7 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_HOVERBAR=<n>` | kursor nad n-tym przyciskiem paska budowy (0-8, -1 droga) - do zrzutów karty informacji |
 | `SETTLERS_CAMERA=<odl>` | odległość kamery (do zrzutów ekranu) |
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
+| `SETTLERS_SELECT=barracks` | z `OPEN=game`: gotowe koszary obok zamku, zaznaczone (zrzut okna koszar) |
 
 Weryfikacja zmian: build bez ostrzeżeń → `SETTLERS_UITEST=1` (kilka razy, mapy są losowe) →
 `SETTLERS_AUTOPLAY=900 SETTLERS_SPEED=16` → zrzut ekranu (`spectacle -a -b -n -o plik.png` po uruchomieniu gry w tle).

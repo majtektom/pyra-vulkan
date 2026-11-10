@@ -60,14 +60,21 @@ Osadnicy sami budują i pracują, a gospodarka opiera się na **łańcuchach pro
 drwal → tartak (kłody → deski, materiał budowlany), kamieniarz i kopalnia kamienia, farma → młyn → piekarnia
 (zboże → mąka → chleb), rybak i myśliwy (ryby, mięso), kopalnie węgla i rudy (w górach, zjadają żywność) →
 huta (żelazo) → kuźnia (broń potrzebna do szkolenia żołnierzy); leśniczy sadzi las. Domy podnoszą limit ludności,
-koszary szkolą mieczników i łuczników, wieże poszerzają terytorium i strzelają do wrogów; wieża przy granicy odbiera wrogowi pas ziemi
+koszary szkolą mieczników i łuczników (ręcznie albo **Auto-rekrutacją** z ustawioną proporcją), wieże poszerzają terytorium i strzelają do wrogów; wieża przy granicy odbiera wrogowi pas ziemi
 (granica wypada w połowie nakładania się zasięgów), a budynki na przejętym terenie płoną.
+Wieża strzela tylko wtedy, gdy ma **załogę** (do 3 żołnierzy; wolni żołnierze obsadzają puste wieże sami, PPM na
+własnej wieży wysyła zaznaczonych). Wrogiej wieży się nie burzy — **szturmuje się ją** (PPM): obrońcy wychodzą do
+walki, a żołnierz, który wejdzie do pustej wieży, przejmuje ją razem z otaczającym terenem.
 
 Gospodarka opiera się na **drogach i tragarzach**: warsztat odkłada towary na fladze przed wejściem (najwyżej 8 —
 gdy nikt ich nie odbiera, produkcja staje). Drogi łączą budynki z magazynami i przyspieszają marsz. Wolni tragarze
 (wspólna pula — liczbę ustawia się w oknie **Gospodarka** (I) przyciskami −/+ albo trybem Auto) niosą towar całą trasą
 z warsztatu do najbliższego magazynu z miejscem, a w drugą stronę — materiały z magazynu na place budowy i koszt
-szkolenia do koszar (budowa i szkolenie postępują w miarę dostaw). Surowce można wydać dopiero wtedy, gdy są
+szkolenia do koszar (budowa i szkolenie postępują w miarę dostaw). Dostawa może też wziąć towar prosto z flagi
+warsztatu (np. deski z tartaku na budowę) - działa to nawet przy pełnych magazynach. W oknie Gospodarka każdy towar
+ma **limit zapasu** (−/+, domyślnie limitowane są surowce i półprodukty: drewno 40, kamień 60, zboże/mąka/węgiel/
+ruda/żelazo po 20): powyżej limitu tragarze nie wnoszą towaru do magazynu, więc magazyny nie zapychają się jednym
+towarem, a warsztat z pełną flagą czeka, aż ktoś zużyje jego wyroby. Surowce można wydać dopiero wtedy, gdy są
 w magazynie; zamek i Magazyn mieszczą po 200 towarów, więc Magazyny warto stawiać blisko produkcji. Okno Gospodarka
 pokazuje towary w magazynach, na flagach i w drodze, zapełnienie magazynów, tragarzy i wstrzymane warsztaty.
 Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.

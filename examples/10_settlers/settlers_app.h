@@ -166,6 +166,8 @@ inline const ControlLine kControls[] = {
     {"Ctrl + PPM", "marsz bojowy (atak na napotkanych wrogów)"},
     {"PPM na minimapie", "marsz wojska we wskazane miejsce"},
     {"H", "stój (przerwanie rozkazu)"},
+    {"PPM na własnej wieży", "obsadzenie wieży (załoga do 3, wieża strzela tylko z załogą)"},
+    {"PPM na wrogiej wieży", "szturm: obrońcy wychodzą, pustą wieżę zdobywa żołnierz"},
     {"", "BUDOWA"},
     {"1 - 9", "Dom, Drwal, Leśniczy, Kamieniarz, Kopalnia, Farma, Koszary, Wieża, Magazyn"},
     {"pasek na dole", "pozostałe: Tartak, Młyn, Piekarnia, Rybak, Myśliwy, kopalnie, Huta, Kuźnia"},
@@ -230,7 +232,9 @@ inline const char* stateText(const Unit& u, const World& w) {
         return "Pracuje";
     }
     case UnitState::ReturnHome: return "Niesie surowiec";
-    case UnitState::Attack: return "Walczy";
+    case UnitState::Attack: return u.homeTower >= 0 ? "Broni wieży" : "Walczy";
+    case UnitState::GoGarrison: return "Idzie obsadzić wieżę";
+    case UnitState::Garrison: return "W załodze wieży";
     case UnitState::GoToRoad:
         if (u.jobFlag >= 0) return "Tragarz - idzie po towar do warsztatu";
         if (u.jobOrder >= 0) return "Tragarz - idzie do magazynu po materiały";
@@ -397,6 +401,13 @@ private:
     // Akcje zaznaczonego budynku
     void trainSelected(UnitType type);
     void demolishSelected();
+    // Przycisk "Wyprowadź załogę" (zaznaczona własna wieża).
+    void releaseGarrisonSelected();
+    // Koszary: włączenie rekrutacji automatycznej i zmiana udziału mieczników (krok 10%).
+    void toggleAutoTrainSelected();
+    void changeSwordShareSelected(int delta);
+    // Okna przy lewej krawędzi (koszary, akcje) jedno nad drugim, nad paskiem budowy.
+    void layoutSideWindows();
     // Pokazuje okna koszar/akcji tylko dla zaznaczonego budynku gracza; koloruje przyciski budowy.
     void updateContextWindows();
 
@@ -448,6 +459,10 @@ private:
     // Przyciski liczby tragarzy (okienko pod panelem gospodarki).
     void changeCarriers(int delta);
     void toggleCarrierAuto();
+    // Limit zapasu towaru: krok kStockLimitStep, powyżej kStockLimitMax - "bez limitu".
+    void changeStockLimit(CarryType good, int delta);
+    // Kliknięcie w przycisk limitu (true = obsłużone).
+    bool clickLimitButton(int mx, int my);
     // Podgląd trasy budowanej drogi.
     void drawRoadPreview(const InputSnapshot& in);
     static float length2(const Vec3& v) { return dot(v, v); }
@@ -503,8 +518,11 @@ private:
     void repairHealResourceTest();
     void mountainBuildingsTest();
     void territoryCaptureTest();
+    void towerAssaultTest();
     void economyRoadTest();
     void productionChainTest();
+    void storageJamTest();
+    void autoRecruitTest();
     void showcaseBuildings();
     bool constructionStressTest();
     // Log stanu partii w trybie SETTLERS_AUTOPLAY i zakończenie po zadanym czasie.
@@ -558,6 +576,13 @@ private:
     bool mouseMoved_ = false;                 // przewijanie krawędzią dopiero po ruchu myszy
     bool showHelp_ = false;
     bool showEconomy_ = false;                // okno gospodarki (I)
+    // Przyciski -/+ limitów zapasu w oknie gospodarki (prostokąty z ostatniego rysowania).
+    struct LimitButton {
+        float x = 0, y = 0, size = 0;
+        CarryType good = CarryType::None;
+        int delta = 0;
+    };
+    std::vector<LimitButton> limitButtons_;
     int selectedFlag_ = -1;
 
     // --- Budowa dróg ---
@@ -583,6 +608,8 @@ private:
     GuiButton* btnSpeed_ = nullptr;
     GuiStaticText* gameOverText_ = nullptr;
     GuiStaticText* gameOverStats_ = nullptr;
+    GuiButton* btnAutoTrain_ = nullptr;       // "Auto-rekrutacja" w oknie koszar
+    GuiButton* btnTrainRatio_ = nullptr;      // napis z proporcją mieczników / łuczników
     GuiButton* btnConnect_ = nullptr;         // "Połącz drogą" w oknie akcji budynku
     GuiWindow* carriersWindow_ = nullptr;     // przyciski -/+/Auto liczby tragarzy (przy oknie gospodarki)
     GuiButton* btnCarrierAuto_ = nullptr;

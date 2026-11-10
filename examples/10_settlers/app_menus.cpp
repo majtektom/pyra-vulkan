@@ -75,13 +75,19 @@ void SettlersApp::setupGui() {
     // Panel budowy to dolny pasek rysowany jako HUD (app_buildbar.cpp) - bez okna GUI.
 
     // Koszary
-    barracksWindow_ = gui_->addWindow("Koszary", 0, 0, 250, 96);
+    barracksWindow_ = gui_->addWindow("Koszary", 0, 0, 250, 176);
     makeButton(barracksWindow_, "sword", 8, 8, 234, 34,
                std::string("Miecznik (") + costText(unitDef(UnitType::Swordsman).cost) + ")",
                [this]() { trainSelected(UnitType::Swordsman); });
     makeButton(barracksWindow_, "archer", 8, 52, 234, 34,
                std::string("Łucznik (") + costText(unitDef(UnitType::Archer).cost) + ")",
                [this]() { trainSelected(UnitType::Archer); });
+    // Rekrutacja automatyczna: przełącznik i proporcja (- / +: udział mieczników co 10%).
+    btnAutoTrain_ = makeButton(barracksWindow_, "autotrain", 8, 96, 234, 34, "Auto-rekrutacja: wył.",
+                               [this]() { toggleAutoTrainSelected(); });
+    makeButton(barracksWindow_, "ratio_minus", 8, 138, 40, 32, "-", [this]() { changeSwordShareSelected(-10); });
+    btnTrainRatio_ = makeButton(barracksWindow_, "ratio", 52, 138, 146, 32, "", []() {});
+    makeButton(barracksWindow_, "ratio_plus", 202, 138, 40, 32, "+", [this]() { changeSwordShareSelected(+10); });
 
     // Tragarze: liczba ustawiana przez gracza (widoczne razem z oknem gospodarki - klawisz I)
     carriersWindow_ = gui_->addWindow("Tragarze", 0, 0, 236, 44);
@@ -91,13 +97,14 @@ void SettlersApp::setupGui() {
     carriersWindow_->setVisible(false);
 
     // Akcje budynku
-    actionsWindow_ = gui_->addWindow("Akcje", 0, 0, 250, 134);
+    actionsWindow_ = gui_->addWindow("Akcje", 0, 0, 250, 176);
     makeButton(actionsWindow_, "demolish", 8, 8, 234, 34, "Zburz (Del, zwrot 50%)", [this]() { demolishSelected(); });
     btnConnect_ = makeButton(actionsWindow_, "connect", 8, 50, 234, 34, "Połącz drogą z magazynem",
                              [this]() { connectSelected(); });
     makeButton(actionsWindow_, "roadfrom", 8, 92, 234, 34, "Droga od budynku (T)", [this]() {
         if (selectedBuilding_ >= 0) beginRoad(world_->buildings[selectedBuilding_].flag);
     });
+    makeButton(actionsWindow_, "release", 8, 134, 234, 34, "Wyprowadź załogę (wieża)", [this]() { releaseGarrisonSelected(); });
 
     layoutGui();
 }
@@ -339,8 +346,7 @@ void SettlersApp::layoutGui() {
     settingsWindow_->setPosition(w / 2 - settingsWindow_->width() / 2, std::max(40, h / 2 - settingsWindow_->height() / 2));
     controlsWindow_->setPosition(w / 2 - controlsWindow_->width() / 2, std::max(40, h / 2 - controlsWindow_->height() / 2));
     gameOverWindow_->setPosition(w / 2 - 190, h / 2 - 100);
-    barracksWindow_->setPosition(14, h - 96 - 14 - 148);
-    actionsWindow_->setPosition(14, h - 134 - 14);
+    layoutSideWindows();
 }
 
 } // namespace settlers

@@ -78,7 +78,7 @@ void World::updateHealing(Unit& u, float dt) {
     if (u.hp >= maxHp) return;
     // Leczenie dopiero po 8 s bez obrażeń i poza walką
     if (gameTime - u.lastDamagedTime < 8.0f || u.state == UnitState::Attack) return;
-    float rate = 0.015f;   // 1,5% PŻ/s w terenie
+    float rate = u.state == UnitState::Garrison ? 0.06f : 0.015f;   // załoga wieży leczy się jak przy zamku
     for (const auto& b : buildings) {
         if (!b.alive || !b.constructed || b.faction != u.faction) continue;
         if (b.type != BuildingType::Castle && b.type != BuildingType::Barracks) continue;
@@ -174,6 +174,13 @@ void World::updateFactions(float dt) {
                 fs.popCapMsgTime = gameTime;
                 pushMessage("Limit populacji osiągnięty - zbuduj Dom", {1.0f, 0.85f, 0.4f, 1.0f});
             }
+        }
+
+        // Puste wieże dostają załogę z wolnych żołnierzy.
+        fs.garrisonTimer -= dt;
+        if (fs.garrisonTimer <= 0.0f) {
+            fs.garrisonTimer = 2.0f;
+            autoGarrison(f);
         }
 
         fs.jobTimer -= dt;
@@ -430,6 +437,15 @@ void World::updateBuildings(float dt) {
             checkWorkResources(b);
         }
 
+        // Rekrutacja automatyczna (co 1 s)
+        if (b.type == BuildingType::Barracks && b.constructed && b.autoTrain) {
+            b.autoTrainTimer -= dt;
+            if (b.autoTrainTimer <= 0.0f) {
+                b.autoTrainTimer = 1.0f;
+                autoRecruit(static_cast<int>(i));
+            }
+        }
+
         // Szkolenie wojska
         if (b.type == BuildingType::Barracks && !b.trainQueue.empty()) {
             const UnitType type = b.trainQueue.front();
@@ -465,7 +481,8 @@ void World::updateBuildings(float dt) {
         }
 
         // Obrona: wieże i zamek strzelają do wrogów
-        if (def.attackRange > 0.0f) {
+        // Wieża strzela tylko z załogą (zamek zawsze).
+        if (def.attackRange > 0.0f && (garrisonCapacity(b.type) == 0 || garrisonOf(static_cast<int>(i)) > 0)) {
             b.attackCooldown -= dt;
             if (b.attackCooldown <= 0.0f) {
                 const int t = findEnemyUnitNear(b.faction, b.pos, def.attackRange);
@@ -493,7 +510,7 @@ void World::syncVisuals(float dt) {
             const WorkKind kind = productionDef(buildings[u.building].type).kind;
             insideMine = kind == WorkKind::Mine || kind == WorkKind::Process;
         }
-        u.entity->setActive(!insideMine);
+        u.entity->setActive(!insideMine && u.state != UnitState::Garrison);   // załoga jest w wieży
         u.pos.y = heightAt(u.pos.x, u.pos.z);
         auto& tr = u.entity->transform();
         Vec3 p = u.pos;
@@ -518,7 +535,7 @@ void World::syncVisuals(float dt) {
         tr.rotation = rot;
 
         if (u.ring) {
-            u.ring->setActive(u.selected);
+            u.ring->setActive(u.selected && u.state != UnitState::Garrison);
             if (u.selected) {
                 const float s = unitDef(u.type).radius * 1.6f;
                 u.ring->transform().position = {u.pos.x, u.pos.y + 0.5f, u.pos.z};

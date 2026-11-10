@@ -56,10 +56,13 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
     factions = {};
     using C = CarryType;
     const Resources normalStart{{C::Planks, 60}, {C::Stone, 40}, {C::Wood, 10}, {C::Bread, 20}, {C::Fish, 15}, {C::Weapons, 4}};
-    const Resources richStart{{C::Planks, 110}, {C::Stone, 80}, {C::Wood, 20}, {C::Bread, 40}, {C::Fish, 30}, {C::Weapons, 8}};
+    // Bogaty start: więcej materiałów i żywności, ale broń ta sama - wojsko trzeba wyprodukować (kuźnia).
+    const Resources richStart{{C::Planks, 110}, {C::Stone, 80}, {C::Wood, 20}, {C::Bread, 40}, {C::Fish, 30}, {C::Weapons, 4}};
     Resources startRes[kFactionCount] = {normalStart, normalStart};
     if (diff == Difficulty::Hard) startRes[kEnemy] = richStart;
     if (diff == Difficulty::Easy) startRes[kPlayer] = richStart;
+    // Przeciwnik nie dostaje broni na start - każdego żołnierza ponad oddział startowy musi wykuć w kuźni.
+    startRes[kEnemy][C::Weapons] = 0;
 
     for (int f = 0; f < kFactionCount; ++f) {
         const int castle = placeBuilding(BuildingType::Castle, snapToGrid(startPos[f]), f, true);
@@ -69,8 +72,7 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
         for (int i = 0; i < 6; ++i) {
             spawnUnit(UnitType::Settler, f, add(door, {randf(-8, 8), 0.0f, randf(2, 10)}));
         }
-        const int swords = (f == kEnemy && diff == Difficulty::Hard) ? 4 : 2;
-        for (int i = 0; i < swords; ++i) {
+        for (int i = 0; i < 2; ++i) {   // ten sam oddział startowy dla obu stron
             spawnUnit(UnitType::Swordsman, f, add(door, {-10.0f + i * 5.0f, 0.0f, 16.0f}));
         }
         spawnUnit(UnitType::Archer, f, add(door, {12.0f, 0.0f, 14.0f}));

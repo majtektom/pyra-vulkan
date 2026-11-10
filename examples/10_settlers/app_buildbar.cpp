@@ -141,7 +141,7 @@ void SettlersApp::refreshBuildBar() {
     buildBar_.setVisible(buildBarVisible());
     buildBar_.layout(screenW_, screenH_);
     if (!world_) return;
-    const Resources& res = world_->factions[kPlayer].res;
+    const Resources res = world_->spendable(kPlayer);   // magazyny + wolne towary na flagach
     for (int i = 0; i < kBuildMenuSize; ++i) {
         GuiToolbar::Item* it = buildBar_.item(i);
         if (!it) continue;

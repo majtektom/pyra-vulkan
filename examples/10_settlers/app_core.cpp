@@ -57,14 +57,27 @@ bool SettlersApp::initialize() {
         const std::string what = open;
         if (what == "settings") openSubWindow(settingsWindow_, menuWindow_);
         if (what == "controls") openSubWindow(controlsWindow_, menuWindow_);
-        if (what == "help") showHelp_ = true;
-        if (what == "economy") showEconomy_ = true;
         if (what == "demo") startNewGame(true);
-        if (what == "game") startNewGame();
+        if (what == "game" || what == "economy" || what == "help") startNewGame();
+        if (what == "economy") showEconomy_ = true;   // okno gospodarki w trakcie partii
+        if (what == "help") showHelp_ = true;
         // SETTLERS_PLACE=<n> (z OPEN=game): od razu tryb stawiania n-tego budynku z paska (kursor na środku ekranu)
         if (const char* place = std::getenv("SETTLERS_PLACE"); place && gameStarted_) {
             beginPlacement(kBuildMenu[std::clamp(std::atoi(place), 0, kBuildMenuSize - 1)]);
         }
+        }
+        // SETTLERS_SELECT=barracks (z OPEN=game): gotowe koszary obok zamku, zaznaczone (zrzuty okna koszar)
+        if (const char* sel = std::getenv("SETTLERS_SELECT"); sel && gameStarted_ && std::string(sel) == "barracks") {
+            const Vec3 home = world_->buildings[world_->factions[kPlayer].castle].pos;
+            for (float r = 45.0f; r < 150.0f && selectedBuilding_ < 0; r += 8.0f) {
+                for (int k = 0; k < 24 && selectedBuilding_ < 0; ++k) {
+                    const float a = static_cast<float>(k) * 2.0f * PI / 24.0f;
+                    const Vec3 p = world_->snapToGrid(add(home, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                    if (!world_->canPlace(BuildingType::Barracks, p, kPlayer)) continue;
+                    selectedBuilding_ = world_->placeBuilding(BuildingType::Barracks, p, kPlayer, true);
+                    cam_.moveTo(p);
+                }
+            }
         }
         if (std::getenv("SETTLERS_SHOWCASE")) {
             if (!gameStarted_) startNewGame();

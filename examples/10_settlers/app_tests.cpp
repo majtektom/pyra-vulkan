@@ -333,6 +333,69 @@ void SettlersApp::territoryCaptureTest() {
     uiCheck("po zburzeniu wieży teren wraca do wroga", w.territoryOwnerAt(housePos) == kEnemy);
 }
 
+// Szturm wieży: wrogi żołnierz obsadza wieżę stojącą między zamkami; trzech mieczników gracza atakuje -
+// obrońca wychodzi z wieży, ginie, a pierwszy napastnik przy drzwiach przejmuje wieżę razem z terenem.
+void SettlersApp::towerAssaultTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    for (size_t i = 0; i < w.units.size(); ++i) {   // tylko nasz obrońca po stronie wroga
+        if (w.units[i].alive && w.units[i].faction == kEnemy && w.units[i].type != UnitType::Settler) {
+            w.debugKillUnit(static_cast<int>(i));
+        }
+    }
+    const Vec3 pc = w.buildings[w.factions[kPlayer].castle].pos;
+    const Vec3 ec = w.buildings[w.factions[kEnemy].castle].pos;
+    Vec3 dir = subtract(ec, pc);
+    dir.y = 0.0f;
+    dir = normalize(dir);
+    Vec3 spot{};
+    bool found = false;
+    // Szukamy w środkowej części odcinka zamek-zamek (mapy są losowe, więc zakres względem ich odległości),
+    // coraz dalej w bok od prostej łączącej zamki.
+    const float span = distanceXZ(pc, ec);
+    for (int k = 0; k <= 16 && !found; ++k) {
+        const int side = (k % 2 == 0) ? k / 2 : -(k + 1) / 2;   // 0, -1, 1, -2, 2...
+        for (float d = span * 0.3f; d < span * 0.7f && !found; d += 12.0f) {
+            const int kk = side;
+            const Vec3 p = w.snapToGrid(add(add(pc, multiply(dir, d)), multiply(Vec3{-dir.z, 0.0f, dir.x}, kk * 15.0f)));
+            if (w.nav().isAreaFree(p.x - 9, p.z - 9, p.x + 9, p.z + 9) && w.nav().sameRegion(p, w.buildings[w.factions[kPlayer].castle].door()) &&
+                w.heightAt(p.x, p.z) > kWaterLevel + 3.0f && w.heightAt(p.x, p.z) < kMountainLevel) {
+                spot = p;
+                found = true;
+            }
+        }
+    }
+    if (!found) {
+        LOG_INFO("[uitest] szturm: brak miejsca na wieżę (zamki {:.0f} j. od siebie) - test pominięty", span);
+        return;
+    }
+    const int tower = w.placeBuilding(BuildingType::Tower, spot, kEnemy, true);
+    const int defender = w.debugSpawnUnit(UnitType::Swordsman, kEnemy, w.buildings[tower].door());
+    w.commandGarrison({defender}, tower);
+    for (int i = 0; i < 300 && w.garrisonOf(tower) == 0; ++i) w.update(0.1f);
+    uiCheck("żołnierz obsadza wieżę", w.garrisonOf(tower) == 1);
+
+    std::vector<int> attackers;
+    const Vec3 start = add(spot, multiply(dir, -45.0f));
+    for (int k = 0; k < 3; ++k) attackers.push_back(w.debugSpawnUnit(UnitType::Swordsman, kPlayer, add(start, {k * 4.0f, 0.0f, 0.0f})));
+    w.commandAttackBuilding(attackers, tower);
+    bool sally = false;
+    float t = 0.0f;
+    while (t < 150.0f && w.buildings[tower].faction != kPlayer) {
+        w.update(0.1f);
+        t += 0.1f;
+        sally = sally || (w.units[defender].alive && w.units[defender].state == UnitState::Attack);
+    }
+    LOG_INFO("[uitest] szturm: po {:.0f} s właściciel wieży {}, załoga {}, obrońca {}, PŻ wieży {:.0f}", t,
+             factionName(w.buildings[tower].faction), w.garrisonOf(tower), w.units[defender].alive ? "żyje" : "poległ",
+             w.buildings[tower].hp);
+    uiCheck("obrońca wychodzi z wieży do walki", sally);
+    uiCheck("wieża zdobyta szturmem (nie zburzona)", w.buildings[tower].alive && w.buildings[tower].faction == kPlayer);
+    uiCheck("zdobywca wchodzi do załogi", w.garrisonOf(tower) >= 1);
+    for (int i = 0; i < 5; ++i) w.update(0.1f);
+    uiCheck("teren wokół zdobytej wieży należy do gracza", w.territoryOwnerAt(spot) == kPlayer);
+}
+
 // Transport towarów (wspólna pula tragarzy):
 //  1. drwal bez drogi zapełnia flagę (kFlagCapacity) i wstrzymuje produkcję,
 //  2. droga do zamku (autoConnectFlag) - tragarze niosą drewno całą trasą do zamku,
@@ -385,6 +448,8 @@ void SettlersApp::economyRoadTest() {
             w.buildings[wc].outputBlocked && w.flags[wcFlag].goods.size() + kGoodsPerTrip > static_cast<size_t>(kFlagCapacity));
 
     // 2. Droga do zamku. Zamek opróżniamy - warsztaty z wcześniejszych testów też dowożą do niego towary.
+    //    Limit zapasu drewna wyłączony (test transportu, limity sprawdza storageJamTest).
+    fs.stockLimit[static_cast<int>(CarryType::Wood)] = kNoStockLimit;
     w.debugSetStock(kPlayer, Resources{});
     const int producedBefore = w.buildings[wc].produced;
     std::string reason;
@@ -469,6 +534,185 @@ void SettlersApp::economyRoadTest() {
     uiCheck("przy pełnym zamku towary trafiają do Magazynu", storeConnected && w.buildings[store].stock[CarryType::Wood] > 0);
     uiCheck("zamek nie przekracza pojemności", w.buildings[castle].stock.total() <= storageCapacity(BuildingType::Castle));
     uiCheck("surowce gracza = suma magazynów", w.factions[kPlayer].res.total() == w.storageUsedOf(kPlayer));
+    fs.stockLimit = defaultStockLimits();
+}
+
+// Zapchane magazyny (zgłoszenie gracza: magazyny pełne kamienia, deski tylko na fladze tartaku, nic nie da się
+// zbudować):
+//  1. dostawy biorą towar prosto z flagi warsztatu - dom zostaje ukończony mimo pełnych magazynów,
+//  2. towary na flagach liczą się do "stać nas" (pasek budowy),
+//  3. limit zapasu: towaru powyżej limitu tragarze nie wnoszą do magazynu (zostaje na fladze, przyczyna "limit"),
+//  4. przyciski limitu: krok 10, powyżej 200 - bez limitu.
+void SettlersApp::storageJamTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    FactionState& fs = w.factions[kPlayer];
+    const Vec3 c = w.buildings[fs.castle].pos;
+    for (int i = 0; i < 6; ++i) w.debugSpawnUnit(UnitType::Settler, kPlayer, w.buildings[fs.castle].door());
+    auto findSpot = [&](BuildingType type, Vec3& out) {
+        for (float r = 40.0f; r < 170.0f; r += 6.0f) {
+            for (int k = 0; k < 40; ++k) {
+                const float a = static_cast<float>(k) * 2.0f * PI / 40.0f + r * 0.013f;
+                const Vec3 p = w.snapToGrid(add(c, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                if (w.canPlace(type, p, kPlayer)) {
+                    out = p;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    // Wszystkie magazyny gracza pełne kamienia.
+    auto fillStores = [&]() {
+        for (auto& b : w.buildings) {
+            if (b.alive && b.faction == kPlayer && storageCapacity(b.type) > 0) b.stock = Resources{{CarryType::Stone, storageCapacity(b.type)}};
+        }
+        w.refreshFactionResources();
+    };
+    fillStores();
+
+    Vec3 sawSpot, houseSpot;
+    if (!findSpot(BuildingType::Sawmill, sawSpot)) {
+        uiCheck("jest miejsce na tartak do testu pełnych magazynów", false);
+        return;
+    }
+    const int saw = w.placeBuilding(BuildingType::Sawmill, sawSpot, kPlayer, true);
+    w.autoConnectFlag(w.buildings[saw].flag);
+    const int planksNeeded = buildingDef(BuildingType::House).cost[CarryType::Planks];
+    Flag& sawFlag = w.flags[w.buildings[saw].flag];
+    for (int k = 0; k < planksNeeded; ++k) sawFlag.goods.push_back(CarryType::Planks);
+    w.update(0.1f);
+    uiCheck("deski na fladze liczą się do dostępnych towarów", w.spendable(kPlayer)[CarryType::Planks] >= planksNeeded &&
+                                                                    w.factions[kPlayer].res[CarryType::Planks] == 0);
+    uiCheck("przyczyna czekania desek: magazyny pełne", w.flagBlockReason(w.buildings[saw].flag) == World::FlagBlock::StorageFull);
+
+    if (findSpot(BuildingType::House, houseSpot)) {
+        const int house = w.placeBuilding(BuildingType::House, houseSpot, kPlayer, false);
+        w.autoConnectFlag(w.buildings[house].flag);
+        for (int i = 0; i < 3000 && !w.buildings[house].constructed; ++i) w.update(0.1f);
+        LOG_INFO("[uitest] pełne magazyny: dom {}, deski na fladze tartaku {}, magazyny {}/{}",
+                 w.buildings[house].constructed ? "ukończony" : "NIE ukończony", w.flags[w.buildings[saw].flag].goods.size(),
+                 w.storageUsedOf(kPlayer), w.storageCapacityOf(kPlayer));
+        uiCheck("przy pełnych magazynach deski idą z flagi tartaku prosto na budowę", w.buildings[house].constructed);
+    } else {
+        uiCheck("jest miejsce na dom do testu pełnych magazynów", false);
+    }
+
+    // 3. Limit zapasu: puste magazyny, limit desek 0 -> deski zostają na fladze.
+    for (auto& b : w.buildings) {
+        if (b.alive && b.faction == kPlayer && storageCapacity(b.type) > 0) b.stock = Resources{};
+    }
+    w.refreshFactionResources();
+    fs.stockLimit[static_cast<int>(CarryType::Planks)] = 0;
+    // Tragarze, którzy już nieśli deski do magazynu (przydział sprzed limitu), kończą kurs - potem zerujemy deski.
+    for (int i = 0; i < 300; ++i) w.update(0.1f);
+    for (auto& b : w.buildings) {
+        if (b.alive && b.faction == kPlayer && storageCapacity(b.type) > 0) b.stock[CarryType::Planks] = 0;
+    }
+    w.refreshFactionResources();
+    Flag& sf = w.flags[w.buildings[saw].flag];
+    sf.goods.clear();
+    for (int k = 0; k < 4; ++k) sf.goods.push_back(CarryType::Planks);   // tartak może dorobić więcej (drewno z flag drwali)
+    for (int i = 0; i < 600; ++i) w.update(0.1f);
+    const int planksLeft = static_cast<int>(std::count(w.flags[w.buildings[saw].flag].goods.begin(),
+                                                       w.flags[w.buildings[saw].flag].goods.end(), CarryType::Planks));
+    LOG_INFO("[uitest] limit desek 0: na fladze {}, w magazynach {}", planksLeft, w.factions[kPlayer].res[CarryType::Planks]);
+    // Deski mogą zabrać odbiorcy (dostawy z flagi) - ważne, że żadna nie trafiła do magazynu.
+    uiCheck("towar powyżej limitu nie trafia do magazynu", w.factions[kPlayer].res[CarryType::Planks] == 0);
+    uiCheck("przyczyna czekania: limit zapasu",
+            planksLeft == 0 || w.flagBlockReason(w.buildings[saw].flag) == World::FlagBlock::StockLimit);
+    fs.stockLimit[static_cast<int>(CarryType::Planks)] = 10;
+    for (int i = 0; i < 900; ++i) w.update(0.1f);
+    LOG_INFO("[uitest] limit desek 10: w magazynach {}", w.factions[kPlayer].res[CarryType::Planks]);
+    uiCheck("po podniesieniu limitu tragarze zanoszą towar do magazynu", w.factions[kPlayer].res[CarryType::Planks] >= std::min(planksLeft, 4));
+
+    // 4. Przyciski limitu
+    fs.stockLimit[static_cast<int>(CarryType::Planks)] = kNoStockLimit;
+    changeStockLimit(CarryType::Planks, -1);
+    const int a = fs.stockLimit[static_cast<int>(CarryType::Planks)];
+    changeStockLimit(CarryType::Planks, -1);
+    const int b = fs.stockLimit[static_cast<int>(CarryType::Planks)];
+    changeStockLimit(CarryType::Planks, +1);
+    changeStockLimit(CarryType::Planks, +1);
+    uiCheck("przyciski limitu: bez -> 200 -> 190, 200 + 10 -> bez",
+            a == kStockLimitMax && b == kStockLimitMax - kStockLimitStep && fs.stockLimit[static_cast<int>(CarryType::Planks)] == kNoStockLimit);
+    fs.stockLimit = defaultStockLimits();
+}
+
+// Rekrutacja automatyczna koszar (zgłoszenie gracza: dużo broni, a nie da się wyklikać szkolenia):
+//  1. okno koszar widoczne po zaznaczeniu, nad oknem akcji, oba nad paskiem budowy (nic się nie zasłania),
+//  2. auto 50%: kolejka uzupełnia się sama, powstają miecznicy i łucznicy,
+//  3. auto 100%: same miecznicy.
+void SettlersApp::autoRecruitTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    FactionState& fs = w.factions[kPlayer];
+    const Vec3 c = w.buildings[fs.castle].pos;
+    int bar = -1;
+    for (float r = 45.0f; r < 170.0f && bar < 0; r += 6.0f) {
+        for (int k = 0; k < 40 && bar < 0; ++k) {
+            const float a = static_cast<float>(k) * 2.0f * PI / 40.0f;
+            const Vec3 p = w.snapToGrid(add(c, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+            if (w.canPlace(BuildingType::Barracks, p, kPlayer)) bar = w.placeBuilding(BuildingType::Barracks, p, kPlayer, true);
+        }
+    }
+    if (bar < 0) {
+        uiCheck("jest miejsce na koszary do testu rekrutacji", false);
+        return;
+    }
+    w.autoConnectFlag(w.buildings[bar].flag);
+    // Miejsce w limicie ludności: usuwamy wojsko z wcześniejszych testów i podnosimy limit domami.
+    for (size_t i = 0; i < w.units.size(); ++i) {
+        if (w.units[i].alive && w.units[i].faction == kPlayer && w.units[i].type != UnitType::Settler) w.debugKillUnit(static_cast<int>(i));
+    }
+    for (int k = 0; k < 4; ++k) {
+        for (float r = 40.0f; r < 200.0f; r += 9.0f) {
+            const float a = static_cast<float>(k) * 1.7f + r * 0.05f;
+            const Vec3 p = w.snapToGrid(add(c, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+            if (w.canPlace(BuildingType::House, p, kPlayer)) {
+                w.placeBuilding(BuildingType::House, p, kPlayer, true);
+                break;
+            }
+        }
+    }
+    w.debugSetStock(kPlayer, Resources{{CarryType::Weapons, 40}, {CarryType::Bread, 40}, {CarryType::Fish, 40}, {CarryType::Planks, 60}});
+
+    // 1. Okna
+    selectedBuilding_ = bar;
+    updateContextWindows();
+    const bool visible = barracksWindow_->isVisible() && actionsWindow_->isVisible();
+    const bool stacked = barracksWindow_->y() + barracksWindow_->height() <= actionsWindow_->y();
+    const bool aboveBar = !buildBarVisible() || buildBar_.x() > 14.0f + actionsWindow_->width() ||
+                          actionsWindow_->y() + actionsWindow_->height() <= static_cast<int>(buildBar_.y());
+    LOG_INFO("[uitest] okna koszar: widoczne {}, koszary y={}..{}, akcje y={}..{}, pasek y={:.0f}", visible ? "tak" : "nie",
+             barracksWindow_->y(), barracksWindow_->y() + barracksWindow_->height(), actionsWindow_->y(),
+             actionsWindow_->y() + actionsWindow_->height(), buildBar_.y());
+    uiCheck("okno koszar widoczne i nie zasłonięte przez okno akcji", visible && stacked && aboveBar);
+
+    // 2. Auto 50%
+    toggleAutoTrainSelected();
+    changeSwordShareSelected(-20);   // 70% -> 50%
+    auto countType = [&](UnitType t) {
+        int n = 0;
+        for (const auto& u : w.units) n += (u.alive && u.faction == kPlayer && u.type == t) ? 1 : 0;
+        return n;
+    };
+    for (int i = 0; i < 4000 && countType(UnitType::Swordsman) + countType(UnitType::Archer) < 4; ++i) w.update(0.1f);
+    const int s1 = countType(UnitType::Swordsman), a1 = countType(UnitType::Archer);
+    LOG_INFO("[uitest] auto-rekrutacja 50%: miecznicy {}, łucznicy {}, ludność {}/{}", s1, a1, fs.population, fs.popCap);
+    uiCheck("auto-rekrutacja szkoli sama, obu typów wg proporcji", s1 >= 1 && a1 >= 1 && s1 + a1 >= 4);
+
+    // 3. Auto 100% - same miecznicy
+    changeSwordShareSelected(+100);
+    w.buildings[bar].trainQueue.clear();
+    w.buildings[bar].trainPaid = false;
+    w.buildings[bar].trainTimer = 0.0f;
+    for (int i = 0; i < 3000 && countType(UnitType::Swordsman) < s1 + 2; ++i) w.update(0.1f);
+    LOG_INFO("[uitest] auto-rekrutacja 100%: miecznicy {} (+{}), łucznicy {}", countType(UnitType::Swordsman),
+             countType(UnitType::Swordsman) - s1, countType(UnitType::Archer));
+    uiCheck("auto 100% mieczników: przybywa tylko mieczników", countType(UnitType::Swordsman) >= s1 + 2 && countType(UnitType::Archer) <= a1 + 1);
+    w.buildings[bar].autoTrain = false;
+    selectedBuilding_ = -1;
 }
 
 // Łańcuchy produkcji: każdy warsztat dostaje drogą swoje towary wejściowe z zamku i oddaje wyrób.
@@ -705,8 +949,11 @@ void SettlersApp::runUiTestStep() {
         repairHealResourceTest();
         mountainBuildingsTest();
         territoryCaptureTest();
+        towerAssaultTest();
         economyRoadTest();
         productionChainTest();
+        storageJamTest();
+        autoRecruitTest();
         showPause();
         uiOrigW_ = static_cast<int>(renderer_->width());
         uiOrigH_ = static_cast<int>(renderer_->height());
@@ -936,6 +1183,29 @@ void SettlersApp::updateAutoplay() {
                 if (o.alive && o.faction == f && !o.funded) unfunded[o.type] += o.amount;
             }
             if (unfunded.total() > 0) LOG_INFO("[autoplay] {}: dostawy czekają na: {}", factionName(f), stockSummary(unfunded, 6));
+            int barracks = 0, queued = 0, garrisoned = 0, towers = 0;   // wojsko: koszary, kolejka, wieże i ich załogi
+            for (const auto& b : w.buildings) {
+                towers += (b.alive && b.faction == f && w.isCapturable(b)) ? 1 : 0;
+                if (!b.alive || b.faction != f || b.type != BuildingType::Barracks) continue;
+                barracks += b.constructed ? 1 : 0;
+                queued += static_cast<int>(b.trainQueue.size());
+            }
+            for (const auto& u : w.units) garrisoned += (u.alive && u.faction == f && u.state == UnitState::Garrison) ? 1 : 0;
+            {   // Budynki wg typu (ukończone; w nawiasie place budowy) - gdzie urywa się łańcuch produkcji.
+                std::array<int, static_cast<size_t>(BuildingType::Count)> done{}, sites{};
+                for (const auto& b : w.buildings) {
+                    if (b.alive && b.faction == f) (b.constructed ? done : sites)[static_cast<size_t>(b.type)]++;
+                }
+                std::string list;
+                for (size_t t = 0; t < done.size(); ++t) {
+                    if (done[t] + sites[t] == 0) continue;
+                    list += std::string(list.empty() ? "" : ", ") + buildingDef(static_cast<BuildingType>(t)).name + " " +
+                            std::to_string(done[t]) + (sites[t] ? "(+" + std::to_string(sites[t]) + ")" : "");
+                }
+                LOG_INFO("[autoplay] budynki {}: {} | magazyny: {}", factionName(f), list, stockSummary(w.factions[f].res, 12));
+            }
+            LOG_INFO("[autoplay] wojsko {}: broń={} koszary={} w kolejce={} wieże={} w załogach={}", factionName(f),
+                     w.factions[f].res[CarryType::Weapons], barracks, queued, towers, garrisoned);
             LOG_INFO("[autoplay] transport {}: drogi={} tragarze={}/{} zajęci={} na flagach={} dostawy={} (bez towaru {}) "
                      "magazyn={}/{} warsztaty={} bez drogi={} wstrzymane={}",
                      factionName(f), roadCount, ts.carriers, ts.target, ts.busy, onFlags, ts.ordersWaiting, ts.ordersUnfunded,

@@ -172,6 +172,11 @@ struct Building {
     // Koszary
     std::deque<UnitType> trainQueue;
     float trainTimer = 0.0f;
+    bool autoTrain = false;          // automatyczna rekrutacja (kolejka uzupełniana sama)
+    int swordShare = 70;             // udział mieczników w %, reszta to łucznicy
+    int autoSwords = 0, autoArchers = 0;   // ilu zamówiła rekrutacja automatyczna (pilnowanie proporcji)
+    float autoTrainTimer = 0.0f;
+    float autoTrainMsgTime = -100.0f;
     // Wieża / zamek
     float attackCooldown = 0.0f;
     // Zamek
@@ -247,6 +252,7 @@ struct TransportOrder {
     CarryType type = CarryType::Wood;
     int amount = 1;                  // 1-2 sztuki
     int source = -1;                 // magazyn, z którego tragarz zabierze towar
+    int sourceFlag = -1;             // albo flaga, na której towar leży (zarezerwowany w Flag::reserved)
     int dest = -1;                   // odbiorca
     int carrier = -1;                // tragarz realizujący zlecenie
     bool funded = false;
@@ -331,12 +337,12 @@ struct FactionState {
     float waveTimer = 0.0f;
     int waveNumber = 0;
     size_t buildOrderIndex = 0;
-    float incomeAccumulator = 0.0f;
-    int incomeTicks = 0;
     int soldiersTrained = 0;
     // Tragarze: docelowa liczba (gracz ustawia w oknie gospodarki) albo dobierana automatycznie.
     int carrierTarget = 6;
     bool carrierAuto = true;
+    // Limity zapasu w magazynach dla każdego towaru (indeks = CarryType).
+    StockLimits stockLimit = defaultStockLimits();
 };
 
 // Zdarzenie dźwiękowe zgłoszone przez symulację - odtwarza je aplikacja (świat nie zależy od audio).
@@ -436,6 +442,16 @@ public:
     void orderMaterials(int building, const Resources& r);
     // Czy przy fladze są towary czekające na odbiór (nie licząc zarezerwowanych).
     [[nodiscard]] int flagAvailableGoods(const Flag& fl) const;
+    // Towary do wydania: zapas magazynów + wolne towary na flagach połączonych drogami (tragarz dowiezie je
+    // prosto do odbiorcy). Tym sprawdzamy "czy stać nas" na budynek i szkolenie.
+    [[nodiscard]] Resources spendable(int faction) const;
+    // Zapas "do limitu": towary w magazynach + niesione właśnie do magazynów.
+    [[nodiscard]] Resources storeBound(int faction) const;
+    // Ile towarów z flagi tragarze mogą teraz zanieść do magazynu (limity zapasu nieprzekroczone).
+    [[nodiscard]] int pickupableGoods(const Flag& fl, const Resources& bound) const;
+    // Dlaczego towary czekają na fladze warsztatu (znaczniki i komunikaty dla gracza).
+    enum class FlagBlock { None, NoRoad, StorageFull, StockLimit, Carriers };
+    [[nodiscard]] FlagBlock flagBlockReason(int flag) const;
 
     // ----------------------------------------------------------------------------------
     // Rozkazy (wywoływane przez gracza lub AI)
@@ -451,6 +467,8 @@ public:
     void commandAttackBuilding(const std::vector<int>& ids, int target);
     // Obsadzenie własnej wieży (do garrisonCapacity żołnierzy; reszta zostaje).           [world_combat.cpp]
     int commandGarrison(const std::vector<int>& ids, int tower);
+    // Załoga wychodzi z wieży i staje przed nią (pusta wieża zaraz dostanie jednego żołnierza z powrotem).
+    void releaseGarrison(int tower);
     // Załoga wieży: żołnierze w środku / przypisani (w środku + idący + na wypadzie).
     [[nodiscard]] int garrisonOf(int tower) const;
     [[nodiscard]] int garrisonAssigned(int tower) const;
@@ -461,6 +479,8 @@ public:
     }
     // Kolejkuje szkolenie w koszarach (koszt pobierany od razu).           [world_combat.cpp]
     bool queueTraining(int building, UnitType type, std::string* reason = nullptr);
+    // Rekrutacja automatyczna koszar: uzupełnia kolejkę (do 2) wg proporcji mieczników i łuczników.
+    void autoRecruit(int building);
     // Zielony pierścień w miejscu rozkazu.                                 [world_entities.cpp]
     void spawnMarker(const Vec3& p);
     void setSelected(int unit, bool selected);
@@ -670,8 +690,10 @@ private:
     void manageCarriers(int faction, int limit);
     // Przydział zleceń (odbiory i dostawy) wolnym tragarzom.
     void assignTransportJobs(int faction);
-    // Zdejmuje towar z najbliższego magazynu dla zlecenia (false = brak towaru).
+    // Opłaca zlecenie towarem z najbliższego magazynu albo leżącym na fladze (false = brak towaru).
     bool fundOrder(TransportOrder& o);
+    // Cofa opłatę zlecenia: towar wraca do magazynu / zwalnia rezerwację na fladze.
+    void unfundOrder(TransportOrder& o);
     // Automat tragarza.
     void updateCarrier(Unit& u, int id, float dt);
     // Tragarz przerywa zlecenie: zwalnia rezerwacje, niesiony towar zostawia na fladze.
@@ -692,9 +714,10 @@ private:
     // ----------------------------------------------------------------------------------
 
     void updateAI(int faction, float dt);
-    void aiCollectIncome(int faction, float dt);
     void aiBuildNext(int faction);
     void aiTrainArmy(int faction);
+    // Jaki budynek wyprodukuje brakujący materiał budowlany (Count = żaden / już powstaje).
+    BuildingType aiProducerFor(int faction, const Resources& cost, const Resources& have);
     // Łączy drogami warsztaty i magazyny, które nie mają połączenia z magazynem.
     void aiConnectRoads(int faction);
     void aiLaunchAttackWave(int faction, float dt);

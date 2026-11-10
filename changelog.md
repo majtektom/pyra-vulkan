@@ -10,9 +10,6 @@ Nowe w silniku:
    `shared/terrain_height.hlsl`), więc cień powstaje z widocznej geometrii - wcześniej rzucała go siatka CPU 17x17
    (wierzchołek co 2 teksele), która w dolinach leżała nad terenem; mapa wysokości na GPU 16-bit z zaokrągleniem
    (było 8-bit z obcięciem), próbkowanie w środku teksela i zawsze mip 0; odrzucanie obiektów spoza obszaru kaskady
- - zwykła siatka 17x17 ma wierzchołek
-   co 2 teksele i w dolinach leżała nad widocznym terenem; mapa wysokości na GPU 16-bit z zaokrągleniem (było 8-bit
-   z obcięciem), próbkowanie w środku teksela i zawsze mip 0; odrzucanie obiektów spoza obszaru kaskady
  - Cienie słońca: słońce pod horyzontem nie rzuca cieni (mapa cieni nie jest renderowana), przy horyzoncie cienie
    zanikają łagodnie; w trybie bez oświetlenia siła cienia zależy od siły słońca (w nocy brak cieni);
    `depthClamp` tylko w potokach kaskad słońca (osobne potoki `shadowSunPipeline_`) - obiekty przed bliską płaszczyzną
@@ -52,6 +49,29 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: rekrutacja automatyczna w koszarach — przełącznik "Auto-rekrutacja" i udział mieczników (−/+ co 10%,
+   reszta łucznicy); kolejka (do 2) uzupełnia się sama wg proporcji, przy braku kosztu jednego typu szkoli drugi;
+   naprawione okno koszar zasłaniane przez okno akcji (okna przy lewej krawędzi układane co klatkę jedno nad drugim,
+   nad paskiem budowy - `layoutSideWindows`); `SETTLERS_SELECT=barracks`; test `autoRecruitTest`
+ - Osadnicy: uczciwe AI — bez dochodu biernego (wcześniej dostawało deski, kamień i broń "z powietrza", więc miało
+   wojsko bez kuźni); ta sama ekonomia co gracz, poziom trudności = zapasy startowe (wróg bez broni na start, bogaty
+   start na Trudnym), gotowe budynki wroga na starcie i tempo fal; AI buduje łańcuch broni wcześniej (kopalnie węgla
+   i rudy, huta, kuźnia), dobudowuje producenta brakującego materiału (kamieniarz/kopalnia kamienia, tartak/drwal) i
+   żywność, gdy kopalnie głodują; log autoplay `budynki` (budynki każdej strony i zapasy)
+ - Osadnicy: koniec zapychania magazynów — dostawy (budowy, koszary, wejścia warsztatów) opłacane także towarem
+   leżącym na flagach (`TransportOrder::sourceFlag`, rezerwacja w `Flag::reserved`), więc deski z tartaku trafiają na
+   budowę przy pełnych magazynach; limity zapasu per towar (`FactionState::stockLimit`, przyciski −/+ w oknie
+   Gospodarka, domyślnie dla surowców i półproduktów) - powyżej limitu tragarze nie wnoszą towaru do magazynu;
+   "stać nas" liczone z magazynów i wolnych towarów na flagach (`World::spendable`, także górny pasek); znacznik nad
+   warsztatem podaje przyczynę (`flagBlockReason`: magazyny pełne / limit zapasu / za mało tragarzy), tryb Auto
+   tragarzy liczy tylko towary, które da się zanieść; AI stawia koszary, gdy je pominęło (brak miejsca) i ich nie
+   ma - wcześniej strona AI potrafiła całą grę nie mieć wojska; test `storageJamTest`
+ - Osadnicy: załogi i zdobywanie wież — wieża strzela tylko z załogą (do 3 żołnierzy, w środku leczą się);
+   wolni żołnierze sami obsadzają puste wieże, PPM na własnej wieży = obsadzenie, przycisk "Wyprowadź załogę";
+   PPM na wrogiej wieży = szturm: obrońcy wychodzą walczyć, a żołnierz, który wejdzie do pustej wieży, przejmuje ją
+   razem z terenem (drogi i flaga wieży zmieniają właściciela, cywilne budynki wroga na przejętym terenie płoną);
+   AI obsadza swoje wieże, a fala ataku, której celem jest wieża, zdobywa ją zamiast burzyć;
+   test `towerAssaultTest`, log autoplay `wojsko` (broń, koszary, kolejka, wieże i załogi)
  - Osadnicy: łańcuchy produkcji - 12 towarów (`CarryType`: kłody, kamień, deski, zboże, mąka, chleb, ryby, mięso,
    węgiel, ruda, żelazo, broń) i `Resources` jako tablica z pseudo-towarem "dowolna żywność" w kosztach; nowe budynki:
    Tartak, Młyn, Piekarnia, Rybak (nad wodą), Myśliwy, Kopalnia węgla, Kopalnia rudy, Huta, Kuźnia; tabela

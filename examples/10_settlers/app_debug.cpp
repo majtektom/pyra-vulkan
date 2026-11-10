@@ -42,6 +42,7 @@ Color SettlersApp::stateColor(UnitState s) {
     case UnitState::ReturnHome: return {0.95f, 0.65f, 1.0f, 1.0f};
     case UnitState::Attack: return {1.0f, 0.35f, 0.3f, 1.0f};
     case UnitState::GoToRoad: case UnitState::CarrierWait: case UnitState::CarrierWalk: return {1.0f, 0.75f, 0.45f, 1.0f};
+    case UnitState::GoGarrison: case UnitState::Garrison: return {0.75f, 0.55f, 1.0f, 1.0f};
     }
     return {1, 1, 1, 1};
 }

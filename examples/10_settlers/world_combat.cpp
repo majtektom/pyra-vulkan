@@ -64,8 +64,232 @@ void World::commandAttackBuilding(const std::vector<int>& ids, int target) {
     }
 }
 
+// =====================================================================================
+// Wieże: załoga i zdobywanie
+// =====================================================================================
+
+int World::garrisonOf(int tower) const {
+    int n = 0;
+    for (const auto& u : units) n += (u.alive && u.homeTower == tower && u.state == UnitState::Garrison) ? 1 : 0;
+    return n;
+}
+
+int World::garrisonAssigned(int tower) const {
+    int n = 0;
+    for (const auto& u : units) n += (u.alive && u.homeTower == tower) ? 1 : 0;
+    return n;
+}
+
+// Wysyła żołnierzy do własnej wieży (do jej pojemności). Zwraca, ilu wysłano.
+int World::commandGarrison(const std::vector<int>& ids, int tower) {
+    if (tower < 0 || !isCapturable(buildings[tower])) return 0;
+    const Building& t = buildings[tower];
+    int free = garrisonCapacity(t.type) - garrisonAssigned(tower);
+    int sent = 0;
+    for (int id : ids) {
+        if (free <= 0) break;
+        Unit& u = units[id];
+        if (!u.alive || u.type == UnitType::Settler || u.faction != t.faction || u.homeTower == tower) continue;
+        u.homeTower = tower;
+        u.state = UnitState::GoGarrison;
+        u.targetUnit = -1;
+        u.targetBuilding = -1;
+        u.attackMove = false;
+        u.path.clear();
+        --free;
+        ++sent;
+    }
+    return sent;
+}
+
+void World::releaseGarrison(int tower) {
+    const Vec3 door = buildings[tower].door();
+    int k = 0;
+    for (auto& u : units) {
+        if (!u.alive || u.homeTower != tower) continue;
+        u.homeTower = -1;
+        if (u.state == UnitState::Garrison || u.state == UnitState::GoGarrison) {
+            u.state = UnitState::Moving;
+            u.pos = door;
+            const Vec3 spot = add(door, rotateY({-6.0f + 6.0f * static_cast<float>(k++), 0.0f, 8.0f}, buildings[tower].rotY));
+            u.guardPos = spot;
+            setPath(u, spot);
+        }
+    }
+    // Wieża nie zostanie od razu obsadzona ponownie przez tych samych żołnierzy (autoGarrison co 2 s
+    // wybierze najbliższego wolnego - zwykle jednego z nich; to minimalna załoga, żeby wieża strzelała).
+}
+
+// Marsz do drzwi wieży; na miejscu żołnierz wchodzi do załogi (model ukrywa syncVisuals).
+void World::soldierGoGarrison(Unit& u, float dt) {
+    const Building& t = buildings[u.homeTower];
+    const Vec3 door = t.door();
+    const bool pathDone = !u.path.empty() && u.pathIndex >= u.path.size();
+    if (dist2D(u.pos, door) < 3.0f || (pathDone && dist2D(u.pos, door) < kNavCell * 2.5f)) {
+        u.state = UnitState::Garrison;
+        u.pos = door;
+        u.path.clear();
+        u.guardPos = door;
+        return;
+    }
+    if (pathFinished(u)) {
+        setPath(u, door);
+        if (u.path.empty()) {   // nie da się dojść - rezygnacja
+            u.homeTower = -1;
+            u.state = UnitState::Idle;
+            return;
+        }
+    }
+    followPath(u, dt, 0.5f);
+}
+
+// Każda ukończona wieża bez załogi dostaje wolnego żołnierza (najbliższego, do 500 jednostek).
+void World::autoGarrison(int f) {
+    for (size_t ti = 0; ti < buildings.size(); ++ti) {
+        const Building& t = buildings[ti];
+        if (t.faction != f || !isCapturable(t) || garrisonAssigned(static_cast<int>(ti)) > 0) continue;
+        int best = -1;
+        float bestD = 500.0f;
+        for (size_t i = 0; i < units.size(); ++i) {
+            const Unit& u = units[i];
+            if (!u.alive || u.faction != f || u.type == UnitType::Settler || u.state != UnitState::Idle || u.homeTower >= 0) continue;
+            const float d = dist2D(u.pos, t.pos);
+            if (d < bestD) {
+                bestD = d;
+                best = static_cast<int>(i);
+            }
+        }
+        if (best >= 0) commandGarrison({best}, static_cast<int>(ti));
+    }
+}
+
+// Szturm wieży wroga:
+//  - załoga w środku: jeden z obrońców wychodzi i walczy z napastnikiem (napastnik czeka przy drzwiach),
+//  - obrońca na zewnątrz: napastnik walczy z nim,
+//  - wieża pusta: napastnik wchodzi przez drzwi i przejmuje wieżę razem z terenem.
+void World::soldierAssaultTower(Unit& u, int id, float dt) {
+    const int ti = u.targetBuilding;
+    const Building& t = buildings[ti];
+    const Vec3 door = t.door();
+
+    // Obrońca już na zewnątrz - walczymy z nim.
+    for (size_t i = 0; i < units.size(); ++i) {
+        const Unit& d = units[i];
+        if (d.alive && d.homeTower == ti && d.state != UnitState::Garrison && dist2D(d.pos, t.pos) < 90.0f) {
+            u.targetUnit = static_cast<int>(i);
+            return;   // następna klatka: zwykła walka z jednostką
+        }
+    }
+
+    const float toDoor = dist2D(u.pos, door);
+    if (toDoor < 14.0f) {
+        if (garrisonOf(ti) > 0) {
+            // Wywołanie obrońcy: pierwszy z załogi wychodzi przed drzwi i atakuje.
+            for (size_t i = 0; i < units.size(); ++i) {
+                Unit& d = units[i];
+                if (!d.alive || d.homeTower != ti || d.state != UnitState::Garrison) continue;
+                d.state = UnitState::Attack;
+                d.targetUnit = id;
+                d.pos = door;
+                d.path.clear();
+                emitSound("sword", door, 0.6f);
+                break;
+            }
+            u.targetUnit = -1;
+            return;
+        }
+        if (toDoor < 3.5f) {
+            captureTower(ti, id);
+            return;
+        }
+    }
+    // Marsz do drzwi wieży.
+    u.repathTimer -= dt;
+    if (pathFinished(u) || u.repathTimer <= 0.0f) {
+        u.repathTimer = 2.0f;
+        setPath(u, door);
+        if (u.path.empty()) {
+            u.targetBuilding = -1;
+            u.state = UnitState::Idle;
+            return;
+        }
+    }
+    followPath(u, dt, 0.5f);
+}
+
+// Przejęcie wieży: zmiana właściciela, modelu i flagi; drogi poprzedniego właściciela przy wieży znikają,
+// napastnik wchodzi do załogi. Nowy zasięg terenu (rebuildTerritory) pali wrogie budynki w okolicy.
+void World::captureTower(int ti, int unitId) {
+    Building& t = buildings[ti];
+    Unit& u = units[unitId];
+    const int oldFaction = t.faction;
+    t.faction = u.faction;
+    t.hp = std::max(t.hp, buildingDef(t.type).maxHp * 0.5f);
+    t.selected = false;
+    if (auto* mc = t.entity->getComponent<MeshComponent>()) mc->meshName = buildingMeshName(t.type, t.faction);
+    destroyEntity(t.ring);
+    t.ring = makeEntity("bring", t.faction == kPlayer ? kRingPlayerMesh : kRingEnemyMesh);
+    t.ring->setActive(false);
+    t.ring->getComponent<MeshComponent>()->castShadows = false;
+    t.delivered = {};
+    for (auto& o : orders) {
+        if (o.alive && o.dest == ti) o.alive = false;   // dostawy dawnego właściciela przepadają
+    }
+    if (t.flag >= 0 && flags[t.flag].alive) {
+        removeFlag(t.flag);   // drogi poprzedniego właściciela; flaga przy budynku zostaje
+        Flag& fl = flags[t.flag];
+        fl.faction = t.faction;
+        fl.goods.clear();
+        fl.reserved = {};
+        if (fl.entity) fl.entity->getComponent<MeshComponent>()->meshName = flagMeshName(t.faction);
+    }
+    u.homeTower = ti;
+    u.state = UnitState::Garrison;
+    u.targetBuilding = -1;
+    u.targetUnit = -1;
+    u.attackMove = false;
+    u.pos = t.door();
+    u.path.clear();
+    territoryDirty_ = true;
+    routingDirty_ = true;
+    emitSound("complete", t.pos, 1.0f, false);
+    if (t.faction == kPlayer) {
+        pushMessage("Zdobyto wrogą wieżę! Teren wokół niej jest nasz.", {0.6f, 1.0f, 0.6f, 1.0f});
+    } else if (oldFaction == kPlayer) {
+        pushMessage("Wróg zdobył naszą wieżę!", {1.0f, 0.4f, 0.3f, 1.0f});
+    }
+}
+
 // Dodaje żołnierza do kolejki koszar. Koszt zdejmowany z magazynu od razu, a szkolenie rusza, gdy
 // tragarze dowiozą go do koszar; wymaga miejsca w limicie ludności.
+// Wybór typu: ten, którego jest za mało względem ustawionej proporcji (liczone od włączenia trybu auto).
+// Gdy na wybrany typ nie stać (brak broni/desek/żywności), próbujemy drugiego - kolejka nie stoi bez potrzeby.
+void World::autoRecruit(int id) {
+    Building& b = buildings[id];
+    if (!b.alive || !b.constructed || !b.autoTrain || b.trainQueue.size() >= 2) return;
+    const float share = static_cast<float>(b.swordShare) / 100.0f;
+    const float total = static_cast<float>(b.autoSwords + b.autoArchers + 1);
+    const float swordDeficit = share * total - static_cast<float>(b.autoSwords);
+    const float archerDeficit = (1.0f - share) * total - static_cast<float>(b.autoArchers);
+    const UnitType first = swordDeficit >= archerDeficit ? UnitType::Swordsman : UnitType::Archer;
+    const UnitType second = first == UnitType::Swordsman ? UnitType::Archer : UnitType::Swordsman;
+    const bool secondAllowed = second == UnitType::Swordsman ? b.swordShare > 0 : b.swordShare < 100;
+    std::string why;
+    UnitType queued = first;
+    bool ok = queueTraining(id, first, &why);
+    if (!ok && secondAllowed) {
+        std::string why2;
+        ok = queueTraining(id, second, &why2);
+        queued = second;
+    }
+    if (ok) {
+        (queued == UnitType::Swordsman ? b.autoSwords : b.autoArchers)++;
+    } else if (b.faction == kPlayer && b.trainQueue.empty() && gameTime - b.autoTrainMsgTime > 60.0f) {
+        b.autoTrainMsgTime = gameTime;
+        pushMessage("Koszary (auto): " + why, {1.0f, 0.75f, 0.4f, 1.0f});
+    }
+}
+
 bool World::queueTraining(int id, UnitType type, std::string* reason) {
     auto fail = [&](const char* r) {
         if (reason) *reason = r;
@@ -83,8 +307,9 @@ bool World::queueTraining(int id, UnitType type, std::string* reason) {
     }
     if (fs.population + queued >= fs.popCap) return fail("Za mało miejsca - zbuduj Dom");
     const UnitDef& def = unitDef(type);
-    if (!fs.res.canAfford(def.cost)) {
-        if (reason) *reason = "brakuje " + missingText(def.cost, fs.res);
+    const Resources have = spendable(b.faction);
+    if (!have.canAfford(def.cost)) {
+        if (reason) *reason = "brakuje " + missingText(def.cost, have);
         return false;
     }
     orderMaterials(id, def.cost);   // koszt zdjęty z magazynu, tragarze dowiozą go do koszar
@@ -103,13 +328,29 @@ void World::updateSoldier(Unit& u, int id, float dt) {
 
     // Cel mógł zginąć w poprzedniej klatce.
     if (u.targetUnit >= 0 && !units[u.targetUnit].alive) u.targetUnit = -1;
-    if (u.targetBuilding >= 0 && !buildings[u.targetBuilding].alive) u.targetBuilding = -1;
+    // Budynek-cel zniknął albo jest już nasz (np. wieżę zdobył inny żołnierz) - koniec ataku.
+    if (u.targetBuilding >= 0 && (!buildings[u.targetBuilding].alive || buildings[u.targetBuilding].faction == u.faction)) {
+        u.targetBuilding = -1;
+    }
+    if (u.targetUnit >= 0 && units[u.targetUnit].faction == u.faction) u.targetUnit = -1;
 
     soldierAcquireTarget(u);
 
+    // Wieża macierzysta przestała być nasza (zdobyta / zburzona) - żołnierz jest wolny.
+    if (u.homeTower >= 0 && (!buildings[u.homeTower].alive || buildings[u.homeTower].faction != u.faction)) {
+        u.homeTower = -1;
+        if (u.state == UnitState::Garrison || u.state == UnitState::GoGarrison) {
+            u.state = UnitState::Idle;
+            u.guardPos = u.pos;
+        }
+    }
+
     if (u.state == UnitState::Attack && u.targetUnit < 0 && u.targetBuilding < 0) {
-        // Cel zniszczony - kontynuujemy marsz do punktu docelowego albo wracamy na posterunek.
-        if (dist2D(u.pos, u.guardPos) > 10.0f) {
+        // Cel zniszczony - obrońca wraca do wieży, inni kontynuują marsz albo wracają na posterunek.
+        if (u.homeTower >= 0) {
+            u.state = UnitState::GoGarrison;
+            u.path.clear();
+        } else if (dist2D(u.pos, u.guardPos) > 10.0f) {
             u.state = UnitState::Moving;
             setPath(u, u.guardPos);
         } else {
@@ -129,6 +370,11 @@ void World::updateSoldier(Unit& u, int id, float dt) {
     case UnitState::Attack:
         soldierAttack(u, id, dt);
         break;
+    case UnitState::GoGarrison:
+        soldierGoGarrison(u, dt);
+        break;
+    case UnitState::Garrison:
+        break;   // w środku wieży - wieża strzela, a wróg może wywołać obrońcę (soldierAssaultTower)
     default:
         u.state = UnitState::Idle;
         break;
@@ -181,6 +427,10 @@ void World::soldierAttack(Unit& u, int id, float dt) {
         }
     } else {
         const Building& b = buildings[u.targetBuilding];
+        if (isCapturable(b)) {   // ukończonej wieży się nie burzy - szturmuje się ją
+            soldierAssaultTower(u, id, dt);
+            return;
+        }
         targetPos = b.pos;
         distance = distanceToBuilding(u.pos, b);
     }
@@ -273,7 +523,7 @@ void World::damageUnit(int target, float amount, int attackerFaction, int attack
 // Obrażenia budynku; przy 0 PŻ budynek jest niszczony. Zaatakowana frakcja wzywa obrońców.
 void World::damageBuilding(int target, float amount, int attackerFaction, int attackerUnit) {
     Building& b = buildings[target];
-    if (!b.alive) return;
+    if (!b.alive || isCapturable(b)) return;   // ukończoną wieżę się zdobywa, nie burzy
     b.hp -= amount;
     b.lastDamagedTime = gameTime;
     lastCombatTime[b.faction] = gameTime;

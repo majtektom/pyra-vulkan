@@ -70,6 +70,11 @@ bool SettlersApp::mouseInMinimap(int mx, int my, Vec3* worldPos) const {
 
 // Czy kursor jest nad elementem interfejsu - wtedy kliknięcie nie trafia w świat gry.
 bool SettlersApp::mouseOverUi(int mx, int my) const {
+    if (showEconomy_) {   // okno gospodarki zasłania świat
+        float ex, ey, ew, eh;
+        economyPanelRect(ex, ey, ew, eh);
+        if (mx >= ex && mx <= ex + ew && my >= ey && my <= ey + eh) return true;
+    }
     return gui_->isPointerOverGui() || mouseInMinimap(mx, my) || static_cast<float>(my) < kTopBarH || mouseOverBuildBar(mx, my) ||
            (hasSelectionPanel() && mx > selPanelX_ && mx < selPanelX_ + selPanelW_ && my > selPanelY_ &&
             my < selPanelY_ + selPanelH_);
@@ -108,6 +113,8 @@ void SettlersApp::handleGameInput(Engine& e, const InputSnapshot& in) {
 
     // Dolny pasek budowy (kliknięcie w pasek nie trafia w świat).
     if (handleBuildBar(e, in)) return;
+    // Limity zapasu w oknie gospodarki.
+    if (e.mousePressed(0) && clickLimitButton(in.mouseX, in.mouseY)) return;
 
     if (placing_) {
         updatePlacement(e, in, overUi, shift);
@@ -198,7 +205,7 @@ void SettlersApp::boxSelect(int x0, int y0, int x1, int y1, bool additive) {
     std::vector<int> soldiers, settlersSel;
     for (size_t i = 0; i < world_->units.size(); ++i) {
         const Unit& u = world_->units[i];
-        if (!u.alive || u.faction != kPlayer) continue;
+        if (!u.alive || u.faction != kPlayer || u.state == UnitState::Garrison) continue;
         float sx, sy;
         if (!worldToScreen(*camera_, add(u.pos, {0.0f, 3.0f, 0.0f}), screenW_, screenH_, sx, sy)) continue;
         if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue;
@@ -222,7 +229,7 @@ void SettlersApp::selectAllArmy() {
     clearSelection();
     for (size_t i = 0; i < world_->units.size(); ++i) {
         const Unit& u = world_->units[i];
-        if (u.alive && u.faction == kPlayer && u.type != UnitType::Settler) {
+        if (u.alive && u.faction == kPlayer && u.type != UnitType::Settler && u.state != UnitState::Garrison) {
             selectedUnits_.push_back(static_cast<int>(i));
             world_->setSelected(static_cast<int>(i), true);
         }
@@ -255,6 +262,16 @@ void SettlersApp::issueOrderAtCursor(const InputSnapshot& in, bool attackMove) {
     if (b >= 0 && world_->buildings[b].faction != kPlayer) {
         world_->commandAttackBuilding(soldiers, b);
         world_->spawnMarker(world_->buildings[b].pos);
+        return;
+    }
+    // Własna wieża: obsadzenie (do pojemności załogi).
+    if (b >= 0 && world_->isCapturable(world_->buildings[b])) {
+        const int sent = world_->commandGarrison(soldiers, b);
+        world_->pushMessage(sent > 0 ? "Żołnierze idą obsadzić wieżę (" + std::to_string(sent) + ")"
+                                     : std::string("Wieża ma już pełną załogę"),
+                            {0.8f, 0.9f, 1.0f, 1.0f});
+        world_->spawnMarker(world_->buildings[b].pos);
+        sfx("select", 0.45f);
         return;
     }
     Vec3 hit;
@@ -308,8 +325,9 @@ void SettlersApp::beginPlacement(BuildingType type) {
     if (mode_ != Mode::Game || spectator_) return;
     cancelRoad();
     const BuildingDef& def = buildingDef(type);
-    if (!world_->factions[kPlayer].res.canAfford(def.cost)) {
-        world_->pushMessage(std::string(def.name) + ": brakuje " + missingText(def.cost, world_->factions[kPlayer].res),
+    const Resources have = world_->spendable(kPlayer);
+    if (!have.canAfford(def.cost)) {
+        world_->pushMessage(std::string(def.name) + ": brakuje " + missingText(def.cost, have),
                             {1.0f, 0.6f, 0.4f, 1.0f});
         sfx("ui_error", 0.7f);
         return;
@@ -358,7 +376,7 @@ void SettlersApp::updatePlacement(Engine& e, const InputSnapshot& in, bool overU
     std::string reason;
     const BuildingDef& def = buildingDef(placeType_);
     bool ok = world_->canPlace(placeType_, p, kPlayer, &reason, placeRot_);
-    const bool affordable = world_->factions[kPlayer].res.canAfford(def.cost);
+    const bool affordable = world_->spendable(kPlayer).canAfford(def.cost);
     if (ok && !affordable) {
         ok = false;
         reason = "Brakuje: " + missingText(def.cost, world_->factions[kPlayer].res);
@@ -381,7 +399,7 @@ void SettlersApp::updatePlacement(Engine& e, const InputSnapshot& in, bool overU
             sfx("place", 0.9f);
             world_->pushMessage(std::string("Plac budowy: ") + def.name + " - osadnicy ruszają do pracy",
                                 {0.85f, 0.95f, 1.0f, 1.0f});
-            if (!shift || !world_->factions[kPlayer].res.canAfford(def.cost)) cancelPlacement();
+            if (!shift || !world_->spendable(kPlayer).canAfford(def.cost)) cancelPlacement();
         } else {
             world_->pushMessage("Nie można tu budować: " + reason, {1.0f, 0.55f, 0.45f, 1.0f});
             sfx("ui_error", 0.7f);
@@ -397,6 +415,44 @@ void SettlersApp::trainSelected(UnitType type) {
         world_->pushMessage("Nie można szkolić: " + reason, {1.0f, 0.6f, 0.4f, 1.0f});
         sfx("ui_error", 0.7f);
     }
+}
+
+void SettlersApp::toggleAutoTrainSelected() {
+    if (selectedBuilding_ < 0 || spectator_) return;
+    Building& b = world_->buildings[selectedBuilding_];
+    if (b.type != BuildingType::Barracks || b.faction != kPlayer) return;
+    b.autoTrain = !b.autoTrain;
+    b.autoSwords = b.autoArchers = 0;   // proporcja liczona od nowa
+    b.autoTrainTimer = 0.0f;
+}
+
+void SettlersApp::changeSwordShareSelected(int delta) {
+    if (selectedBuilding_ < 0 || spectator_) return;
+    Building& b = world_->buildings[selectedBuilding_];
+    if (b.type != BuildingType::Barracks || b.faction != kPlayer) return;
+    b.swordShare = std::clamp(b.swordShare + delta, 0, 100);
+    b.autoSwords = b.autoArchers = 0;
+}
+
+// Akcje przy dolnej krawędzi, koszary nad nimi; gdy okna zachodzą na pasek budowy - całość nad paskiem.
+void SettlersApp::layoutSideWindows() {
+    constexpr int kTitleH = 30;   // pasek tytułu okna rysowany nad jego obszarem + odstęp
+    const int h = static_cast<int>(screenH_);
+    int bottom = h - 14;
+    if (buildBarVisible() && buildBar_.x() < 14.0f + static_cast<float>(actionsWindow_->width())) {
+        bottom = std::min(bottom, static_cast<int>(buildBar_.y()) - 12);
+    }
+    const int actionsY = bottom - actionsWindow_->height();
+    actionsWindow_->setPosition(14, actionsY);
+    barracksWindow_->setPosition(14, actionsY - kTitleH - barracksWindow_->height());
+}
+
+void SettlersApp::releaseGarrisonSelected() {
+    if (selectedBuilding_ < 0 || spectator_) return;
+    const Building& b = world_->buildings[selectedBuilding_];
+    if (b.faction != kPlayer || !world_->isCapturable(b)) return;
+    world_->releaseGarrison(selectedBuilding_);
+    world_->pushMessage("Załoga opuszcza wieżę", {0.8f, 0.9f, 1.0f, 1.0f});
 }
 
 // Del / przycisk: burzy zaznaczony budynek gracza (zamku nie można zburzyć)
@@ -433,6 +489,12 @@ void SettlersApp::updateContextWindows() {
         }
     }
     barracksWindow_->setVisible(barracks && !spectator_);
+    if (barracks) {
+        const Building& b = world_->buildings[selectedBuilding_];
+        btnAutoTrain_->setText(b.autoTrain ? "Auto-rekrutacja: wł." : "Auto-rekrutacja: wył.");
+        btnTrainRatio_->setText("Miecznicy: " + std::to_string(b.swordShare) + "%");
+    }
+    layoutSideWindows();   // co klatkę: pasek budowy zmienia położenie razem z rozdzielczością
     // Okienko liczby tragarzy - przy dolnej krawędzi panelu gospodarki.
     const bool econ = showEconomy_ && !spectator_;
     carriersWindow_->setVisible(econ);
@@ -450,7 +512,7 @@ void SettlersApp::updateContextWindows() {
     const int hover = buildBar_.hoveredId();
     if (hover >= 0 && hover < kBuildMenuSize) {
         const BuildingDef& def = buildingDef(kBuildMenu[hover]);
-        const auto& res = world_->factions[kPlayer].res;
+        const Resources res = world_->spendable(kPlayer);
         if (!res.canAfford(def.cost)) hoverMissing_ = std::string(def.name) + " - brakuje: " + missingText(def.cost, res);
     }
 }
@@ -579,6 +641,29 @@ void SettlersApp::changeCarriers(int delta) {
         fs.carrierAuto = false;
     }
     fs.carrierTarget = std::clamp(fs.carrierTarget + delta, 0, 60);
+}
+
+void SettlersApp::changeStockLimit(CarryType good, int delta) {
+    int& lim = world_->factions[kPlayer].stockLimit[static_cast<int>(good)];
+    if (lim >= kNoStockLimit) {
+        lim = delta < 0 ? kStockLimitMax : kNoStockLimit;
+    } else {
+        lim += delta * kStockLimitStep;
+        if (lim > kStockLimitMax) lim = kNoStockLimit;
+        lim = std::max(0, lim);
+    }
+}
+
+bool SettlersApp::clickLimitButton(int mx, int my) {
+    if (!showEconomy_ || spectator_) return false;
+    for (const auto& b : limitButtons_) {
+        if (mx >= b.x && mx <= b.x + b.size && my >= b.y && my <= b.y + b.size) {
+            changeStockLimit(b.good, b.delta);
+            sfx("ui_click", 0.5f);
+            return true;
+        }
+    }
+    return false;
 }
 
 void SettlersApp::toggleCarrierAuto() {

@@ -179,4 +179,24 @@ const char* factionName(int faction) {
     return faction == kPlayer ? "Gracz" : "Wróg";
 }
 
+// Surowce i półprodukty mają limit (zapychały magazyny), deski, żywność i broń - bez limitu.
+int defaultStockLimit(CarryType t) {
+    switch (t) {
+    case CarryType::Wood: return 40;
+    case CarryType::Stone: return 60;
+    case CarryType::Grain:
+    case CarryType::Flour:
+    case CarryType::Coal:
+    case CarryType::Ore:
+    case CarryType::Iron: return 20;
+    default: return kNoStockLimit;
+    }
+}
+
+StockLimits defaultStockLimits() {
+    StockLimits l{};
+    for (int t = 0; t < kResourceSlots; ++t) l[t] = defaultStockLimit(static_cast<CarryType>(t));
+    return l;
+}
+
 } // namespace settlers
