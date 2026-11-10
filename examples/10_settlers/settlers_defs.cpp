@@ -1,56 +1,150 @@
 #include "settlers_defs.h"
 
+#include <algorithm>
+
 namespace settlers {
+
+namespace {
+
+// Koszt budowy: deski + kamień (krótki zapis do tabeli budynków).
+Resources C(int planks, int stone) {
+    return Resources{{CarryType::Planks, planks}, {CarryType::Stone, stone}};
+}
+
+struct GoodInfo {
+    const char* name;       // mianownik: "Deski"
+    const char* genitive;   // dopełniacz: "desek" (brakuje 5 desek)
+    const char* shortName;  // skrót do kosztów na przyciskach
+    std::array<float, 4> color;
+};
+
+const GoodInfo& goodInfo(CarryType t) {
+    static const GoodInfo infos[kResourceSlots] = {
+        {"", "", "", {1, 1, 1, 1}},
+        {"Drewno", "drewna", "Dr", {0.62f, 0.42f, 0.22f, 1.0f}},
+        {"Kamień", "kamienia", "K", {0.72f, 0.72f, 0.75f, 1.0f}},
+        {"Deski", "desek", "De", {0.92f, 0.72f, 0.42f, 1.0f}},
+        {"Zboże", "zboża", "Zb", {0.93f, 0.82f, 0.38f, 1.0f}},
+        {"Mąka", "mąki", "Mą", {0.96f, 0.95f, 0.9f, 1.0f}},
+        {"Chleb", "chleba", "Ch", {0.8f, 0.55f, 0.25f, 1.0f}},
+        {"Ryby", "ryb", "Ry", {0.5f, 0.75f, 0.9f, 1.0f}},
+        {"Mięso", "mięsa", "Mi", {0.85f, 0.35f, 0.35f, 1.0f}},
+        {"Węgiel", "węgla", "Wę", {0.2f, 0.2f, 0.22f, 1.0f}},
+        {"Ruda", "rudy", "Ru", {0.65f, 0.4f, 0.3f, 1.0f}},
+        {"Żelazo", "żelaza", "Że", {0.6f, 0.65f, 0.72f, 1.0f}},
+        {"Broń", "broni", "Br", {0.85f, 0.88f, 0.95f, 1.0f}},
+        {"Żywność", "żywności", "Ży", {0.95f, 0.85f, 0.35f, 1.0f}},
+    };
+    return infos[std::clamp(static_cast<int>(t), 0, kResourceSlots - 1)];
+}
+
+} // namespace
+
+const char* goodName(CarryType t) {
+    return goodInfo(t).name;
+}
+
+const char* goodGenitive(CarryType t) {
+    return goodInfo(t).genitive;
+}
+
+std::array<float, 4> goodColor(CarryType t) {
+    return goodInfo(t).color;
+}
 
 std::string costText(const Resources& cost) {
     std::string out;
-    auto append = [&](int value, const char* suffix) {
-        if (value <= 0) return;
+    for (int t = 1; t < kResourceSlots; ++t) {
+        if (cost.v[t] <= 0) continue;
         if (!out.empty()) out += " ";
-        out += std::to_string(value) + suffix;
-    };
-    append(cost.wood, "D");
-    append(cost.stone, "K");
-    append(cost.food, "Ż");
+        out += std::to_string(cost.v[t]) + goodInfo(static_cast<CarryType>(t)).shortName;
+    }
     return out.empty() ? "darmo" : out;
 }
 
 std::string missingText(const Resources& cost, const Resources& have) {
     std::string out;
-    auto append = [&](int need, int got, const char* name) {
-        if (got >= need) return;
+    auto append = [&](int missing, CarryType t) {
+        if (missing <= 0) return;
         if (!out.empty()) out += ", ";
-        out += std::to_string(need - got) + " " + name;
+        out += std::to_string(missing) + " " + goodGenitive(t);
     };
-    append(cost.wood, have.wood, "drewna");
-    append(cost.stone, have.stone, "kamienia");
-    append(cost.food, have.food, "żywności");
+    for (int t = 1; t <= kGoodTypeCount; ++t) append(cost.v[t] - have.v[t], static_cast<CarryType>(t));
+    // Dowolna żywność: brakuje tyle, ile nie pokrywa żywność pozostała po konkretnych pozycjach.
+    const int foodLeft = have.food() - (cost[CarryType::Bread] + cost[CarryType::Fish] + cost[CarryType::Meat]);
+    append(cost[CarryType::AnyFood] - std::max(0, foodLeft), CarryType::AnyFood);
     return out;
 }
 
 const BuildingDef& buildingDef(BuildingType type) {
-    //                         name          mesh           cost{W,S,F}   time   hp    half  terr   worker pop  workR  atkR   dmg  cd    h
+    //                         name               mesh            cost       time   hp    half  terr   worker pop  workR  atkR   dmg  cd    h
     static const std::array<BuildingDef, kBuildingTypeCount> defs = {{
-        {"Zamek",       "b_castle",     {0, 0, 0},    1.0f,  2200, 16.0f, 175.0f, false, 14, 0.0f,   95.0f, 7.0f, 1.6f, 34.0f,
+        {"Zamek",            "b_castle",     C(0, 0),   1.0f,  2200, 16.0f, 175.0f, false, 14, 0.0f,   95.0f, 7.0f, 1.6f, 34.0f,
          "Siedziba rodu. Przyjmuje nowych osadników. Jego utrata kończy grę."},
-        {"Dom",         "b_house",      {20, 10, 0},  14.0f, 320,  7.0f,  0.0f,   false, 6,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
+        {"Dom",              "b_house",      C(20, 10), 14.0f, 320,  7.0f,  0.0f,   false, 6,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
          "Zwiększa limit populacji o 6."},
-        {"Drwal",       "b_wood",       {15, 0, 0},   12.0f, 260,  7.5f,  0.0f,   true,  0,  170.0f, 0.0f,  0.0f, 0.0f, 13.0f,
-         "Pracownik ścina drzewa w okolicy i przynosi drewno."},
-        {"Kamieniarz",  "b_quarry",     {20, 5, 0},   14.0f, 300,  7.5f,  0.0f,   true,  0,  170.0f, 0.0f,  0.0f, 0.0f, 13.0f,
-         "Pracownik wydobywa kamień ze skał w okolicy."},
-        {"Farma",       "b_farm",       {25, 5, 0},   16.0f, 260,  12.0f, 0.0f,   true,  0,  10.0f,  0.0f,  0.0f, 0.0f, 12.0f,
-         "Pracownik uprawia pole i dostarcza żywność."},
-        {"Koszary",     "b_barracks",   {40, 30, 0},  22.0f, 650,  11.0f, 0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 16.0f,
-         "Szkoli mieczników i łuczników."},
-        {"Wieża",       "b_tower",      {25, 40, 0},  20.0f, 750,  5.5f,  125.0f, false, 0,  0.0f,   120.0f,9.0f, 1.3f, 32.0f,
+        {"Drwal",            "b_wood",       C(12, 0),  12.0f, 260,  7.5f,  0.0f,   true,  0,  170.0f, 0.0f,  0.0f, 0.0f, 13.0f,
+         "Ścina drzewa i przynosi kłody - surowiec dla tartaku."},
+        {"Kamieniarz",       "b_quarry",     C(15, 5),  14.0f, 300,  7.5f,  0.0f,   true,  0,  170.0f, 0.0f,  0.0f, 0.0f, 13.0f,
+         "Wydobywa kamień ze skał w okolicy."},
+        {"Farma",            "b_farm",       C(20, 5),  16.0f, 260,  12.0f, 0.0f,   true,  0,  10.0f,  0.0f,  0.0f, 0.0f, 12.0f,
+         "Uprawia zboże dla młyna."},
+        {"Koszary",          "b_barracks",   C(35, 30), 22.0f, 650,  11.0f, 0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 16.0f,
+         "Szkoli żołnierzy - każdy potrzebuje broni z kuźni."},
+        {"Wieża",            "b_tower",      C(20, 40), 20.0f, 750,  5.5f,  125.0f, false, 0,  0.0f,   120.0f,9.0f, 1.3f, 32.0f,
          "Poszerza terytorium i razi wrogów strzałami."},
-        {"Leśniczy",    "b_forester",   {20, 5, 0},   12.0f, 240,  7.0f,  0.0f,   true,  0,  60.0f,  0.0f,  0.0f, 0.0f, 13.0f,
-         "Pracownik sadzi drzewa w okolicy - las odrasta dla drwala."},
-        {"Kopalnia",    "b_mine",       {25, 10, 0},  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
-         "Wydobywa kamień z wnętrza góry. Tylko w górach (powyżej linii lasu)."},
-        {"Magazyn",     "b_store",      {30, 20, 0},  16.0f, 500,  8.5f,  0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
+        {"Leśniczy",         "b_forester",   C(15, 5),  12.0f, 240,  7.0f,  0.0f,   true,  0,  60.0f,  0.0f,  0.0f, 0.0f, 13.0f,
+         "Sadzi drzewa w okolicy - las odrasta dla drwala."},
+        {"Kopalnia kamienia", "b_mine",      C(25, 5),  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
+         "Kamień z wnętrza góry. Tylko w górach; górnik zjada żywność."},
+        {"Magazyn",          "b_store",      C(30, 20), 16.0f, 500,  8.5f,  0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
          "Przechowuje do 200 towarów. Stawiaj blisko produkcji - krótsze drogi."},
+        {"Tartak",           "b_sawmill",    C(15, 5),  14.0f, 300,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
+         "Tnie kłody na deski - główny materiał budowlany."},
+        {"Młyn",             "b_mill",       C(20, 10), 16.0f, 320,  7.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 20.0f,
+         "Miele zboże z farmy na mąkę."},
+        {"Piekarnia",        "b_bakery",     C(20, 15), 16.0f, 320,  7.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
+         "Piecze chleb z mąki."},
+        {"Rybak",            "b_fisher",     C(10, 0),  10.0f, 220,  6.5f,  0.0f,   true,  0,  70.0f,  0.0f,  0.0f, 0.0f, 11.0f,
+         "Łowi ryby w pobliskiej wodzie. Stawiaj nad brzegiem."},
+        {"Myśliwy",          "b_hunter",     C(10, 0),  10.0f, 220,  6.5f,  0.0f,   true,  0,  90.0f,  0.0f,  0.0f, 0.0f, 11.0f,
+         "Poluje w okolicy i przynosi mięso."},
+        {"Kopalnia węgla",   "b_coalmine",   C(25, 5),  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
+         "Węgiel z wnętrza góry. Tylko w górach; górnik zjada żywność."},
+        {"Kopalnia rudy",    "b_oremine",    C(25, 5),  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
+         "Ruda żelaza z wnętrza góry. Tylko w górach; górnik zjada żywność."},
+        {"Huta",             "b_smelter",    C(20, 30), 20.0f, 500,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 16.0f,
+         "Wytapia żelazo z rudy i węgla."},
+        {"Kuźnia",           "b_smithy",     C(25, 25), 20.0f, 480,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
+         "Kuje broń z żelaza i węgla - bez broni koszary nie szkolą."},
+    }};
+    return defs[static_cast<int>(type)];
+}
+
+const ProductionDef& productionDef(BuildingType type) {
+    using C = CarryType;
+    using K = WorkKind;
+    //                      zachowanie     wyjście      wejścia                     czas
+    static const std::array<ProductionDef, kBuildingTypeCount> defs = {{
+        {K::None,      C::None,    {C::None, C::None},     0.0f},   // Zamek
+        {K::None,      C::None,    {C::None, C::None},     0.0f},   // Dom
+        {K::Gather,    C::Wood,    {C::None, C::None},     4.0f},   // Drwal
+        {K::Gather,    C::Stone,   {C::None, C::None},     5.0f},   // Kamieniarz
+        {K::Farm,      C::Grain,   {C::None, C::None},     6.0f},   // Farma
+        {K::None,      C::None,    {C::None, C::None},     0.0f},   // Koszary
+        {K::None,      C::None,    {C::None, C::None},     0.0f},   // Wieża
+        {K::Forester,  C::None,    {C::None, C::None},     4.0f},   // Leśniczy
+        {K::Mine,      C::Stone,   {C::AnyFood, C::None},  7.0f},   // Kopalnia kamienia
+        {K::None,      C::None,    {C::None, C::None},     0.0f},   // Magazyn
+        {K::Process,   C::Planks,  {C::Wood, C::None},     5.0f},   // Tartak
+        {K::Process,   C::Flour,   {C::Grain, C::None},    6.0f},   // Młyn
+        {K::Process,   C::Bread,   {C::Flour, C::None},    6.0f},   // Piekarnia
+        {K::Fisher,    C::Fish,    {C::None, C::None},     6.0f},   // Rybak
+        {K::Hunter,    C::Meat,    {C::None, C::None},     7.0f},   // Myśliwy
+        {K::Mine,      C::Coal,    {C::AnyFood, C::None},  7.0f},   // Kopalnia węgla
+        {K::Mine,      C::Ore,     {C::AnyFood, C::None},  7.0f},   // Kopalnia rudy
+        {K::Process,   C::Iron,    {C::Ore, C::Coal},      7.0f},   // Huta
+        {K::Process,   C::Weapons, {C::Iron, C::Coal},     8.0f},   // Kuźnia
     }};
     return defs[static_cast<int>(type)];
 }
@@ -61,26 +155,18 @@ int storageCapacity(BuildingType type) {
     return 0;
 }
 
+// Warsztat, którego towary trzeba odbierać drogą (ma towar wyjściowy).
 bool producesGoods(BuildingType type) {
-    return type == BuildingType::Woodcutter || type == BuildingType::Quarry || type == BuildingType::Farm ||
-           type == BuildingType::Mine;
-}
-
-const char* goodName(CarryType t) {
-    switch (t) {
-    case CarryType::Wood: return "Drewno";
-    case CarryType::Stone: return "Kamień";
-    case CarryType::Food: return "Żywność";
-    default: return "";
-    }
+    return productionDef(type).output != CarryType::None;
 }
 
 const UnitDef& unitDef(UnitType type) {
-    //                       name        hp     spd    dmg    range  cd    aggro  cost{W,S,F}   train  rad   h     ranged
+    using C = CarryType;
+    //                       name        hp     spd    dmg    range  cd    aggro  cost                                       train  rad   h     ranged
     static const std::array<UnitDef, kUnitTypeCount> defs = {{
-        {"Osadnik",  55.0f,  17.0f, 0.0f,  0.0f,  1.0f, 0.0f,  {0, 0, 3},    0.0f,  2.2f, 6.0f, false},
-        {"Miecznik", 150.0f, 15.0f, 14.0f, 4.5f,  1.1f, 75.0f, {5, 5, 15},   10.0f, 2.6f, 6.8f, false},
-        {"Łucznik",  85.0f,  15.5f, 9.0f,  65.0f, 1.6f, 85.0f, {15, 0, 10},  12.0f, 2.4f, 6.5f, true},
+        {"Osadnik",  55.0f,  17.0f, 0.0f,  0.0f,  1.0f, 0.0f,  Resources{{C::AnyFood, 3}},                   0.0f,  2.2f, 6.0f, false},
+        {"Miecznik", 150.0f, 15.0f, 14.0f, 4.5f,  1.1f, 75.0f, Resources{{C::Weapons, 1}, {C::AnyFood, 2}},   10.0f, 2.6f, 6.8f, false},
+        {"Łucznik",  85.0f,  15.5f, 9.0f,  65.0f, 1.6f, 85.0f, Resources{{C::Weapons, 1}, {C::Planks, 2}},    12.0f, 2.4f, 6.5f, true},
     }};
     return defs[static_cast<int>(type)];
 }

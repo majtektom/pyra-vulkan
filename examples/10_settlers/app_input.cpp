@@ -88,7 +88,7 @@ void SettlersApp::handleGameInput(Engine& e, const InputSnapshot& in) {
     const bool overUi = mouseOverUi(in.mouseX, in.mouseY);
 
     // Skróty budowy
-    for (int i = 0; i < kBuildMenuSize; ++i) {
+    for (int i = 0; i < kHotkeyBuildings; ++i) {
         if (e.actionPressed("build." + std::to_string(i + 1))) beginPlacement(kBuildMenu[i]);
     }
     if (e.actionPressed(kActDemolish)) demolishSelected();

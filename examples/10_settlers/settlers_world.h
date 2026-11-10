@@ -84,8 +84,10 @@ enum class UnitState {
     GoToRoad,       // tragarz idzie (bez ładunku) po towar albo wraca do magazynu
     CarrierWait,    // tragarz czeka przy magazynie na zlecenie
     CarrierWalk,    // tragarz niesie towar do celu zlecenia
+    GoGarrison,     // żołnierz idzie do wieży, którą ma obsadzić
+    Garrison,       // żołnierz w załodze wieży (niewidoczny, wieża strzela)
 };
-constexpr int kUnitStateCount = static_cast<int>(UnitState::CarrierWalk) + 1;
+constexpr int kUnitStateCount = static_cast<int>(UnitState::Garrison) + 1;
 
 struct Unit {
     bool alive = false;
@@ -125,6 +127,7 @@ struct Unit {
     int targetBuilding = -1;
     float attackCooldown = 0.0f; // czas do kolejnego ciosu / strzału
     Vec3 guardPos{};             // posterunek - tu wraca po walce
+    int homeTower = -1;          // wieża, w której załodze jest (lub do której idzie / wraca po wypadzie)
 
     // --- Liczniki czasu i animacja ---
     float timer = 0.0f;          // wielozadaniowy licznik (czas pracy, odpoczynku, wykrywania wrogów)
@@ -197,6 +200,9 @@ struct Building {
     Resources delivered;             // dowiezione materiały (plac budowy, koszary)
     bool trainPaid = false;          // koszary: koszt bieżącego szkolenia już pobrany z dostaw
     bool outputBlocked = false;      // warsztat: flaga pełna - produkcja wstrzymana
+    bool inputStarved = false;       // warsztat: brak towarów wejściowych (żywność, surowiec)
+    float inputMsgTime = -100.0f;
+    float inputRequestTimer = 0.0f;
     float outputMsgTime = -100.0f;
 
     // Punkt przed wejściem (z przodu budynku, uwzględnia obrót).
@@ -314,6 +320,7 @@ struct FactionState {
     bool defeated = false;
     int castle = -1;
     float jobTimer = 0.0f;       // odliczanie do kolejnego przydziału prac
+    float garrisonTimer = 0.0f;  // odliczanie do obsadzania pustych wież
     float underAttackMsgTime = -100.0f;
     float popCapMsgTime = -100.0f;
     int unitsLost = 0;
@@ -325,6 +332,7 @@ struct FactionState {
     int waveNumber = 0;
     size_t buildOrderIndex = 0;
     float incomeAccumulator = 0.0f;
+    int incomeTicks = 0;
     int soldiersTrained = 0;
     // Tragarze: docelowa liczba (gracz ustawia w oknie gospodarki) albo dobierana automatycznie.
     int carrierTarget = 6;
@@ -441,6 +449,16 @@ public:
     void commandMove(const std::vector<int>& ids, const Vec3& point, bool attackMove);
     void commandAttackUnit(const std::vector<int>& ids, int target);
     void commandAttackBuilding(const std::vector<int>& ids, int target);
+    // Obsadzenie własnej wieży (do garrisonCapacity żołnierzy; reszta zostaje).           [world_combat.cpp]
+    int commandGarrison(const std::vector<int>& ids, int tower);
+    // Załoga wieży: żołnierze w środku / przypisani (w środku + idący + na wypadzie).
+    [[nodiscard]] int garrisonOf(int tower) const;
+    [[nodiscard]] int garrisonAssigned(int tower) const;
+    [[nodiscard]] static int garrisonCapacity(BuildingType type) { return type == BuildingType::Tower ? 3 : 0; }
+    // Czy wieżę można zdobyć (ukończona wieża - żołnierze jej nie burzą, tylko szturmują).
+    [[nodiscard]] bool isCapturable(const Building& b) const {
+        return b.alive && b.constructed && garrisonCapacity(b.type) > 0;
+    }
     // Kolejkuje szkolenie w koszarach (koszt pobierany od razu).           [world_combat.cpp]
     bool queueTraining(int building, UnitType type, std::string* reason = nullptr);
     // Zielony pierścień w miejscu rozkazu.                                 [world_entities.cpp]
@@ -589,6 +607,10 @@ private:
     Building* assignedBuilding(Unit& u);
     // Warsztat, w którym osadnik jest pracownikiem (ukończony i z tym pracownikiem).
     Building* workplaceOf(Unit& u, int id);
+    // Zużywa towary wejściowe na cykl pracy (kopalnia: żywność, przetwórnia: surowiec). false = brak.
+    bool consumeInputs(Building& b);
+    // Zamawia brakujące towary wejściowe warsztatu z magazynów (do kInputBuffer sztuk każdego).
+    void requestInputs(int building);
     // Oddanie niesionego surowca do magazynu frakcji; pracownik wraca do WorkWait.
     void deliverCarriedResource(Unit& u, Building& b);
     void faceTowards(Unit& u, const Vec3& target, float dt);
@@ -607,6 +629,13 @@ private:
     void soldierAttack(Unit& u, int id, float dt);
     void soldierStrike(Unit& u, int id, const Vec3& targetPos, float dt);
     void soldierChase(Unit& u, const Vec3& targetPos, float dt);
+    // Szturm wieży: wywołanie obrońcy z załogi albo (pusta wieża) wejście i przejęcie.
+    void soldierAssaultTower(Unit& u, int id, float dt);
+    void captureTower(int tower, int unitId);
+    // Marsz do wieży i wejście do załogi.
+    void soldierGoGarrison(Unit& u, float dt);
+    // Puste wieże frakcji dostają po jednym wolnym żołnierzu (co 2 s).
+    void autoGarrison(int faction);
     void damageUnit(int target, float amount, int attackerFaction, int attackerUnit);
     void damageBuilding(int target, float amount, int attackerFaction, int attackerUnit);
     // Wolni żołnierze frakcji w promieniu 140 ruszają na napastnika.
@@ -694,6 +723,10 @@ private:
     int countSaplingsInRange(const Vec3& from, float radius) const;
     // Leśniczy: losowe wolne miejsce na sadzonkę w zasięgu chaty (false = brak miejsca).
     bool findPlantingSpot(const Building& forester, Vec3& out);
+    // Rybak: miejsce na brzegu wody; myśliwy: miejsce w okolicy.
+    bool findFishingSpot(const Building& fisher, Vec3& out);
+    bool findHuntingSpot(const Building& hunter, Vec3& out);
+    [[nodiscard]] bool waterNear(const Vec3& p, float radius) const;
 public:
     // Ile sadzonek rośnie w okolicy (panel informacji budynku).
     [[nodiscard]] int saplingsNear(const Vec3& p, float radius) const { return countSaplingsInRange(p, radius); }

@@ -54,9 +54,12 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
     // Startowe zasoby i zamki
     // Startowe zasoby leżą w zamku (zamek jest pierwszym magazynem).
     factions = {};
-    Resources startRes[kFactionCount] = {{60, 40, 50}, {60, 40, 50}};
-    if (diff == Difficulty::Hard) startRes[kEnemy] = {120, 90, 100};
-    if (diff == Difficulty::Easy) startRes[kPlayer] = {100, 70, 80};
+    using C = CarryType;
+    const Resources normalStart{{C::Planks, 60}, {C::Stone, 40}, {C::Wood, 10}, {C::Bread, 20}, {C::Fish, 15}, {C::Weapons, 4}};
+    const Resources richStart{{C::Planks, 110}, {C::Stone, 80}, {C::Wood, 20}, {C::Bread, 40}, {C::Fish, 30}, {C::Weapons, 8}};
+    Resources startRes[kFactionCount] = {normalStart, normalStart};
+    if (diff == Difficulty::Hard) startRes[kEnemy] = richStart;
+    if (diff == Difficulty::Easy) startRes[kPlayer] = richStart;
 
     for (int f = 0; f < kFactionCount; ++f) {
         const int castle = placeBuilding(BuildingType::Castle, snapToGrid(startPos[f]), f, true);
@@ -76,7 +79,7 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
     // Przeciwnik zaczyna z kilkoma budynkami gospodarczymi (zależnie od poziomu trudności).
     {
         const int extra = diff == Difficulty::Easy ? 1 : (diff == Difficulty::Normal ? 2 : 4);
-        const BuildingType pre[] = {BuildingType::Woodcutter, BuildingType::Farm, BuildingType::Quarry, BuildingType::Barracks};
+        const BuildingType pre[] = {BuildingType::Woodcutter, BuildingType::Sawmill, BuildingType::Quarry, BuildingType::Hunter};
         for (int i = 0; i < extra; ++i) {
             Vec3 p;
             if (findPlacementNear(pre[i], kEnemy, startPos[kEnemy], 35.0f, 90.0f, p)) {
@@ -95,7 +98,8 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
 
     pushMessage("Witaj, władco! Rozbuduj osadę i zniszcz zamek wroga.", {1.0f, 0.95f, 0.6f, 1.0f});
     refreshFactionResources();
-    pushMessage("Zacznij od Drwala, Kamieniarza i Farmy.", {0.85f, 0.95f, 1.0f, 1.0f});
+    pushMessage("Zacznij od Drwala z Tartakiem (deski) i Kamieniarza; żywność: Rybak, Myśliwy, Farma+Młyn+Piekarnia.",
+                {0.85f, 0.95f, 1.0f, 1.0f});
     pushMessage("Połącz warsztaty drogą (T) z zamkiem - towary liczą się dopiero w magazynie.", {0.85f, 0.95f, 1.0f, 1.0f});
     return true;
 }

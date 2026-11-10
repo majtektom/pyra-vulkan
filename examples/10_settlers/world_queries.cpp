@@ -35,7 +35,7 @@ int World::pickUnit(const Ray& ray) const {
     float bestT = std::numeric_limits<float>::max();
     for (size_t i = 0; i < units.size(); ++i) {
         const Unit& u = units[i];
-        if (!u.alive) continue;
+        if (!u.alive || u.state == UnitState::Garrison) continue;
         const UnitDef& def = unitDef(u.type);
         float t;
         if (raySphere(ray, add(u.pos, {0.0f, def.height * 0.5f, 0.0f}), std::max(3.2f, def.radius * 1.5f), t) && t < bestT) {
@@ -135,7 +135,10 @@ bool World::canPlace(BuildingType type, const Vec3& pos, int faction, std::strin
     }
     if (minH < kWaterLevel + 1.5f) return fail("Za blisko wody");
     if (maxH > kSnowLine - 1.0f) return fail("Ośnieżony szczyt - tu nie da się budować");
-    if (type == BuildingType::Mine) {
+    if (type == BuildingType::Fisher && !waterNear(pos, buildingDef(type).workRadius * 0.6f)) {
+        return fail("Rybaka stawia się nad wodą");
+    }
+    if (productionDef(type).kind == WorkKind::Mine) {
         // Kopalnia wchodzi w zbocze góry - musi stać w górach i może stać na bardziej nierównym terenie.
         if (heightAt(pos.x, pos.z) < kMountainLevel) return fail("Kopalnię stawia się w górach (szare skały)");
         if (maxH - minH > 11.0f) return fail("Zbocze zbyt strome");
@@ -268,6 +271,53 @@ int World::countSaplingsInRange(const Vec3& from, float radius) const {
 
 // Leśniczy: losuje miejsce na sadzonkę w zasięgu chaty. Miejsce musi być przechodnie, poniżej granicy lasu,
 // z dala od innych drzew (6 j.) i budynków (5 j.). Gdy las w okolicy jest już gęsty (45 drzew), nie sadzimy.
+// Czy w promieniu radius od punktu jest woda (próbki na kilku okręgach).
+bool World::waterNear(const Vec3& p, float radius) const {
+    for (float r = 10.0f; r <= radius; r += 10.0f) {
+        for (int k = 0; k < 16; ++k) {
+            const float a = static_cast<float>(k) * PI / 8.0f;
+            if (heightAt(p.x + std::cos(a) * r, p.z + std::sin(a) * r) < kWaterLevel - 0.5f) return true;
+        }
+    }
+    return false;
+}
+
+// Rybak: przechodnie miejsce na brzegu (woda w odległości do 7 jednostek) w zasięgu chaty.
+bool World::findFishingSpot(const Building& fisher, Vec3& out) {
+    const float radius = buildingDef(fisher.type).workRadius;
+    for (int attempt = 0; attempt < 60; ++attempt) {
+        const float angle = randf(0.0f, 2.0f * PI);
+        const float r = randf(10.0f, radius);
+        const Vec3 p{fisher.pos.x + std::cos(angle) * r, 0.0f, fisher.pos.z + std::sin(angle) * r};
+        if (!nav_.isWalkableWorld(p.x, p.z) || !nav_.sameRegion(p, fisher.door())) continue;
+        bool shore = false;
+        for (int k = 0; k < 8 && !shore; ++k) {
+            const float a = static_cast<float>(k) * PI / 4.0f;
+            shore = heightAt(p.x + std::cos(a) * 7.0f, p.z + std::sin(a) * 7.0f) < kWaterLevel - 0.3f;
+        }
+        if (shore) {
+            out = p;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Myśliwy: przechodnie miejsce w okolicy (na nizinie lub zboczach, nie w wodzie).
+bool World::findHuntingSpot(const Building& hunter, Vec3& out) {
+    const float radius = buildingDef(hunter.type).workRadius;
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        const float angle = randf(0.0f, 2.0f * PI);
+        const float r = randf(20.0f, radius);
+        const Vec3 p{hunter.pos.x + std::cos(angle) * r, 0.0f, hunter.pos.z + std::sin(angle) * r};
+        if (!nav_.isWalkableWorld(p.x, p.z) || !nav_.sameRegion(p, hunter.door())) continue;
+        if (heightAt(p.x, p.z) < kWaterLevel + 2.0f) continue;
+        out = p;
+        return true;
+    }
+    return false;
+}
+
 bool World::findPlantingSpot(const Building& forester, Vec3& out) {
     const float radius = buildingDef(BuildingType::Forester).workRadius;
     int treesAround = 0;
@@ -323,7 +373,7 @@ int World::findEnemyUnitNear(int faction, const Vec3& p, float radius) const {
     float bestScore = std::numeric_limits<float>::max();
     for (size_t i = 0; i < units.size(); ++i) {
         const auto& u = units[i];
-        if (!u.alive || u.faction == faction) continue;
+        if (!u.alive || u.faction == faction || u.state == UnitState::Garrison) continue;   // załoga wieży jest w środku
         const float d = dist2D(u.pos, p);
         if (d > radius) continue;
         // Żołnierze mają pierwszeństwo przed osadnikami
@@ -370,7 +420,7 @@ bool World::findPlacementNear(BuildingType type, int faction, const Vec3& center
 const char* World::stateName(UnitState s) {
     static const char* names[] = {"Idle", "Moving", "GoBuild", "Building", "GoToWork", "WorkWait",
                                   "GoGather", "Gathering", "ReturnHome", "Attack",
-                                  "GoToRoad", "CarrierWait", "CarrierWalk"};
+                                  "GoToRoad", "CarrierWait", "CarrierWalk", "GoGarrison", "Garrison"};
     return names[static_cast<int>(s)];
 }
 
@@ -379,7 +429,7 @@ const char* World::stateName(UnitState s) {
 // wydostają się sami (przechodzą przez inne jednostki).
 bool World::isTravelState(UnitState s) {
     return s == UnitState::Moving || s == UnitState::GoBuild || s == UnitState::GoToWork ||
-           s == UnitState::GoGather || s == UnitState::ReturnHome;
+           s == UnitState::GoGather || s == UnitState::ReturnHome || s == UnitState::GoGarrison;
 }
 
 // Pełny opis jednostki do logów: stan, pozycja i cel (z informacją o komórkach nawigacji i obszarach),
@@ -387,7 +437,7 @@ bool World::isTravelState(UnitState s) {
 std::string World::describeUnit(int id) const {
     static const char* stateNames[] = {"Idle", "Moving", "GoBuild", "Building", "GoToWork", "WorkWait",
                                        "GoGather", "Gathering", "ReturnHome", "Attack",
-                                  "GoToRoad", "CarrierWait", "CarrierWalk"};
+                                  "GoToRoad", "CarrierWait", "CarrierWalk", "GoGarrison", "Garrison"};
     const Unit& u = units[id];
     char buf[512];
     int cx = -1, cz = -1;

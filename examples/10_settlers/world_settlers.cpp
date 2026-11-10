@@ -205,16 +205,16 @@ void World::settlerRepair(Unit& u, Building& b, float dt) {
     // Drewno jest pobierane "z góry" za kolejne 10% (repairCredit = PŻ już opłacone).
     if (b.repairCredit <= 0.0f) {
         FactionState& fs = factions[b.faction];
-        if (fs.res.wood < 1) {
+        if (fs.res[CarryType::Planks] < 1) {
             b.repairBlocked = true;
             if (b.faction == kPlayer && gameTime - b.repairMsgTime > 30.0f) {
                 b.repairMsgTime = gameTime;
-                pushMessage(std::string("Naprawa wstrzymana (") + def.name + ") - brak drewna", {1.0f, 0.75f, 0.4f, 1.0f});
+                pushMessage(std::string("Naprawa wstrzymana (") + def.name + ") - brak desek", {1.0f, 0.75f, 0.4f, 1.0f});
             }
             becomeIdleSettler(u);
             return;
         }
-        spend(b.faction, {1, 0, 0});
+        spend(b.faction, Resources{{CarryType::Planks, 1}});
         b.repairCredit += def.maxHp * 0.1f;
     }
 
@@ -277,9 +277,11 @@ void World::settlerWorkWait(Unit& u, int id, float dt) {
     }
 
     const BuildingDef& def = buildingDef(b->type);
-    if (b->type == BuildingType::Woodcutter || b->type == BuildingType::Quarry) {
+    const ProductionDef& prod = productionDef(b->type);
+    switch (prod.kind) {
+    case WorkKind::Gather: {
         // Drwal / kamieniarz: najbliższe wolne drzewo / skała w zasięgu pracy.
-        const NodeKind kind = b->type == BuildingType::Woodcutter ? NodeKind::Tree : NodeKind::Rock;
+        const NodeKind kind = prod.output == CarryType::Wood ? NodeKind::Tree : NodeKind::Rock;
         checkWorkResources(*b);   // aktualizuje ostrzeżenia "kończą się / brak surowca"
         const int node = findNearestNode(kind, b->pos, def.workRadius);
         if (node < 0) {
@@ -290,16 +292,30 @@ void World::settlerWorkWait(Unit& u, int id, float dt) {
         u.resourceNode = node;
         u.state = UnitState::GoGather;
         u.path.clear();
-    } else if (b->type == BuildingType::Mine) {
-        // Górnik: wchodzi do kopalni i wydobywa kamień z wnętrza góry (nie potrzebuje skał na powierzchni).
+        return;
+    }
+    case WorkKind::Mine:
+    case WorkKind::Process:
+        // Górnik / przetwórnia: praca we wnętrzu budynku, o ile tragarze dowieźli towary wejściowe
+        // (kopalnia - żywność, tartak - kłody, huta - ruda i węgiel...).
+        if (!consumeInputs(*b)) {
+            u.timer = 2.0f;   // czeka na dostawę
+            return;
+        }
         u.state = UnitState::Gathering;
-        u.timer = 7.0f;
+        u.timer = prod.workTime;
         u.path.clear();
-    } else if (b->type == BuildingType::Forester) {
-        // Leśniczy: wolne miejsce na sadzonkę w okolicy chaty.
+        return;
+    case WorkKind::Forester:
+    case WorkKind::Fisher:
+    case WorkKind::Hunter: {
+        // Leśniczy: miejsce na sadzonkę; rybak: brzeg wody; myśliwy: miejsce w okolicy.
         Vec3 spot;
-        if (!findPlantingSpot(*b, spot)) {
-            u.timer = 8.0f;   // las jest gęsty albo brak miejsca - spróbujemy później
+        const bool found = prod.kind == WorkKind::Forester ? findPlantingSpot(*b, spot)
+                         : prod.kind == WorkKind::Fisher   ? findFishingSpot(*b, spot)
+                                                            : findHuntingSpot(*b, spot);
+        if (!found) {
+            u.timer = 8.0f;   // brak miejsca - spróbujemy później
             return;
         }
         u.workSpot = spot;
@@ -307,32 +323,55 @@ void World::settlerWorkWait(Unit& u, int id, float dt) {
         u.resourceNode = -1;
         u.path.clear();
         setPath(u, spot);
-    } else if (b->type == BuildingType::Farm) {
+        return;
+    }
+    case WorkKind::Farm:
         // Rolnik: losowe miejsce na polu (pole jest częścią modelu farmy, przed zagrodą).
         u.workSpot = add(b->pos, rotateY({randf(-9.0f, 9.0f), 0.0f, randf(-1.0f, 9.5f)}, b->rotY));
         u.state = UnitState::GoGather;
         u.resourceNode = -1;
         u.path.clear();
         setPath(u, u.workSpot);
-    } else {
+        return;
+    case WorkKind::None:
         u.timer = 5.0f;
+        return;
     }
 }
 
-// Marsz do drzewa / skały / miejsca na polu.
+// Zużywa towary wejściowe na jeden cykl pracy (z dostaw przywiezionych przez tragarzy).
+// false = czegoś brakuje (praca czeka).
+bool World::consumeInputs(Building& b) {
+    const ProductionDef& prod = productionDef(b.type);
+    Resources need;
+    for (CarryType in : prod.inputs) {
+        if (in != CarryType::None) need[in] += inputPerCycle(in);
+    }
+    if (need.total() == 0) return true;
+    if (!b.delivered.canAfford(need)) {
+        b.inputStarved = true;
+        return false;
+    }
+    b.delivered.subtract(need);
+    b.inputStarved = false;
+    return true;
+}
+
+// Marsz do drzewa / skały / miejsca na polu / miejsca pracy (sadzenie, łowienie, polowanie).
 void World::settlerGoGather(Unit& u, int id, float dt) {
     Building* b = workplaceOf(u, id);
     if (!b) {
         becomeIdleSettler(u);
         return;
     }
+    const ProductionDef& prod = productionDef(b->type);
 
-    if (b->type == BuildingType::Forester) {
-        // Marsz na miejsce sadzenia (zwykła nawigacja). Gdy nie da się dojść - wracamy po nowe miejsce.
+    if (prod.kind == WorkKind::Forester || prod.kind == WorkKind::Fisher || prod.kind == WorkKind::Hunter) {
+        // Marsz na miejsce pracy (zwykła nawigacja). Gdy nie da się dojść - wracamy po nowe miejsce.
         const float distance = dist2D(u.pos, u.workSpot);
         if (distance < 2.0f || (!u.path.empty() && u.pathIndex >= u.path.size() && distance < 6.0f)) {
             u.state = UnitState::Gathering;
-            u.timer = 4.0f;   // sadzenie
+            u.timer = prod.workTime;
             u.path.clear();
             return;
         }
@@ -350,11 +389,11 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
         return;
     }
 
-    if (b->type == BuildingType::Farm) {
+    if (prod.kind == WorkKind::Farm) {
         // Pole leży wewnątrz obrysu farmy (komórki zablokowane), więc idziemy prosto, bez nawigacji.
         if (dist2D(u.pos, u.workSpot) < 0.8f) {
             u.state = UnitState::Gathering;
-            u.timer = 6.0f;
+            u.timer = prod.workTime;
             return;
         }
         u.path = {u.workSpot};
@@ -379,7 +418,7 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
     // która może leżeć dalej niż promień skały - koniec ścieżki w pobliżu też oznacza dotarcie.
     if (distance < n.radius + 3.0f || (pathDone && distance < n.radius + 3.0f + kNavCell * 2.0f)) {
         u.state = UnitState::Gathering;
-        u.timer = n.kind == NodeKind::Tree ? 4.0f : 5.0f;   // czas ścinania / kucia
+        u.timer = prod.workTime;   // czas ścinania / kucia
         u.stuckTimer = 0.0f;
         u.path.clear();
         return;
@@ -408,7 +447,8 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
     followPath(u, dt, n.radius + 2.0f);
 }
 
-// Ścinanie drzewa / kucie skały / praca w polu. Po skończeniu osadnik niesie surowiec.
+// Praca: ścinanie / kucie / pole / sadzenie / łowienie / polowanie albo praca we wnętrzu (kopalnia,
+// przetwórnia). Po skończeniu osadnik niesie towar wyjściowy do flagi warsztatu.
 void World::settlerGather(Unit& u, int id, float dt) {
     Building* b = workplaceOf(u, id);
     if (!b) {
@@ -416,26 +456,29 @@ void World::settlerGather(Unit& u, int id, float dt) {
         return;
     }
     u.timer -= dt;
+    const ProductionDef& prod = productionDef(b->type);
+    auto finishWithOutput = [&]() {
+        u.carry = prod.output;
+        u.state = UnitState::ReturnHome;
+        u.path.clear();
+    };
 
-    if (b->type == BuildingType::Farm) {
-        if (u.timer <= 0.0f) {
-            u.carry = CarryType::Food;
-            u.state = UnitState::ReturnHome;
-            u.path.clear();
-        }
+    switch (prod.kind) {
+    case WorkKind::Farm:
+    case WorkKind::Hunter:
+        if (u.timer <= 0.0f) finishWithOutput();
         return;
-    }
-    if (b->type == BuildingType::Mine) {
-        // Górnik pracuje we wnętrzu (model ukryty w syncVisuals), słychać tylko kilof.
-        playWorkSound(u, "mine", b->pos, 1.0f, 1.4f, 0.5f, dt);
-        if (u.timer <= 0.0f) {
-            u.carry = CarryType::Stone;
-            u.state = UnitState::ReturnHome;   // wychodzi przed wejście i oddaje urobek
-            u.path.clear();
-        }
+    case WorkKind::Fisher:
+        faceTowards(u, u.workSpot, dt);
+        if (u.timer <= 0.0f) finishWithOutput();
         return;
-    }
-    if (b->type == BuildingType::Forester) {
+    case WorkKind::Mine:
+    case WorkKind::Process:
+        // Praca we wnętrzu (model ukryty w syncVisuals), słychać tylko narzędzia.
+        playWorkSound(u, prod.kind == WorkKind::Mine ? "mine" : "hammer", b->pos, 1.0f, 1.4f, 0.45f, dt);
+        if (u.timer <= 0.0f) finishWithOutput();   // wychodzi przed wejście i oddaje wyrób
+        return;
+    case WorkKind::Forester:
         faceTowards(u, u.workSpot, dt);
         if (u.timer <= 0.0f) {
             // Posadzona sadzonka to drzewo z growth ~0 - rośnie w updateNodes, drwal zetnie je po wyrośnięciu.
@@ -447,6 +490,9 @@ void World::settlerGather(Unit& u, int id, float dt) {
             u.path.clear();
         }
         return;
+    case WorkKind::Gather:
+    case WorkKind::None:
+        break;
     }
 
     if (u.resourceNode < 0 || !nodes[u.resourceNode].alive) {
@@ -466,18 +512,12 @@ void World::settlerGather(Unit& u, int id, float dt) {
     // Gotowe: zabieramy jedną porcję surowca.
     n.amount--;
     n.reserved = std::max(0, n.reserved - 1);
-    if (tree) {
-        u.carry = CarryType::Wood;
-        if (n.amount <= 0) {
-            n.fallTimer = 0.0f;   // ostatnia porcja - drzewo się przewraca (World::updateNodes)
-            emitSound("hit_building", n.pos, 0.7f);
-        }
-    } else {
-        u.carry = CarryType::Stone;
+    if (tree && n.amount <= 0) {
+        n.fallTimer = 0.0f;   // ostatnia porcja - drzewo się przewraca (World::updateNodes)
+        emitSound("hit_building", n.pos, 0.7f);
     }
     u.resourceNode = -1;
-    u.state = UnitState::ReturnHome;
-    u.path.clear();
+    finishWithOutput();
 }
 
 // Powrót z surowcem: do drzwi warsztatu (rolnik - do zagrody na tyłach pola).
@@ -487,7 +527,7 @@ void World::settlerReturnHome(Unit& u, int id, float dt) {
         becomeIdleSettler(u);
         return;
     }
-    const bool farm = b->type == BuildingType::Farm;
+    const bool farm = productionDef(b->type).kind == WorkKind::Farm;
     const Vec3 door = b->door();
     const Vec3 target = farm ? add(b->pos, rotateY({0.0f, 0.0f, -2.5f}, b->rotY)) : door;
 

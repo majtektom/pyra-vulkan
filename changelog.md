@@ -52,6 +52,13 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: łańcuchy produkcji - 12 towarów (`CarryType`: kłody, kamień, deski, zboże, mąka, chleb, ryby, mięso,
+   węgiel, ruda, żelazo, broń) i `Resources` jako tablica z pseudo-towarem "dowolna żywność" w kosztach; nowe budynki:
+   Tartak, Młyn, Piekarnia, Rybak (nad wodą), Myśliwy, Kopalnia węgla, Kopalnia rudy, Huta, Kuźnia; tabela
+   `productionDef` (zachowanie pracownika, wyjście, wejścia) zamiast warunków na typ budynku; warsztaty zamawiają
+   wejścia z magazynów (dostawy tragarzy), kopalnie zjadają żywność, żołnierze wymagają broni; budowa i naprawy
+   w deskach; pasek budowy w 6 grupach (`GuiToolbar::Style::areaLeft/areaRight`), okno gospodarki z 12 towarami,
+   znacznik "brak dostaw"; AI buduje pełne łańcuchy; test `productionChainTest`
  - Osadnicy: dolny pasek budowy zamiast okna (`app_buildbar.cpp`) — ikony pixel-art w grupach Mieszkańcy/Surowce/
    Logistyka/Wojsko, karta informacji z opisem i kosztem (brakujące surowce na czerwono), klawisze skrótu na ikonach;
    panel zaznaczenia nad paskiem, okna akcji przy lewej krawędzi

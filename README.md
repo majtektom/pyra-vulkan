@@ -56,7 +56,10 @@ Binaria lądują w `bin/`:
 ./bin/10_settlers_example
 ```
 
-Osadnicy sami budują i pracują (drwal, leśniczy sadzący las, kamieniarz, kopalnia w górach, farma), domy podnoszą limit ludności,
+Osadnicy sami budują i pracują, a gospodarka opiera się na **łańcuchach produkcji** (12 towarów):
+drwal → tartak (kłody → deski, materiał budowlany), kamieniarz i kopalnia kamienia, farma → młyn → piekarnia
+(zboże → mąka → chleb), rybak i myśliwy (ryby, mięso), kopalnie węgla i rudy (w górach, zjadają żywność) →
+huta (żelazo) → kuźnia (broń potrzebna do szkolenia żołnierzy); leśniczy sadzi las. Domy podnoszą limit ludności,
 koszary szkolą mieczników i łuczników, wieże poszerzają terytorium i strzelają do wrogów; wieża przy granicy odbiera wrogowi pas ziemi
 (granica wypada w połowie nakładania się zasięgów), a budynki na przejętym terenie płoną.
 

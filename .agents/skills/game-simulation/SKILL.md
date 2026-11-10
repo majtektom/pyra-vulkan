@@ -61,6 +61,11 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
   stoją bezczynni, na ruchliwych się nie wyrabiają, a routing "najkrótszą drogą" potrafi kierować towar na odcinek
   bez tragarza (wszystko staje).
 - Surowce "na koncie" = suma zapasów magazynów (licz zawsze z magazynów, nie trzymaj osobnego licznika).
+- Łańcuchy produkcji jako DANE: tabela (zachowanie pracownika, towar wyjściowy, towary wejściowe, czas) zamiast
+  `if (typ == ...)` w automacie stanów. Warsztat zamawia wejścia z magazynów do małego bufora (zlecenia dostaw),
+  pracownik zużywa je na cykl; brak wejść = znacznik "brak dostaw" i komunikat. "Dowolna żywność" jako pseudo-towar
+  w kosztach, zamieniany na konkretny rodzaj przy opłaceniu zlecenia.
+- Balans sprawdzaj autoplayem z logiem "na co czekają dostawy" - od razu widać wąskie gardło łańcucha.
 
 ## 6. Terytorium
 

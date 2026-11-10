@@ -116,7 +116,8 @@ void GuiToolbar::layout(float screenW, float screenH) {
         w_ += n * s.slot + (n - 1.0f) * s.gap + (g + 1 < groups_.size() ? s.groupGap : 0.0f);
     }
     h_ = 8.0f + s.labelH + s.slot + 10.0f;
-    x_ = std::floor(screenW * 0.5f - w_ * 0.5f);
+    const float areaW = screenW - s.areaLeft - s.areaRight;
+    x_ = std::floor(s.areaLeft + std::max(0.0f, areaW - w_) * 0.5f);
     y_ = screenH - h_ - s.bottomMargin;
     slots_.clear();
     float sx = x_ + s.pad;

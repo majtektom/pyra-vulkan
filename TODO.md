@@ -123,8 +123,7 @@ VK_LAYER_VALIDATE_SYNC=1 VK_LAYER_DUPLICATE_MESSAGE_LIMIT=1000 ./bin/09_vegetati
 
 Rozgrywka (największy efekt):
 
-Łańcuchy produkcji. Teraz jest prosto: drewno i kamień idą do magazynu. Można dodać tartak (kłody → deski), młyn i piekarnię (zboże → mąka → chleb) oraz rybaka i myśliwego. Kopalnia mogłaby wydobywać też rudę i węgiel, a huta z kuźnią produkowałyby broń do szkolenia żołnierzy. Każdy budynek to w zasadzie wpis w tabeli definicji i jeden stan robotnika.
-Zajmowanie wrogich wież: żołnierz, który wejdzie do pustej wieży wroga, przejmuje ją razem z terenem. To naturalne rozwinięcie dzisiejszego terytorium i obsadzania wież.
+
 Zapis i wczytanie gry. Plik ustawień w JSON już jest, a świat da się zapisać jako ziarno mapy plus listy budynków, jednostek i surowców.
 Mgła wojny i zwiad: teren wroga jest niewidoczny, dopóki nie podejdą tam twoje jednostki. Można ją zrobić jako teksturę widoczności nakładaną w shaderze terenu i na minimapie.
 Silnik (przyda się też innym przykładom):

@@ -281,24 +281,208 @@ MeshData roadFlagMesh(const Vec3& fc) {
     return b.build();
 }
 
-// Towar leżący przy fladze (mniejszy niż niesiony przez osadnika).
-MeshData goodMesh(CarryType t) {
-    MeshBuilder b;
+// Kształt towaru o środku podstawy w punkcie c (skala 1 = towar niesiony przez osadnika).
+// Wspólny dla towaru w rękach i leżącego przy fladze.
+void addGoodShape(MeshBuilder& b, CarryType t, const Vec3& c, float k) {
+    auto box = [&](float x, float y, float z, float sx, float sy, float sz, const Vec3& col) {
+        b.box({c.x + x * k, c.y + y * k, c.z + z * k}, {sx * k, sy * k, sz * k}, col);
+    };
     switch (t) {
-    case CarryType::Wood:
-        b.box({0.0f, 0.35f, 0.0f}, {0.6f, 0.6f, 2.4f}, kWood);
-        b.box({0.0f, 0.36f, 1.21f}, {0.5f, 0.5f, 0.02f}, kStraw);
+    case CarryType::Wood:      // kłoda z jasnym czołem
+        box(0, 0.35f, 0, 0.65f, 0.65f, 2.6f, kWood);
+        box(0, 0.36f, 1.31f, 0.55f, 0.55f, 0.02f, kStraw);
         break;
     case CarryType::Stone:
-        b.box({0.0f, 0.45f, 0.0f}, {1.1f, 0.9f, 1.0f}, kStone);
+        box(0, 0.5f, 0, 1.2f, 1.0f, 1.1f, kStone);
         break;
-    case CarryType::Food:
-        b.sphere({0.0f, 0.6f, 0.0f}, 0.65f, 4, 7, {0.85f, 0.75f, 0.45f});
-        b.box({0.0f, 1.2f, 0.0f}, {0.25f, 0.25f, 0.25f}, kStraw);
+    case CarryType::Planks:    // trzy deski
+        for (int i = 0; i < 3; ++i) box(0, 0.12f + i * 0.22f, 0, 1.1f, 0.18f, 2.6f, shade({0.85f, 0.65f, 0.38f}, 1.0f - i * 0.06f));
+        break;
+    case CarryType::Grain:     // worek zboża
+    case CarryType::Flour:     // worek mąki
+        b.sphere({c.x, c.y + 0.7f * k, c.z}, 0.75f * k, 4, 7, t == CarryType::Grain ? Vec3{0.85f, 0.75f, 0.42f} : Vec3{0.95f, 0.94f, 0.9f});
+        box(0, 1.35f, 0, 0.3f, 0.3f, 0.3f, kDarkWood);
+        break;
+    case CarryType::Bread:     // bochenek
+        box(0, 0.35f, 0, 1.0f, 0.6f, 1.5f, {0.75f, 0.5f, 0.22f});
+        box(0, 0.7f, 0, 0.8f, 0.2f, 1.3f, {0.85f, 0.6f, 0.3f});
+        break;
+    case CarryType::Fish:
+        box(0, 0.3f, 0, 0.45f, 0.55f, 1.5f, {0.55f, 0.68f, 0.78f});
+        box(0, 0.3f, -0.95f, 0.15f, 0.7f, 0.45f, {0.45f, 0.58f, 0.7f});
+        break;
+    case CarryType::Meat:      // udziec z kością
+        b.sphere({c.x, c.y + 0.55f * k, c.z}, 0.6f * k, 4, 7, {0.75f, 0.28f, 0.25f});
+        box(0, 0.55f, 0.85f, 0.2f, 0.2f, 0.7f, {0.95f, 0.93f, 0.85f});
+        break;
+    case CarryType::Coal:
+        box(0, 0.45f, 0, 1.1f, 0.9f, 1.0f, {0.13f, 0.13f, 0.15f});
+        break;
+    case CarryType::Ore:       // skała z rdzawymi żyłami
+        box(0, 0.45f, 0, 1.1f, 0.9f, 1.0f, {0.42f, 0.38f, 0.36f});
+        box(0.2f, 0.92f, 0.1f, 0.6f, 0.06f, 0.5f, {0.72f, 0.38f, 0.22f});
+        break;
+    case CarryType::Iron:      // sztaby żelaza
+        box(0, 0.22f, 0, 1.3f, 0.4f, 0.6f, {0.55f, 0.58f, 0.64f});
+        box(0, 0.62f, 0, 1.1f, 0.4f, 0.55f, {0.6f, 0.63f, 0.7f});
+        break;
+    case CarryType::Weapons:   // miecz w pochwie i tarcza
+        box(-0.25f, 0.2f, 0, 0.2f, 0.25f, 2.4f, kSteel);
+        box(-0.25f, 0.2f, -0.7f, 0.7f, 0.25f, 0.2f, {0.6f, 0.5f, 0.2f});
+        box(0.45f, 0.15f, 0.2f, 1.0f, 0.2f, 1.2f, {0.5f, 0.32f, 0.18f});
         break;
     default:
         break;
     }
+}
+
+// Towar leżący przy fladze (mniejszy niż niesiony przez osadnika).
+MeshData goodMesh(CarryType t) {
+    MeshBuilder b;
+    addGoodShape(b, t, {0.0f, 0.0f, 0.0f}, 0.85f);
+    return b.build();
+}
+
+// Wejście do kopalni w zboczu: skalny kopiec, obudowa wejścia, tory i wózek z urobkiem (kolor wg kopalni).
+MeshData mineVariantMesh(const Vec3& fc, CarryType ore) {
+    MeshBuilder b;
+    foundation(b, 8.0f);
+    const Vec3 rock{0.48f, 0.47f, 0.45f};
+    b.sphere({0.0f, 1.5f, -2.5f}, 7.5f, 4, 7, rock);
+    b.sphere({-4.0f, 0.5f, -1.0f}, 4.0f, 3, 6, shade(rock, 0.9f));
+    b.sphere({4.2f, 0.8f, -1.5f}, 4.2f, 3, 6, shade(rock, 1.1f));
+    b.box({0.0f, 2.2f, 4.0f}, {3.4f, 4.4f, 1.2f}, {0.08f, 0.07f, 0.06f});
+    b.box({-2.0f, 2.4f, 4.4f}, {0.6f, 4.8f, 0.6f}, kDarkWood);
+    b.box({2.0f, 2.4f, 4.4f}, {0.6f, 4.8f, 0.6f}, kDarkWood);
+    b.box({0.0f, 5.0f, 4.4f}, {4.8f, 0.7f, 0.8f}, kDarkWood);
+    b.box({-0.6f, 0.15f, 6.5f}, {0.2f, 0.2f, 4.0f}, kSteel);
+    b.box({0.6f, 0.15f, 6.5f}, {0.2f, 0.2f, 4.0f}, kSteel);
+    b.box({0.0f, 0.9f, 7.0f}, {1.8f, 1.1f, 2.2f}, kWood);
+    addGoodShape(b, ore, {0.0f, 1.3f, 7.0f}, 1.1f);
+    flag(b, {4.5f, 0.0f, 5.5f}, 9.0f, fc);
+    return b.build();
+}
+
+// Tartak: otwarta drewniana wiata, kłody z jednej strony, deski z drugiej, pionowa piła tarczowa.
+MeshData sawmillMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 8.0f);
+    for (int sx = -1; sx <= 1; sx += 2) {
+        for (int sz = -1; sz <= 1; sz += 2) b.box({5.5f * sx, 3.0f, 3.5f * sz - 1.0f}, {0.6f, 6.0f, 0.6f}, kDarkWood);
+    }
+    b.box({0.0f, 1.4f, -5.0f}, {11.4f, 2.8f, 0.4f}, kWood);   // tylna ścianka
+    b.gableRoof({0.0f, 6.0f, -1.0f}, 12.6f, 9.6f, 3.4f, shade(kThatch, 0.7f));
+    b.box({0.0f, 1.1f, -1.0f}, {7.0f, 0.4f, 1.6f}, kDarkWood);   // stół
+    b.box({0.0f, 2.1f, -1.0f}, {0.15f, 1.8f, 1.8f}, kSteel);    // piła
+    for (int i = 0; i < 3; ++i) addGoodShape(b, CarryType::Wood, {-6.6f, i * 0.7f, 2.0f + i * 0.2f}, 1.2f);
+    addGoodShape(b, CarryType::Planks, {5.8f, 0.0f, 3.2f}, 1.4f);
+    flag(b, {-5.8f, 0.0f, -6.0f}, 9.0f, fc);
+    return b.build();
+}
+
+// Młyn: kamienna wieża zwężająca się ku górze, stożkowy dach i cztery skrzydła na froncie.
+MeshData millMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 7.0f);
+    b.cylinder({0.0f, 0.0f, 0.0f}, 4.2f, 11.0f, 10, kPlaster, 3.2f);
+    b.cone({0.0f, 11.0f, 0.0f}, 3.8f, 4.0f, 10, kRoofTile);
+    b.box({0.0f, 1.8f, 4.0f}, {1.8f, 3.2f, 0.3f}, kDarkWood);
+    b.box({0.0f, 7.0f, 3.5f}, {1.2f, 1.2f, 0.3f}, kWindow);
+    // Skrzydła (krzyż) na osi przed wieżą
+    b.box({0.0f, 10.0f, 4.2f}, {0.8f, 0.8f, 1.2f}, kDarkWood);
+    b.box({0.0f, 10.0f, 4.8f}, {0.6f, 15.0f, 0.2f}, kWood);
+    b.box({0.0f, 10.0f, 4.8f}, {15.0f, 0.6f, 0.2f}, kWood);
+    for (int s = -1; s <= 1; s += 2) {
+        b.box({0.0f, 10.0f + s * 4.5f, 4.95f}, {2.0f, 5.5f, 0.1f}, kPlaster);
+        b.box({s * 4.5f, 10.0f, 4.95f}, {5.5f, 2.0f, 0.1f}, kPlaster);
+    }
+    addGoodShape(b, CarryType::Flour, {3.6f, 0.0f, 4.6f}, 1.2f);
+    flag(b, {-5.0f, 0.0f, 5.0f}, 9.0f, fc);
+    return b.build();
+}
+
+// Piekarnia: dom z kominem i ceglany piec chlebowy przy ścianie.
+MeshData bakeryMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 7.0f);
+    b.box({-1.0f, 3.0f, -0.5f}, {9.0f, 5.0f, 8.0f}, kPlaster);
+    b.box({-1.0f, 2.0f, 3.55f}, {2.0f, 3.2f, 0.2f}, kDarkWood);
+    b.box({-4.0f, 3.6f, 3.55f}, {1.6f, 1.3f, 0.2f}, kWindow);
+    b.gableRoof({-1.0f, 5.5f, -0.5f}, 10.0f, 9.4f, 3.8f, kRoofTile);
+    const Vec3 brick{0.66f, 0.32f, 0.22f};
+    b.sphere({4.6f, 0.5f, 1.0f}, 2.4f, 3, 7, brick);                   // piec
+    b.box({4.6f, 1.0f, 3.3f}, {1.2f, 1.0f, 0.3f}, {0.95f, 0.5f, 0.1f}); // żar
+    b.box({4.6f, 5.0f, 0.0f}, {1.0f, 4.0f, 1.0f}, brick);               // komin pieca
+    addGoodShape(b, CarryType::Bread, {1.5f, 0.0f, 4.8f}, 1.1f);
+    flag(b, {-5.8f, 0.0f, 5.8f}, 9.0f, fc);
+    return b.build();
+}
+
+// Rybak: mała drewniana chata, suszące się sieci na tyczkach, beczka i łódka na kozłach.
+MeshData fisherMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 6.5f);
+    b.box({0.0f, 2.5f, -1.0f}, {8.0f, 4.0f, 7.0f}, shade(kWood, 1.05f));
+    b.box({-2.0f, 1.8f, 2.55f}, {1.8f, 3.0f, 0.2f}, kDarkWood);
+    b.gableRoof({0.0f, 4.5f, -1.0f}, 9.0f, 8.0f, 3.0f, kSlate);
+    b.box({3.0f, 1.5f, 4.5f}, {0.2f, 3.0f, 0.2f}, kDarkWood);
+    b.box({5.5f, 1.5f, 4.5f}, {0.2f, 3.0f, 0.2f}, kDarkWood);
+    b.box({4.25f, 2.0f, 4.5f}, {2.4f, 1.8f, 0.05f}, {0.78f, 0.75f, 0.62f});   // sieć
+    b.cylinder({-4.5f, 0.0f, 4.0f}, 0.7f, 1.4f, 8, kDarkWood);
+    b.box({0.5f, 0.9f, 5.8f}, {1.6f, 0.7f, 4.2f}, {0.32f, 0.45f, 0.6f});      // łódka
+    addGoodShape(b, CarryType::Fish, {-4.5f, 1.4f, 4.0f}, 0.8f);
+    flag(b, {5.0f, 0.0f, -4.5f}, 8.0f, fc);
+    return b.build();
+}
+
+// Myśliwy: chata z bali z porożem nad drzwiami i stojakiem z suszącą się skórą.
+MeshData hunterMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 6.5f);
+    b.box({0.0f, 2.5f, -1.0f}, {8.0f, 4.0f, 7.0f}, kWood);
+    for (int i = 0; i < 3; ++i) b.box({0.0f, 1.0f + i * 1.2f, 2.55f}, {8.2f, 0.3f, 0.15f}, kDarkWood);
+    b.box({0.0f, 1.8f, 2.6f}, {1.8f, 3.0f, 0.2f}, kDarkWood);
+    b.gableRoof({0.0f, 4.5f, -1.0f}, 9.0f, 8.0f, 3.0f, shade(kThatch, 0.8f));
+    const Vec3 antler{0.92f, 0.88f, 0.78f};
+    b.box({0.0f, 4.0f, 2.7f}, {2.4f, 0.2f, 0.2f}, antler);
+    b.box({-1.1f, 4.6f, 2.7f}, {0.2f, 1.2f, 0.2f}, antler);
+    b.box({1.1f, 4.6f, 2.7f}, {0.2f, 1.2f, 0.2f}, antler);
+    b.box({4.0f, 1.6f, 4.2f}, {0.2f, 3.2f, 0.2f}, kDarkWood);
+    b.box({6.0f, 1.6f, 4.2f}, {0.2f, 3.2f, 0.2f}, kDarkWood);
+    b.box({5.0f, 2.2f, 4.2f}, {1.8f, 1.8f, 0.1f}, {0.55f, 0.36f, 0.2f});      // skóra
+    flag(b, {-5.0f, 0.0f, -4.5f}, 8.0f, fc);
+    return b.build();
+}
+
+// Huta: kamienny piec hutniczy (zwężający się) z żarem w otworze, przybudówka i stos rudy.
+MeshData smelterMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 8.0f);
+    b.cylinder({-1.5f, 0.0f, -1.0f}, 4.2f, 12.0f, 10, kDarkStone, 2.4f);
+    b.cylinder({-1.5f, 12.0f, -1.0f}, 1.6f, 2.5f, 8, shade(kDarkStone, 0.8f));
+    b.box({-1.5f, 1.6f, 3.0f}, {1.8f, 2.0f, 0.6f}, {1.0f, 0.55f, 0.12f});     // żar
+    b.box({4.5f, 2.2f, -2.0f}, {4.5f, 4.4f, 5.5f}, kStone);
+    b.gableRoof({4.5f, 4.4f, -2.0f}, 5.2f, 6.0f, 2.4f, kSlate);
+    addGoodShape(b, CarryType::Ore, {4.0f, 0.0f, 3.8f}, 1.2f);
+    addGoodShape(b, CarryType::Iron, {6.0f, 0.0f, 3.6f}, 1.2f);
+    flag(b, {-6.2f, 0.0f, 5.5f}, 9.0f, fc);
+    return b.build();
+}
+
+// Kuźnia: kamienny dom z dużym kominem, przed nim kowadło na pniu i palenisko.
+MeshData smithyMesh(const Vec3& fc) {
+    MeshBuilder b;
+    foundation(b, 8.0f);
+    b.box({0.0f, 3.0f, -1.5f}, {10.0f, 5.0f, 8.0f}, kStone);
+    b.box({-2.0f, 2.0f, 2.55f}, {2.2f, 3.4f, 0.2f}, kDarkWood);
+    b.gableRoof({0.0f, 5.5f, -1.5f}, 11.0f, 9.4f, 3.6f, kSlate);
+    b.box({3.5f, 8.0f, -1.5f}, {1.8f, 6.0f, 1.8f}, kDarkStone);              // komin
+    b.cylinder({2.5f, 0.0f, 4.8f}, 0.8f, 1.2f, 8, kWood);                   // pień
+    b.box({2.5f, 1.55f, 4.8f}, {1.6f, 0.6f, 0.7f}, {0.28f, 0.28f, 0.3f});   // kowadło
+    b.box({-4.5f, 0.6f, 4.8f}, {2.0f, 1.2f, 2.0f}, kDarkStone);              // palenisko
+    b.box({-4.5f, 1.3f, 4.8f}, {1.4f, 0.3f, 1.4f}, {1.0f, 0.5f, 0.1f});
+    addGoodShape(b, CarryType::Weapons, {5.8f, 0.0f, 4.4f}, 1.0f);
+    flag(b, {-6.0f, 0.0f, -6.0f}, 9.0f, fc);
     return b.build();
 }
 
@@ -324,7 +508,7 @@ MeshData mineMesh(const Vec3& fc) {
     return b.build();
 }
 
-// Osadnik w słomkowym kapeluszu; wariant z niesionym surowcem (drewno / kamień / worek zboża).
+// Osadnik w słomkowym kapeluszu; wariant z niesionym towarem (każdy z kGoodTypeCount towarów).
 MeshData settlerMesh(const Vec3& fc, CarryType carry) {
     MeshBuilder b;
     b.box({-0.4f, 1.1f, 0.0f}, {0.6f, 2.2f, 0.8f}, kPants);
@@ -336,18 +520,11 @@ MeshData settlerMesh(const Vec3& fc, CarryType carry) {
     b.sphere({0.0f, 5.15f, 0.0f}, 0.78f, 5, 8, kSkin);
     b.cylinder({0.0f, 5.55f, 0.0f}, 1.35f, 0.15f, 10, kStraw);
     b.cone({0.0f, 5.7f, 0.0f}, 0.85f, 0.9f, 8, kStraw);
-    switch (carry) {
-    case CarryType::Wood:
+    // Niesiony towar: kłody na ramieniu, reszta przed sobą w rękach.
+    if (carry == CarryType::Wood) {
         b.box({0.75f, 4.6f, 0.0f}, {0.65f, 0.65f, 3.4f}, kWood);
-        break;
-    case CarryType::Stone:
-        b.box({0.0f, 3.7f, 1.0f}, {1.4f, 1.1f, 1.1f}, kStone);
-        break;
-    case CarryType::Food:
-        b.sphere({0.0f, 3.6f, 1.1f}, 0.85f, 4, 7, {0.85f, 0.75f, 0.45f});
-        break;
-    default:
-        break;
+    } else if (carry != CarryType::None) {
+        addGoodShape(b, carry, {0.0f, 3.1f, 1.1f}, 1.0f);
     }
     return b.build();
 }
@@ -524,9 +701,18 @@ void buildGameMeshes(Engine& engine) {
         mm->loadMesh(buildingMeshName(BuildingType::Forester, f), foresterMesh(fc));
         mm->loadMesh(buildingMeshName(BuildingType::Mine, f), mineMesh(fc));
         mm->loadMesh(buildingMeshName(BuildingType::Warehouse, f), warehouseMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Sawmill, f), sawmillMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Mill, f), millMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Bakery, f), bakeryMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Fisher, f), fisherMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Hunter, f), hunterMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::CoalMine, f), mineVariantMesh(fc, CarryType::Coal));
+        mm->loadMesh(buildingMeshName(BuildingType::OreMine, f), mineVariantMesh(fc, CarryType::Ore));
+        mm->loadMesh(buildingMeshName(BuildingType::Smelter, f), smelterMesh(fc));
+        mm->loadMesh(buildingMeshName(BuildingType::Smithy, f), smithyMesh(fc));
         mm->loadMesh(flagMeshName(f), roadFlagMesh(fc));
 
-        for (int c = 0; c <= 3; ++c) {
+        for (int c = 0; c <= kGoodTypeCount; ++c) {
             const auto carry = static_cast<CarryType>(c);
             mm->loadMesh(unitMeshName(UnitType::Settler, f, carry), settlerMesh(fc, carry));
         }

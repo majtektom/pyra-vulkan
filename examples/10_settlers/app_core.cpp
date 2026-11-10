@@ -122,7 +122,7 @@ void SettlersApp::setupInput() {
     map.bindKey(kActEconomy, SDL_SCANCODE_I);
     static const SDL_Scancode numKeys[] = {SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, SDL_SCANCODE_5,
                                             SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8, SDL_SCANCODE_9};
-    for (int i = 0; i < kBuildMenuSize; ++i) {
+    for (int i = 0; i < kHotkeyBuildings; ++i) {
         map.bindKey("build." + std::to_string(i + 1), numKeys[i]);
     }
 }

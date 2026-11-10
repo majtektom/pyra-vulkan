@@ -16,16 +16,18 @@ namespace {
 
 // Kolejność budowy komputerowego przeciwnika.
 const BuildingType kAiBuildOrder[] = {
-    BuildingType::Woodcutter, BuildingType::House, BuildingType::Quarry, BuildingType::Woodcutter,
-    BuildingType::Farm, BuildingType::House, BuildingType::Forester, BuildingType::Mine, BuildingType::Barracks, BuildingType::House,
-    BuildingType::Woodcutter, BuildingType::Tower, BuildingType::House, BuildingType::Farm,
-    BuildingType::Barracks, BuildingType::Forester, BuildingType::Mine, BuildingType::Tower, BuildingType::House,
+    BuildingType::Woodcutter, BuildingType::Sawmill, BuildingType::Quarry, BuildingType::House,
+    BuildingType::Woodcutter, BuildingType::Fisher, BuildingType::Barracks, BuildingType::Hunter,
+    BuildingType::House, BuildingType::Farm, BuildingType::Farm, BuildingType::Mill, BuildingType::Bakery,
+    BuildingType::CoalMine, BuildingType::OreMine, BuildingType::CoalMine, BuildingType::Smelter, BuildingType::Smithy,
+    BuildingType::Forester, BuildingType::House, BuildingType::Tower, BuildingType::Woodcutter, BuildingType::Mine,
+    BuildingType::Tower, BuildingType::House,
 };
-// Po wyczerpaniu listy AI powtarza ten cykl. Kopalnia, dla której nie ma gór w terytorium, jest
-// pomijana po kilku nieudanych próbach (placementFailures).
+// Po wyczerpaniu listy AI powtarza ten cykl. Kopalnie, dla których nie ma gór w terytorium, i rybak
+// bez wody są pomijane po kilku nieudanych próbach (placementFailures).
 const BuildingType kAiLateCycle[] = {
-    BuildingType::House, BuildingType::Woodcutter, BuildingType::Tower, BuildingType::House, BuildingType::Barracks,
-    BuildingType::Quarry, BuildingType::Farm, BuildingType::Forester, BuildingType::Mine,
+    BuildingType::House, BuildingType::Woodcutter, BuildingType::Tower, BuildingType::Fisher, BuildingType::Barracks,
+    BuildingType::Quarry, BuildingType::Hunter, BuildingType::Forester, BuildingType::CoalMine, BuildingType::OreMine,
 };
 
 } // namespace
@@ -54,14 +56,17 @@ Vec3 World::aiHome(int f) const {
     return (fs.castle >= 0 && buildings[fs.castle].alive) ? buildings[fs.castle].pos : startPos[f];
 }
 
-// Dochód bierny rekompensuje prostotę decyzji AI: +1 każdego surowca co 1/income sekund.
+// Dochód bierny rekompensuje prostotę decyzji AI: co 1/income sekund deski i kamień, a co drugi raz
+// także broń (pełny łańcuch kopalnie -> huta -> kuźnia AI buduje dopiero w środku gry).
 void World::aiCollectIncome(int f, float dt) {
     FactionState& fs = factions[f];
     const float income = difficulty == Difficulty::Easy ? 0.12f : (difficulty == Difficulty::Normal ? 0.3f : 0.6f);
     fs.incomeAccumulator += dt * income;
     while (fs.incomeAccumulator >= 1.0f) {
         fs.incomeAccumulator -= 1.0f;
-        deposit(f, {1, 1, 1});   // dochód trafia do magazynów (o ile jest miejsce)
+        const bool weapon = (++fs.incomeTicks % 2) == 0;
+        deposit(f, Resources{{CarryType::Planks, 1}, {CarryType::Stone, 1},
+                             {CarryType::Weapons, weapon ? 1 : 0}});   // do magazynów (o ile jest miejsce)
     }
 }
 

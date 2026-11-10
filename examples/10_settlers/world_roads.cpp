@@ -103,11 +103,18 @@ bool World::spend(int f, const Resources& cost) {
     auto takeFrom = [&](Building& b) {
         for (int t = 1; t <= kGoodTypeCount; ++t) {
             const auto type = static_cast<CarryType>(t);
-            int& have = resourceRef(b.stock, type);
-            int& need = resourceRef(left, type);
-            const int n = std::min(have, need);
-            have -= n;
-            need -= n;
+            const int n = std::min(b.stock[type], left[type]);
+            b.stock[type] -= n;
+            left[type] -= n;
+        }
+        // Dowolna żywność: z tego rodzaju, którego magazyn ma najwięcej.
+        while (left[CarryType::AnyFood] > 0 && b.stock.food() > 0) {
+            CarryType best = CarryType::Bread;
+            for (CarryType fd : kFoods) {
+                if (b.stock[fd] > b.stock[best]) best = fd;
+            }
+            b.stock[best] -= 1;
+            left[CarryType::AnyFood] -= 1;
         }
     };
     const int castle = factions[f].castle;
@@ -575,7 +582,7 @@ bool World::networkPath(int from, int to, std::vector<Vec3>& out) const {
 // od razu opłacone z najbliższego magazynu, który ma towar.
 void World::orderMaterials(int building, const Resources& r) {
     const int f = buildings[building].faction;
-    for (int t = 1; t <= kGoodTypeCount; ++t) {
+    for (int t = 1; t < kResourceSlots; ++t) {   // także AnyFood - konkretny rodzaj wybiera fundOrder
         const auto type = static_cast<CarryType>(t);
         int left = resourceOf(r, type);
         while (left > 0) {
@@ -599,23 +606,51 @@ void World::orderMaterials(int building, const Resources& r) {
     refreshFactionResources();
 }
 
+// Warsztat z towarami wejściowymi (kopalnia - żywność, tartak - kłody, huta - ruda i węgiel...) zamawia je
+// z magazynów, gdy ma ich (razem z zamówionymi w drodze) mniej niż kInputBuffer. Tragarze dowożą zamówienia.
+void World::requestInputs(int id) {
+    Building& b = buildings[id];
+    if (!b.alive || !b.constructed || !flagConnected(b.flag)) return;
+    for (CarryType in : productionDef(b.type).inputs) {
+        if (in == CarryType::None) continue;
+        int have = in == CarryType::AnyFood ? b.delivered.food() : b.delivered[in];
+        for (const auto& o : orders) {
+            if (!o.alive || o.dest != id) continue;
+            const bool match = in == CarryType::AnyFood ? (o.type == CarryType::AnyFood || isFood(o.type)) : o.type == in;
+            if (match) have += o.amount;
+        }
+        if (have < kInputBuffer) orderMaterials(id, Resources{{in, kInputBuffer - have}});
+    }
+}
+
 // Zdejmuje towar z magazynu najbliższego odbiorcy (który ma go dość).
 bool World::fundOrder(TransportOrder& o) {
     const Vec3 at = buildings[o.dest].pos;
     int best = -1;
     float bestD = 1e9f;
+    CarryType bestType = o.type;
     for (size_t i = 0; i < buildings.size(); ++i) {
         const Building& b = buildings[i];
         if (!b.alive || !b.constructed || b.faction != o.faction || storageCapacity(b.type) <= 0) continue;
-        if (resourceOf(b.stock, o.type) < o.amount) continue;
+        // Dowolna żywność: rodzaj, którego ten magazyn ma najwięcej.
+        CarryType type = o.type;
+        if (type == CarryType::AnyFood) {
+            type = CarryType::Bread;
+            for (CarryType fd : kFoods) {
+                if (b.stock[fd] > b.stock[type]) type = fd;
+            }
+        }
+        if (b.stock[type] < o.amount) continue;
         const float d = dist2D(b.pos, at);
         if (d < bestD) {
             bestD = d;
             best = static_cast<int>(i);
+            bestType = type;
         }
     }
     if (best < 0) return false;
-    resourceRef(buildings[best].stock, o.type) -= o.amount;
+    o.type = bestType;   // od teraz konkretny towar (chleb / ryby / mięso)
+    buildings[best].stock[o.type] -= o.amount;
     o.source = best;
     o.funded = true;
     routingDirty_ = true;

@@ -96,9 +96,12 @@ void SettlersApp::drawTopBar(Engine& e) {
         text(value, x, y, 0.6f, c);
         x += engine_.measureText(value, 0.6f) + 26.0f;
     };
-    item("Drewno:", std::to_string(fs.res.wood), {0.95f, 0.75f, 0.45f, 1.0f});
-    item("Kamień:", std::to_string(fs.res.stone), {0.85f, 0.85f, 0.9f, 1.0f});
-    item("Żywność:", std::to_string(fs.res.food), {0.95f, 0.9f, 0.4f, 1.0f});
+    // Najważniejsze towary (pełna lista: okno gospodarki - I).
+    item("Deski:", std::to_string(fs.res[CarryType::Planks]), {0.95f, 0.75f, 0.45f, 1.0f});
+    item("Kamień:", std::to_string(fs.res[CarryType::Stone]), {0.85f, 0.85f, 0.9f, 1.0f});
+    item("Drewno:", std::to_string(fs.res[CarryType::Wood]), {0.8f, 0.6f, 0.4f, 1.0f});
+    item("Żywność:", std::to_string(fs.res.food()), {0.95f, 0.9f, 0.4f, 1.0f});
+    item("Broń:", std::to_string(fs.res[CarryType::Weapons]), {0.85f, 0.9f, 1.0f, 1.0f});
     const int used = w.storageUsedOf(kPlayer), cap = w.storageCapacityOf(kPlayer);
     item("Magazyn:", std::to_string(used) + "/" + std::to_string(cap),
          used * 10 >= cap * 9 ? Color{1.0f, 0.5f, 0.4f, 1.0f} : Color{0.85f, 0.85f, 0.75f, 1.0f});
@@ -188,8 +191,10 @@ void SettlersApp::drawWorldBars() {
             label = "! pełna flaga - za mało tragarzy";
         } else if (b.lacksResources) {
             label = b.type == BuildingType::Woodcutter ? "! brak drzew" : "! brak kamienia";
+        } else if (b.inputStarved && b.worker >= 0) {
+            label = "! brak dostaw - praca stoi";
         } else if (b.repairBlocked) {
-            label = "! brak drewna na naprawę";
+            label = "! brak desek na naprawę";
         } else if (w.needsRepairPublic(b) && w.gameTime - b.lastDamagedTime > 8.0f) {
             label = "naprawa";
             color = {0.6f, 0.85f, 1.0f, 1.0f};
@@ -346,20 +351,36 @@ void SettlersApp::drawSelectionPanel() {
         }
         if (b.constructed && b.hp < def.maxHp * 0.97f) {
             const int rep = w.repairersOf(selectedBuilding_);
-            if (b.repairBlocked) status += "   Naprawa: brak drewna";
+            if (b.repairBlocked) status += "   Naprawa: brak desek";
             else if (rep > 0) status += "   Naprawia: " + std::to_string(rep);
             else if (w.gameTime - b.lastDamagedTime < 8.0f) status += "   Naprawa po walce";
             else status += "   Czeka na naprawę";
         }
         // Magazyn: zapasy; warsztat: towary na fladze i połączenie z magazynem.
         if (b.constructed && storageCapacity(b.type) > 0) {
-            resLine = "Zapas: drewno " + std::to_string(b.stock.wood) + ", kamień " + std::to_string(b.stock.stone) +
-                      ", żywność " + std::to_string(b.stock.food) + "   (" + std::to_string(b.stock.total()) + "/" +
-                      std::to_string(storageCapacity(b.type)) + ")";
+            resLine = "Zapas " + std::to_string(b.stock.total()) + "/" + std::to_string(storageCapacity(b.type)) + ": " +
+                      stockSummary(b.stock, 5);
             resColor = b.stock.total() >= storageCapacity(b.type) ? Color{1.0f, 0.55f, 0.35f, 1.0f} : Color{0.8f, 0.95f, 0.8f, 1.0f};
             if (b.type == BuildingType::Warehouse && !w.buildingLinked(b)) {
                 resLine = "Brak drogi do zamku - połącz Magazyn z siecią dróg ('Połącz drogą' lub T)";
                 resColor = {1.0f, 0.5f, 0.35f, 1.0f};
+            }
+        }
+        // Warsztat z towarami wejściowymi: co ma u siebie i czego brakuje.
+        if (b.constructed && b.faction == kPlayer) {
+            std::string inputs;
+            for (CarryType in : productionDef(b.type).inputs) {
+                if (in == CarryType::None) continue;
+                const int have = in == CarryType::AnyFood ? b.delivered.food() : b.delivered[in];
+                inputs += (inputs.empty() ? "" : ", ") + std::string(goodName(in)) + " " + std::to_string(have);
+            }
+            if (!inputs.empty()) {
+                resLine = "Dostarczone: " + inputs;
+                resColor = {0.8f, 0.95f, 0.8f, 1.0f};
+                if (b.inputStarved) {
+                    resLine += "  - BRAK w magazynach, praca stoi";
+                    resColor = {1.0f, 0.6f, 0.4f, 1.0f};
+                }
             }
         }
         if (b.constructed && producesGoods(b.type) && b.flag >= 0) {
@@ -475,7 +496,8 @@ void SettlersApp::drawHelp() {
                 "Po drogach chodzi się szybciej. Surowce liczą się dopiero w magazynie.",
                 "Zamek i Magazyn mieszczą po 200 towarów. Magazyn stawiaj blisko produkcji.",
                 "Domy zwiększają limit ludności. Wieże poszerzają terytorium.",
-                "Osadnicy naprawiają budynki (1 drewno = 10% PŻ).",
+                "Budowa i naprawy: deski z Tartaku (kłody od Drwala) i kamień.",
+                "Kopalnie zjadają żywność; Huta + Kuźnia robią broń dla Koszar.",
                 "Jednostki poza walką leczą się - najszybciej przy zamku i koszarach.",
                 "Zniszcz wrogi zamek, by wygrać!",
             };
@@ -528,6 +550,21 @@ void SettlersApp::economyPanelRect(float& x, float& y, float& w, float& h) const
 }
 
 // Okno gospodarki (klawisz I): gdzie są towary, zapełnienie magazynów, tragarze i przestoje warsztatów.
+// Krótki opis zapasu: n towarów, których jest najwięcej ("Deski 40, Kamień 30, Chleb 12").
+std::string SettlersApp::stockSummary(const Resources& r, int maxItems) {
+    std::vector<std::pair<int, CarryType>> items;
+    for (int t = 1; t <= kGoodTypeCount; ++t) {
+        if (r.v[t] > 0) items.push_back({r.v[t], static_cast<CarryType>(t)});
+    }
+    std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::string out;
+    for (size_t i = 0; i < items.size() && static_cast<int>(i) < maxItems; ++i) {
+        out += (out.empty() ? "" : ", ") + std::string(goodName(items[i].second)) + " " + std::to_string(items[i].first);
+    }
+    if (static_cast<int>(items.size()) > maxItems) out += "...";
+    return out.empty() ? "pusto" : out;
+}
+
 void SettlersApp::drawEconomy() {
     const World& w = *world_;
     float x, y, pw, ph;
@@ -553,23 +590,27 @@ void SettlersApp::drawEconomy() {
     float ly = y + 32.0f;
     text("GOSPODARKA", x + 18.0f, ly, 0.65f, head, 0.93f);
     ly += 30.0f;
-    const float c1 = x + 150.0f, c2 = x + 270.0f, c3 = x + 390.0f, c4 = x + 510.0f;
-    text("Towar", x + 18.0f, ly, 0.48f, dim, 0.93f);
-    text("w magazynach", c1, ly, 0.48f, dim, 0.93f);
-    text("na flagach", c2, ly, 0.48f, dim, 0.93f);
-    text("niesione", c3, ly, 0.48f, dim, 0.93f);
-    text("razem", c4, ly, 0.48f, dim, 0.93f);
-    ly += 24.0f;
+    // 12 towarów w dwóch kolumnach: nazwa, w magazynach, na flagach, niesione.
+    for (int col = 0; col < 2; ++col) {
+        const float cx = x + 18.0f + col * 312.0f;
+        text("Towar", cx, ly, 0.44f, dim, 0.93f);
+        text("magazyn", cx + 100.0f, ly, 0.44f, dim, 0.93f);
+        text("flagi", cx + 175.0f, ly, 0.44f, dim, 0.93f);
+        text("w drodze", cx + 225.0f, ly, 0.44f, dim, 0.93f);
+    }
+    ly += 22.0f;
+    const int rows = (kGoodTypeCount + 1) / 2;
     for (int t = 1; t <= kGoodTypeCount; ++t) {
         const auto g = static_cast<CarryType>(t);
-        const int a = resourceOf(stored, g), b = resourceOf(onFlags, g), c = resourceOf(carried, g);
-        text(goodName(g), x + 18.0f, ly, 0.52f, body, 0.93f);
-        text(std::to_string(a), c1, ly, 0.52f, {0.7f, 1.0f, 0.7f, 1.0f}, 0.93f);
-        text(std::to_string(b), c2, ly, 0.52f, body, 0.93f);
-        text(std::to_string(c), c3, ly, 0.52f, body, 0.93f);
-        text(std::to_string(a + b + c), c4, ly, 0.52f, body, 0.93f);
-        ly += 22.0f;
+        const int col = (t - 1) / rows, row = (t - 1) % rows;
+        const float cx = x + 18.0f + col * 312.0f, ry = ly + row * 20.0f;
+        gui_->addOverlayRect(cx, ry - 10.0f, 9.0f, 9.0f, goodColor(g), 0.932f);
+        text(goodName(g), cx + 14.0f, ry, 0.48f, body, 0.93f);
+        text(std::to_string(stored[g]), cx + 100.0f, ry, 0.48f, {0.7f, 1.0f, 0.7f, 1.0f}, 0.93f);
+        text(std::to_string(onFlags[g]), cx + 175.0f, ry, 0.48f, body, 0.93f);
+        text(std::to_string(carried[g]), cx + 225.0f, ry, 0.48f, body, 0.93f);
     }
+    ly += rows * 20.0f;
     text("Wydawać można tylko towary z magazynów.", x + 18.0f, ly + 4.0f, 0.44f, dim, 0.93f);
     ly += 34.0f;
 
@@ -593,9 +634,8 @@ void SettlersApp::drawEconomy() {
             gui_->addOverlayRect(x + 159.0f, ly - 11.0f, 202.0f, 11.0f, {0.0f, 0.0f, 0.0f, 0.8f}, 0.933f);
             gui_->addOverlayRect(x + 160.0f, ly - 10.0f, 200.0f * frac, 9.0f,
                                  frac >= 1.0f ? Color{1.0f, 0.4f, 0.3f, 1.0f} : Color{0.45f, 0.75f, 1.0f, 1.0f}, 0.932f);
-            text(std::to_string(b.stock.total()) + "/" + std::to_string(cap) + "  (D " + std::to_string(b.stock.wood) + ", K " +
-                     std::to_string(b.stock.stone) + ", Ż " + std::to_string(b.stock.food) + ")",
-                 x + 372.0f, ly, 0.44f, body, 0.93f);
+            text(std::to_string(b.stock.total()) + "/" + std::to_string(cap) + "  " + stockSummary(b.stock, 3), x + 372.0f, ly,
+                 0.42f, body, 0.93f);
         }
         ly += 21.0f;
         ++listed;

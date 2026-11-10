@@ -57,7 +57,9 @@ Podział: `World` (`settlers_world.h`, pliki `world_*.cpp`) = symulacja, bez wej
 Panel budowy to `GuiToolbar` z silnika (`app_buildbar.cpp` dostarcza tylko ikony i treść kart).
 Zasada: elementy przydatne innym grom (GUI, ustawienia, szum, matematyka) trafiają do `engine/`, a nie do przykładu.
 Mapa plików i opis każdego modułu: komentarz na górze `main.cpp`, `settlers_world.h`, `settlers_app.h`.
-Wszystkie liczby balansu: `settlers_defs.h/.cpp`.
+Wszystkie liczby balansu: `settlers_defs.h/.cpp` (budynki, `productionDef` - co produkuje i zużywa warsztat,
+jednostki, nazwy/kolory towarów). Nowy warsztat = wpis w obu tabelach + model (`settlers_assets.cpp`) + ikona
+(`app_buildbar.cpp`) + pozycja w `kBuildMenu`; zachowanie wynika z `WorkKind`.
 
 Tryby uruchomienia (zmienne środowiskowe):
 

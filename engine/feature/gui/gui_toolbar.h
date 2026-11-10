@@ -85,6 +85,8 @@ public:
         float pad = 12.0f;             // margines poziomy
         float labelH = 18.0f;          // wiersz z nazwami grup
         float bottomMargin = 8.0f;     // odstęp od dolnej krawędzi ekranu
+        float areaLeft = 0.0f;         // pasek wyśrodkowany w obszarze [areaLeft, szerokość - areaRight]
+        float areaRight = 0.0f;        //   (np. żeby nie zachodził na minimapę)
         float iconPixel = 4.0f;        // rozmiar "piksela" ikony
         std::array<float, 4> background{0.1f, 0.075f, 0.05f, 0.93f};
         std::array<float, 4> border{0.62f, 0.5f, 0.27f, 0.95f};

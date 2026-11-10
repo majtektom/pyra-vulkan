@@ -44,7 +44,7 @@ void SettlersApp::uiCheck(const char* name, bool ok) {
 void SettlersApp::crowdAndAccessTest() {
     World& w = *world_;
     w.aiEnabled = false;
-    w.debugSetStock(kPlayer, {2000, 2000, 2000});
+    w.debugSetStock(kPlayer, Resources::filled(150));
     const int castle = w.factions[kPlayer].castle;
     const Vec3 door = w.buildings[castle].door();
 
@@ -140,6 +140,7 @@ void SettlersApp::crowdAndAccessTest() {
 
 // Naprawa budynku, leczenie jednostki i sygnalizacja braku surowca.
 void SettlersApp::repairHealResourceTest() {
+    world_->debugSetStock(kPlayer, Resources::filled(100));   // deski na naprawę
     World& w = *world_;
     // Naprawa: uszkodzony dom
     int house = -1;
@@ -156,14 +157,14 @@ void SettlersApp::repairHealResourceTest() {
     w.buildings[house].lastDamagedTime = w.gameTime;
     w.units[soldier].hp = 20.0f;
     w.units[soldier].lastDamagedTime = w.gameTime;
-    const int woodBefore = w.factions[kPlayer].res.wood;
+    const int woodBefore = w.factions[kPlayer].res[CarryType::Planks];
     bool sawRepairer = false;
     for (int i = 0; i < 1500; ++i) {
         w.update(0.1f);
         sawRepairer = sawRepairer || w.repairersOf(house) > 0;
     }
-    LOG_INFO("[uitest] dom: {:.0f}/{:.0f} PŻ, zużyte drewno: {}, żołnierz: {:.0f} PŻ", w.buildings[house].hp, houseMax,
-             woodBefore - w.factions[kPlayer].res.wood, w.units[soldier].hp);
+    LOG_INFO("[uitest] dom: {:.0f}/{:.0f} PŻ, zużyte deski: {}, żołnierz: {:.0f} PŻ", w.buildings[house].hp, houseMax,
+             woodBefore - w.factions[kPlayer].res[CarryType::Planks], w.units[soldier].hp);
     uiCheck("osadnicy naprawiają uszkodzony budynek", sawRepairer && w.buildings[house].hp >= houseMax * 0.99f);
     uiCheck("jednostka poza walką się leczy", w.units[soldier].hp >= unitDef(UnitType::Swordsman).maxHp * 0.99f);
 
@@ -185,28 +186,36 @@ void SettlersApp::repairHealResourceTest() {
     uiCheck("komunikat o braku drzew", msg);
 }
 
-// SETTLERS_SHOWCASE=1: nowa gra z gotową kopalnią i leśniczym przy bazie, kamera skierowana na kopalnię
-// (do oglądania modeli i pracy górnika/leśniczego).
+// SETTLERS_SHOWCASE=1: nowa gra z gotowymi budynkami łańcuchów produkcji przy bazie (do oglądania modeli
+// i pracy osadników); kamera nad środkiem ciężkości postawionych budynków.
 void SettlersApp::showcaseBuildings() {
     World& w = *world_;
     const Vec3 castlePos = w.buildings[w.factions[kPlayer].castle].pos;
-    Vec3 focus = castlePos;
-    for (BuildingType type : {BuildingType::Forester, BuildingType::Mine}) {
+    Vec3 sum{};
+    int count = 0;
+    const BuildingType types[] = {BuildingType::Sawmill, BuildingType::Mill,  BuildingType::Bakery, BuildingType::Smelter,
+                                  BuildingType::Smithy,  BuildingType::Hunter, BuildingType::Fisher, BuildingType::Forester,
+                                  BuildingType::Mine,    BuildingType::CoalMine, BuildingType::OreMine};
+    for (BuildingType type : types) {
         bool placed = false;
-        for (float r = 40.0f; r < 175.0f && !placed; r += 8.0f) {
+        for (float r = 35.0f; r < 175.0f && !placed; r += 8.0f) {
             for (int k = 0; k < 48 && !placed; ++k) {
                 const float a = static_cast<float>(k) * 2.0f * PI / 48.0f;
                 const Vec3 p = w.snapToGrid(add(castlePos, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
                 if (w.canPlace(type, p, kPlayer)) {
-                    w.placeBuilding(type, p, kPlayer, true);
-                    if (type == BuildingType::Mine) focus = p;
+                    const int id = w.placeBuilding(type, p, kPlayer, true);
+                    w.autoConnectFlag(w.buildings[id].flag);
+                    if (r < 120.0f) {
+                        sum = add(sum, p);
+                        ++count;
+                    }
                     placed = true;
                 }
             }
         }
     }
-    cam_.setFocus(focus);
-    cam_.setDistance(90.0f);
+    cam_.setFocus(count > 0 ? multiply(sum, 1.0f / static_cast<float>(count)) : castlePos);
+    cam_.setDistance(160.0f);
 }
 
 // Góry, kopalnia i leśniczy:
@@ -216,7 +225,7 @@ void SettlersApp::showcaseBuildings() {
 void SettlersApp::mountainBuildingsTest() {
     World& w = *world_;
     w.aiEnabled = false;
-    w.debugSetStock(kPlayer, {5000, 5000, 5000});
+    w.debugSetStock(kPlayer, Resources::filled(150));
     const auto& nav = w.nav();
 
     // 1. Śnieg i zbocza
@@ -264,6 +273,7 @@ void SettlersApp::mountainBuildingsTest() {
     LOG_INFO("[uitest] kopalnia na nizinie: \"{}\"", reason);
     if (haveMine) {
         const int mine = w.placeBuilding(BuildingType::Mine, mineSpot, kPlayer, true);
+        w.autoConnectFlag(w.buildings[mine].flag);   // górnik potrzebuje żywności dowiezionej drogą
         for (int i = 0; i < 2400 && w.buildings[mine].produced < 2; ++i) w.update(0.1f);
         LOG_INFO("[uitest] kopalnia: wysokość {:.0f}, dostaw kamienia: {}", w.buildings[mine].pos.y, w.buildings[mine].produced);
         uiCheck("kopalnia wydobywa kamień", w.buildings[mine].produced >= 2);
@@ -332,7 +342,7 @@ void SettlersApp::territoryCaptureTest() {
 void SettlersApp::economyRoadTest() {
     World& w = *world_;
     w.aiEnabled = false;
-    w.debugSetStock(kPlayer, {40, 40, 40});
+    w.debugSetStock(kPlayer, Resources{{CarryType::Planks, 40}, {CarryType::Stone, 40}, {CarryType::Bread, 40}});
     const int castle = w.factions[kPlayer].castle;
     const Vec3 c = w.buildings[castle].pos;
     for (int i = 0; i < 8; ++i) w.debugSpawnUnit(UnitType::Settler, kPlayer, w.buildings[castle].door());
@@ -375,14 +385,14 @@ void SettlersApp::economyRoadTest() {
             w.buildings[wc].outputBlocked && w.flags[wcFlag].goods.size() + kGoodsPerTrip > static_cast<size_t>(kFlagCapacity));
 
     // 2. Droga do zamku. Zamek opróżniamy - warsztaty z wcześniejszych testów też dowożą do niego towary.
-    w.debugSetStock(kPlayer, {0, 0, 0});
+    w.debugSetStock(kPlayer, Resources{});
     const int producedBefore = w.buildings[wc].produced;
     std::string reason;
     const bool connected = w.autoConnectFlag(wcFlag, &reason);
     LOG_INFO("[uitest] droga drwal-zamek: {} {}", connected ? "zbudowana" : "BRAK", reason);
     uiCheck("autoConnectFlag łączy warsztat drogą z zamkiem", connected);
     for (int i = 0; i < 2400; ++i) w.update(0.1f);
-    const int delivered = w.buildings[castle].stock.wood;
+    const int delivered = w.buildings[castle].stock[CarryType::Wood];
     const int produced = w.buildings[wc].produced - producedBefore;
     LOG_INFO("[uitest] po 240 s: drewno w zamku {}, drwal wznowił produkcję: {} kursów, tragarzy {}", delivered, produced,
              carriers());
@@ -398,7 +408,7 @@ void SettlersApp::economyRoadTest() {
     fs.carrierAuto = true;
 
     // 4a. Dostawa materiałów na plac budowy
-    w.debugSetStock(kPlayer, {60, 40, 10});
+    w.debugSetStock(kPlayer, Resources{{CarryType::Planks, 60}, {CarryType::Stone, 40}, {CarryType::Bread, 10}});
     Vec3 houseSpot;
     if (findSpot(BuildingType::House, 40.0f, 120.0f, houseSpot)) {
         const int house = w.placeBuilding(BuildingType::House, houseSpot, kPlayer, false);
@@ -423,7 +433,7 @@ void SettlersApp::economyRoadTest() {
             Vec3 hs;
             if (findSpot(BuildingType::House, 30.0f, 160.0f, hs)) w.placeBuilding(BuildingType::House, hs, kPlayer, true);
         }
-        w.debugSetStock(kPlayer, {60, 40, 60});
+        w.debugSetStock(kPlayer, Resources{{CarryType::Planks, 60}, {CarryType::Stone, 40}, {CarryType::Bread, 30}, {CarryType::Fish, 30}, {CarryType::Weapons, 10}});
         for (size_t i = 0; i < w.units.size(); ++i) {   // żołnierze z wcześniejszych testów zajmują limit ludności
             if (w.units[i].alive && w.units[i].faction == kPlayer && w.units[i].type != UnitType::Settler) w.debugKillUnit(static_cast<int>(i));
         }
@@ -445,7 +455,7 @@ void SettlersApp::economyRoadTest() {
     }
 
     // 5. Pełny zamek -> Magazyn
-    w.debugSetStock(kPlayer, {storageCapacity(BuildingType::Castle), 0, 0});
+    w.debugSetStock(kPlayer, Resources{{CarryType::Stone, storageCapacity(BuildingType::Castle)}});
     Vec3 storeSpot;
     if (!findSpot(BuildingType::Warehouse, 40.0f, 140.0f, storeSpot)) {
         uiCheck("jest miejsce na magazyn", false);
@@ -456,16 +466,75 @@ void SettlersApp::economyRoadTest() {
     for (int i = 0; i < 2400; ++i) w.update(0.1f);
     LOG_INFO("[uitest] magazyn: połączony {}, zapas {} / zamek {}", storeConnected ? "tak" : "nie",
              w.buildings[store].stock.total(), w.buildings[castle].stock.total());
-    uiCheck("przy pełnym zamku towary trafiają do Magazynu", storeConnected && w.buildings[store].stock.wood > 0);
+    uiCheck("przy pełnym zamku towary trafiają do Magazynu", storeConnected && w.buildings[store].stock[CarryType::Wood] > 0);
     uiCheck("zamek nie przekracza pojemności", w.buildings[castle].stock.total() <= storageCapacity(BuildingType::Castle));
     uiCheck("surowce gracza = suma magazynów", w.factions[kPlayer].res.total() == w.storageUsedOf(kPlayer));
+}
+
+// Łańcuchy produkcji: każdy warsztat dostaje drogą swoje towary wejściowe z zamku i oddaje wyrób.
+// Zamek startuje z surowcami (kłody, zboże, mąka, ruda, węgiel, żelazo, żywność); po kilku minutach gry
+// sprawdzamy, że każdy budynek coś wyprodukował, a kopalnia zużyła żywność.
+void SettlersApp::productionChainTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    using C = CarryType;
+    w.debugSetStock(kPlayer, Resources{{C::Wood, 20}, {C::Grain, 16}, {C::Flour, 8}, {C::Ore, 12}, {C::Coal, 20},
+                                       {C::Iron, 8}, {C::Bread, 20}, {C::Fish, 10}, {C::Planks, 20}, {C::Stone, 10}});
+    const int castle = w.factions[kPlayer].castle;
+    const Vec3 c = w.buildings[castle].pos;
+    for (int i = 0; i < 16; ++i) w.debugSpawnUnit(UnitType::Settler, kPlayer, w.buildings[castle].door());
+
+    auto findSpot = [&](BuildingType type, Vec3& out) {
+        for (float r = 30.0f; r < 175.0f; r += 6.0f) {
+            for (int k = 0; k < 48; ++k) {
+                const float a = static_cast<float>(k) * 2.0f * PI / 48.0f + r * 0.013f;
+                const Vec3 p = w.snapToGrid(add(c, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                if (w.canPlace(type, p, kPlayer)) {
+                    out = p;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    const BuildingType chain[] = {BuildingType::Sawmill, BuildingType::Mill,     BuildingType::Bakery,
+                                  BuildingType::Smelter, BuildingType::Smithy,   BuildingType::CoalMine,
+                                  BuildingType::Hunter,  BuildingType::Fisher};
+    std::vector<std::pair<BuildingType, int>> placed;
+    for (BuildingType t : chain) {
+        Vec3 p;
+        if (!findSpot(t, p)) {
+            LOG_INFO("[uitest] łańcuch: brak miejsca na {} - pominięty", buildingDef(t).name);
+            continue;
+        }
+        const int id = w.placeBuilding(t, p, kPlayer, true);
+        std::string why;
+        if (!w.autoConnectFlag(w.buildings[id].flag, &why)) LOG_INFO("[uitest] łańcuch: {} bez drogi ({})", buildingDef(t).name, why);
+        placed.push_back({t, id});
+    }
+    const Resources before = w.factions[kPlayer].res;
+    for (int i = 0; i < 3600; ++i) w.update(0.1f);
+    const Resources after = w.factions[kPlayer].res;
+    for (const auto& [t, id] : placed) {
+        const Building& b = w.buildings[id];
+        LOG_INFO("[uitest] łańcuch: {} - wyprodukował {} razy, wejścia: {}", buildingDef(t).name, b.produced,
+                 stockSummary(b.delivered, 4));
+        const bool required = t != BuildingType::Fisher && t != BuildingType::CoalMine;   // zależne od mapy
+        if (required || b.produced > 0) {
+            uiCheck((std::string(buildingDef(t).name) + " produkuje").c_str(), b.produced >= 1);
+        }
+    }
+    LOG_INFO("[uitest] łańcuch: magazyn przed: {}", stockSummary(before, 12));
+    LOG_INFO("[uitest] łańcuch: magazyn po:    {}", stockSummary(after, 12));
+    uiCheck("kłody zamienione na deski", after[C::Planks] > before[C::Planks]);
+    uiCheck("kuźnia dostarcza broń", after[C::Weapons] > before[C::Weapons]);
 }
 
 // Stawia po kilka placów budowy każdego typu i symuluje świat - wszystkie muszą zostać ukończone.
 bool SettlersApp::constructionStressTest() {
     World& w = *world_;
     w.aiEnabled = false;
-    w.debugSetStock(kPlayer, {5000, 5000, 5000});
+    w.debugSetStock(kPlayer, Resources::filled(1000));
     for (int i = 0; i < 12; ++i) w.debugSpawnUnit(UnitType::Settler, kPlayer, w.buildings[w.factions[kPlayer].castle].door());
     const BuildingType types[] = {BuildingType::Tower, BuildingType::House, BuildingType::Woodcutter, BuildingType::Quarry,
                                   BuildingType::Farm, BuildingType::Barracks};
@@ -622,14 +691,14 @@ void SettlersApp::runUiTestStep() {
         // Podpowiedź brakujących surowców: zerujemy drewno i najeżdżamy na przycisk "Dom"
         {
             Resources r = world_->factions[kPlayer].res;
-            r.wood = 0;
+            r[CarryType::Planks] = 0;
             world_->debugSetStock(kPlayer, r);
         }
         float hx = 0.0f, hy = 0.0f;
         buildBarSlotCenter(0, hx, hy);   // przycisk "Dom" na dolnym pasku
         pushMouseMotion(hx, hy);
     } else if (f == 94) {
-        uiCheck("podpowiedź pokazuje brakujące surowce", hoverMissing_.find("20 drewna") != std::string::npos);
+        uiCheck("podpowiedź pokazuje brakujące surowce", hoverMissing_.find("20 desek") != std::string::npos);
         LOG_INFO("[uitest] podpowiedź: \"{}\"", hoverMissing_);
         crowdAndAccessTest();
         uiCheck("każdy typ budynku zostaje ukończony przez osadników", constructionStressTest());
@@ -637,6 +706,7 @@ void SettlersApp::runUiTestStep() {
         mountainBuildingsTest();
         territoryCaptureTest();
         economyRoadTest();
+        productionChainTest();
         showPause();
         uiOrigW_ = static_cast<int>(renderer_->width());
         uiOrigH_ = static_cast<int>(renderer_->height());
@@ -842,8 +912,8 @@ void SettlersApp::updateAutoplay() {
                 if (u.type != UnitType::Settler) ++soldiers;
                 else if (u.building >= 0) ++workers;
             }
-            LOG_INFO("[autoplay] t={}s {}: D={} K={} Z={} pop={}/{} bud={} plac={} wojsko={} pracuje={} zabici={} straty={} fale={}",
-                     static_cast<int>(w.gameTime), factionName(f), fs.res.wood, fs.res.stone, fs.res.food,
+            LOG_INFO("[autoplay] t={}s {}: deski={} kamień={} żywność={} pop={}/{} bud={} plac={} wojsko={} pracuje={} zabici={} straty={} fale={}",
+                     static_cast<int>(w.gameTime), factionName(f), fs.res[CarryType::Planks], fs.res[CarryType::Stone], fs.res.food(),
                      fs.population, fs.popCap, built, sites, soldiers, workers, fs.enemiesKilled, fs.unitsLost,
                      fs.waveNumber);
         }
@@ -861,6 +931,11 @@ void SettlersApp::updateAutoplay() {
                 else if (b.outputBlocked) ++blocked;
             }
             const TransportStats ts = w.transportStats(f);
+            Resources unfunded;   // na jakie towary czekają dostawy bez pokrycia w magazynach
+            for (const auto& o : w.orders) {
+                if (o.alive && o.faction == f && !o.funded) unfunded[o.type] += o.amount;
+            }
+            if (unfunded.total() > 0) LOG_INFO("[autoplay] {}: dostawy czekają na: {}", factionName(f), stockSummary(unfunded, 6));
             LOG_INFO("[autoplay] transport {}: drogi={} tragarze={}/{} zajęci={} na flagach={} dostawy={} (bez towaru {}) "
                      "magazyn={}/{} warsztaty={} bez drogi={} wstrzymane={}",
                      factionName(f), roadCount, ts.carriers, ts.target, ts.busy, onFlags, ts.ordersWaiting, ts.ordersUnfunded,

@@ -311,7 +311,9 @@ void World::demolish(int id) {
     Building& b = buildings[id];
     if (!b.alive || b.type == BuildingType::Castle) return;
     const Resources& c = buildingDef(b.type).cost;
-    deposit(b.faction, {c.wood / 2, c.stone / 2, c.food / 2});
+    Resources refund;
+    for (int t = 1; t <= kGoodTypeCount; ++t) refund.v[t] = c.v[t] / 2;
+    deposit(b.faction, refund);
     destroyBuilding(id, -1);
 }
 

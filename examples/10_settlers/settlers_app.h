@@ -117,11 +117,15 @@ inline constexpr const char* kActFaster = "time.faster";
 inline constexpr const char* kActRoad = "build.road";
 inline constexpr const char* kActEconomy = "ui.economy";
 
-// Budynki w panelu budowy - kolejność odpowiada klawiszom 1..9.
+// Budynki w panelu budowy. Pierwsze 9 ma klawisze 1..9, pozostałe stawia się z paska.
 inline constexpr BuildingType kBuildMenu[] = {
     BuildingType::House, BuildingType::Woodcutter, BuildingType::Forester, BuildingType::Quarry,
     BuildingType::Mine, BuildingType::Farm, BuildingType::Barracks, BuildingType::Tower, BuildingType::Warehouse,
+    // Łańcuchy produkcji (bez klawiszy)
+    BuildingType::Sawmill, BuildingType::Mill, BuildingType::Bakery, BuildingType::Fisher, BuildingType::Hunter,
+    BuildingType::CoalMine, BuildingType::OreMine, BuildingType::Smelter, BuildingType::Smithy,
 };
+inline constexpr int kHotkeyBuildings = 9;
 inline constexpr int kBuildMenuSize = static_cast<int>(std::size(kBuildMenu));
 
 // Kolor RGBA używany przez GUI i napisy.
@@ -164,6 +168,7 @@ inline const ControlLine kControls[] = {
     {"H", "stój (przerwanie rozkazu)"},
     {"", "BUDOWA"},
     {"1 - 9", "Dom, Drwal, Leśniczy, Kamieniarz, Kopalnia, Farma, Koszary, Wieża, Magazyn"},
+    {"pasek na dole", "pozostałe: Tartak, Młyn, Piekarnia, Rybak, Myśliwy, kopalnie, Huta, Kuźnia"},
     {"LPM / PPM", "postawienie budynku / anulowanie"},
     {"R", "obrót budynku przed postawieniem"},
     {"Shift + LPM", "postawienie kilku budynków z rzędu"},
@@ -206,19 +211,24 @@ inline const char* stateText(const Unit& u, const World& w) {
     case UnitState::GoToWork: return "Idzie do pracy";
     case UnitState::WorkWait: return "Odpoczywa w pracy";
     case UnitState::GoGather:
-        if (u.building >= 0 && w.buildings[u.building].type == BuildingType::Farm) return "Idzie na pole";
-        if (u.building >= 0 && w.buildings[u.building].type == BuildingType::Forester) return "Idzie sadzić drzewo";
-        return "Idzie po surowiec";
-    case UnitState::Gathering:
-        if (u.building >= 0) {
-            const auto t = w.buildings[u.building].type;
-            if (t == BuildingType::Woodcutter) return "Ścina drzewo";
-            if (t == BuildingType::Quarry) return "Kuje kamień";
-            if (t == BuildingType::Farm) return "Pracuje w polu";
-            if (t == BuildingType::Forester) return "Sadzi drzewo";
-            if (t == BuildingType::Mine) return "Wydobywa kamień w kopalni";
+    case UnitState::Gathering: {
+        if (u.building < 0) return "Pracuje";
+        const bool going = u.state == UnitState::GoGather;
+        const ProductionDef& p = productionDef(w.buildings[u.building].type);
+        switch (p.kind) {
+        case WorkKind::Gather:
+            if (p.output == CarryType::Wood) return going ? "Idzie do drzewa" : "Ścina drzewo";
+            return going ? "Idzie do skały" : "Kuje kamień";
+        case WorkKind::Farm: return going ? "Idzie na pole" : "Pracuje w polu";
+        case WorkKind::Forester: return going ? "Idzie sadzić drzewo" : "Sadzi drzewo";
+        case WorkKind::Fisher: return going ? "Idzie nad wodę" : "Łowi ryby";
+        case WorkKind::Hunter: return going ? "Idzie na polowanie" : "Poluje";
+        case WorkKind::Mine: return "Pracuje w kopalni";
+        case WorkKind::Process: return "Pracuje w warsztacie";
+        case WorkKind::None: break;
         }
-        return "Zbiera";
+        return "Pracuje";
+    }
     case UnitState::ReturnHome: return "Niesie surowiec";
     case UnitState::Attack: return "Walczy";
     case UnitState::GoToRoad:
@@ -434,6 +444,7 @@ private:
     // Okno gospodarki (I): towary w magazynach / na flagach / w drodze, magazyny, tragarze, przestoje.
     void drawEconomy();
     void economyPanelRect(float& x, float& y, float& w, float& h) const;
+    static std::string stockSummary(const Resources& r, int maxItems);
     // Przyciski liczby tragarzy (okienko pod panelem gospodarki).
     void changeCarriers(int delta);
     void toggleCarrierAuto();
@@ -493,6 +504,7 @@ private:
     void mountainBuildingsTest();
     void territoryCaptureTest();
     void economyRoadTest();
+    void productionChainTest();
     void showcaseBuildings();
     bool constructionStressTest();
     // Log stanu partii w trybie SETTLERS_AUTOPLAY i zakończenie po zadanym czasie.

@@ -160,9 +160,9 @@ void World::updateFactions(float dt) {
             // Gdy osadników prawie nie ma, zamek przyjmuje ich za darmo (ochrona przed "spiralą śmierci")
             const int settlerCost = settlerCount < 3 ? 0 : 3;
             if (castle.settlerTimer >= 7.0f && idleSettlers < wantedIdle && fs.population < fs.popCap &&
-                fs.res.food >= settlerCost) {
+                fs.res.food() >= settlerCost) {
                 castle.settlerTimer = 0.0f;
-                spend(f, {0, 0, settlerCost});
+                spend(f, Resources{{CarryType::AnyFood, settlerCost}});
                 const int id = spawnUnit(UnitType::Settler, f, castle.door());
                 units[id].timer = 0.5f;
                 if (f == kPlayer) {
@@ -268,7 +268,7 @@ void World::dispatchJobs(int f) {
         Building& b = buildings[bi];
         if (b.faction != f || !needsRepair(b) || gameTime - b.lastDamagedTime < 8.0f) continue;
         if (b.repairBlocked) {
-            if (factions[f].res.wood < 1) continue;
+            if (factions[f].res[CarryType::Planks] < 1) continue;
             b.repairBlocked = false;
         }
         const int limit = b.type == BuildingType::Castle ? 3 : 2;
@@ -405,6 +405,24 @@ void World::updateBuildings(float dt) {
         if (!b.alive || !b.constructed) continue;
         const BuildingDef& def = buildingDef(b.type);
 
+        // Warsztaty z towarami wejściowymi zamawiają je z magazynów (co 1 s).
+        b.inputRequestTimer -= dt;
+        if (b.inputRequestTimer <= 0.0f) {
+            b.inputRequestTimer = 1.0f;
+            requestInputs(static_cast<int>(i));
+            // Ostrzeżenie dla gracza: warsztat stoi, bo brakuje surowca w magazynach.
+            if (b.inputStarved && b.faction == kPlayer && gameTime - b.inputMsgTime > 90.0f) {
+                b.inputMsgTime = gameTime;
+                std::string need;
+                for (CarryType in : productionDef(b.type).inputs) {
+                    if (in == CarryType::None) continue;
+                    if (!need.empty()) need += " i ";
+                    need += goodGenitive(in);
+                }
+                pushMessage(std::string(def.name) + ": brak " + need + " - praca wstrzymana", {1.0f, 0.75f, 0.4f, 1.0f});
+            }
+        }
+
         // Kontrola surowców w zasięgu drwala / kamieniarza (niezależnie od pracownika)
         b.resourceCheckTimer -= dt;
         if (b.resourceCheckTimer <= 0.0f) {
@@ -469,8 +487,12 @@ void World::syncVisuals(float dt) {
     for (auto& u : units) {
         if (!u.alive || !u.entity) continue;
         // Górnik przy pracy jest wewnątrz kopalni - chowamy jego model.
-        const bool insideMine = u.state == UnitState::Gathering && u.building >= 0 &&
-                                buildings[u.building].alive && buildings[u.building].type == BuildingType::Mine;
+        // Górnik i pracownik przetwórni pracują we wnętrzu budynku - chowamy ich model.
+        bool insideMine = false;
+        if (u.state == UnitState::Gathering && u.building >= 0 && buildings[u.building].alive) {
+            const WorkKind kind = productionDef(buildings[u.building].type).kind;
+            insideMine = kind == WorkKind::Mine || kind == WorkKind::Process;
+        }
         u.entity->setActive(!insideMine);
         u.pos.y = heightAt(u.pos.x, u.pos.z);
         auto& tr = u.entity->transform();

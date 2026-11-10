@@ -283,11 +283,10 @@ void SettlersApp::dumpDebug() {
             }
         }
         if (!b.constructed || b.type == BuildingType::Barracks) {
-            LOG_INFO("[dostawy] dowiezione D={} K={} Ż={}", b.delivered.wood, b.delivered.stone, b.delivered.food);
+            LOG_INFO("[dostawy] dowiezione: {}", stockSummary(b.delivered, 12));
         }
         if (storageCapacity(b.type) > 0) {
-            LOG_INFO("[magazyn] zapas D={} K={} Ż={} ({}/{})", b.stock.wood, b.stock.stone, b.stock.food, b.stock.total(),
-                     storageCapacity(b.type));
+            LOG_INFO("[magazyn] zapas {}/{}: {}", b.stock.total(), storageCapacity(b.type), stockSummary(b.stock, 12));
         }
         ++dumped;
     }
