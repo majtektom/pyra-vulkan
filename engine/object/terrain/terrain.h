@@ -108,7 +108,7 @@ public:
      * @brief Ładuje mapę wysokości z pliku graficznego (PNG, JPG, BMP - skala szarości).
      *
      * Proces:
-     *   1. Wczytuje obraz przez stb_image.
+     *   1. Wczytuje obraz przez SDL3_image.
      *   2. Próbkuje co 4 piksel (downsample=4) dla zmniejszenia rozmiaru.
      *   3. Tworzy korzeń drzewa czwórkowego.
      *   4. Buduje całe drzewo czwórkowe (buildTree).

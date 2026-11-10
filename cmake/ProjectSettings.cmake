@@ -7,7 +7,10 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 
-set(PROJECT_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/bin)
+# Katalog z binarkami i skompilowanymi shaderami (domyślnie <repo>/bin; skrypt wydania buduje gdzie indziej,
+# żeby nie nadpisać binarek używanych na co dzień).
+set(ENGINE3D_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/bin CACHE PATH "Katalog wyjściowy binarek i shaderów")
+set(PROJECT_OUTPUT_DIR ${ENGINE3D_OUTPUT_DIR})
 set(PROJECT_SHADER_OUTPUT_DIR ${PROJECT_OUTPUT_DIR}/assets/shaders)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_OUTPUT_DIR})
@@ -33,20 +36,24 @@ if(NOT SDL3_FOUND AND NOT TARGET PkgConfig::SDL3)
     message(FATAL_ERROR "SDL3 not found. Install libsdl3-dev or sdl3 package.")
 endif()
 
-# SDL3_ttf
-pkg_check_modules(SDL3_TTF IMPORTED_TARGET sdl3-ttf)
-if(NOT SDL3_TTF_FOUND)
-    message(WARNING "SDL3_ttf not found. Font rendering will be unavailable.")
-    set(ENGINE3D_HAS_TTF 0)
-else()
-    set(ENGINE3D_HAS_TTF 1)
+# SDL3_ttf - rasteryzacja czcionek (wymagana; Fedora: SDL3_ttf-devel, Ubuntu: libsdl3-ttf-dev)
+pkg_check_modules(SDL3_TTF REQUIRED IMPORTED_TARGET sdl3-ttf)
+set(ENGINE3D_HAS_TTF 1)
+
+# SDL3_image - wczytywanie obrazów (mapy wysokości, tekstury glTF; Fedora: SDL3_image-devel, Ubuntu: libsdl3-image-dev)
+pkg_check_modules(SDL3_IMAGE REQUIRED IMPORTED_TARGET sdl3-image)
+
+# Binarki szukają libengine3d.so we własnym katalogu ($ORIGIN) - katalog bin/ można przenieść w dowolne miejsce.
+# ENGINE3D_PORTABLE=ON (paczka dla innych, tools/build_release.sh): libstdc++ i libgcc wkompilowane statycznie,
+# więc u odbiorcy nie jest potrzebna ta sama wersja kompilatora C++. Biblioteka C (glibc) zostaje dynamiczna -
+# o zgodności decyduje system, na którym budujemy (dlatego wydanie budujemy w starszym kontenerze Ubuntu).
+option(ENGINE3D_PORTABLE "Statyczne libstdc++/libgcc (paczka do przekazania)" OFF)
+if(ENGINE3D_PORTABLE)
+    add_link_options(-static-libstdc++ -static-libgcc)
 endif()
-
-# SDL3_image (optional, for future use)
-pkg_check_modules(SDL3_IMAGE IMPORTED_TARGET sdl3-image QUIET)
-
-# SDL3_sound (optional, for future use)
-pkg_check_modules(SDL3_SOUND IMPORTED_TARGET sdl3-sound QUIET)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
+set(CMAKE_INSTALL_RPATH "$ORIGIN")
 
 set(SHADER_SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
 set(SHADER_BINARY_ROOT ${PROJECT_SHADER_OUTPUT_DIR})

@@ -14,6 +14,12 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
 - `cmake/ShaderBundles.cmake` śledzi też `shared/*.hlsl` i `*_common.hlsl` — zmiana include przebudowuje shadery.
 - Nowy przykład: katalog w `examples/NN_nazwa/` + `add_subdirectory` w `examples/CMakeLists.txt`,
   `target_link_libraries(... PRIVATE engine3d)`. Nowy plik .cpp przykładu trzeba dopisać do jego `CMakeLists.txt`.
+- Paczka dla innych: `tools/build_release.sh` (kontener Ubuntu 25.04, `-DENGINE3D_PORTABLE=ON` = statyczne
+  libstdc++/libgcc, `-DENGINE3D_OUTPUT_DIR` = osobny katalog wyjścia) → `dist/osadnicy-linux-x86_64.tar.gz`.
+  Binarki mają RUNPATH `$ORIGIN` (libengine3d.so obok binarki). Zależności systemowe: Vulkan, SDL3, SDL3_ttf, SDL3_image
+  (użytkownik woli biblioteki z rodziny SDL3 zamiast własnych/nagłówkowych zamienników - czcionki SDL3_ttf, obrazy
+  SDL3_image; OGG zostaje na stb_vorbis, bo SDL3_sound/SDL3_mixer nie ma w pakietach Ubuntu). Nie budować paczki na
+  hoście: glibc Fedory jest za nowa dla Ubuntu.
 - Walidacja Vulkan jest włączona — po zmianach w renderze sprawdzić log pod kątem `Validation`.
 
 ## Układ silnika (`engine/`)

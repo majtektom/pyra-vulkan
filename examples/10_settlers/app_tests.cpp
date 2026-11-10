@@ -649,9 +649,9 @@ void SettlersApp::autoRecruitTest() {
     FactionState& fs = w.factions[kPlayer];
     const Vec3 c = w.buildings[fs.castle].pos;
     int bar = -1;
-    for (float r = 45.0f; r < 170.0f && bar < 0; r += 6.0f) {
-        for (int k = 0; k < 40 && bar < 0; ++k) {
-            const float a = static_cast<float>(k) * 2.0f * PI / 40.0f;
+    for (float r = 45.0f; r < 230.0f && bar < 0; r += 5.0f) {   // mapy są losowe - szukamy szeroko
+        for (int k = 0; k < 64 && bar < 0; ++k) {
+            const float a = static_cast<float>(k) * 2.0f * PI / 64.0f + r * 0.01f;
             const Vec3 p = w.snapToGrid(add(c, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
             if (w.canPlace(BuildingType::Barracks, p, kPlayer)) bar = w.placeBuilding(BuildingType::Barracks, p, kPlayer, true);
         }

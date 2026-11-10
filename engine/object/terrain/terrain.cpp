@@ -5,7 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
-#include <stb_image.h>
+#include <SDL3_image/SDL_image.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #ifdef _WIN32
@@ -22,15 +22,25 @@
 
 namespace engine3d {
 
+// Mapa wysokości z obrazu (SDL3_image: PNG, BMP, JPG, TGA...). Obraz zamieniamy na RGBA (8 bitów na kanał),
+// a wysokość to jasność piksela 0..255 (dla obrazu w skali szarości R = G = B).
 static std::vector<float> loadHeightmap(const std::string& path, int& w, int& h) {
-    int ch;
-    unsigned char* data = stbi_load(path.c_str(), &w, &h, &ch, 1);
-    if (!data) throw std::runtime_error("Cannot load heightmap: " + path);
-    std::vector<float> hm(w * h);
-    for (int z = 0; z < h; ++z)
-        for (int x = 0; x < w; ++x)
-            hm[z * w + x] = (float)data[(z) * w + (x)];
-    stbi_image_free(data);
+    SDL_Surface* loaded = IMG_Load(path.c_str());
+    if (!loaded) throw std::runtime_error("Cannot load heightmap: " + path + " - " + SDL_GetError());
+    SDL_Surface* rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(loaded);
+    if (!rgba) throw std::runtime_error("Cannot convert heightmap: " + path + " - " + SDL_GetError());
+    w = rgba->w;
+    h = rgba->h;
+    std::vector<float> hm(static_cast<size_t>(w) * h);
+    for (int z = 0; z < h; ++z) {
+        const auto* row = static_cast<const unsigned char*>(rgba->pixels) + static_cast<size_t>(z) * rgba->pitch;
+        for (int x = 0; x < w; ++x) {
+            const unsigned char* p = row + x * 4;
+            hm[static_cast<size_t>(z) * w + x] = static_cast<float>((p[0] * 77 + p[1] * 150 + p[2] * 29) >> 8);   // jasność
+        }
+    }
+    SDL_DestroySurface(rgba);
     return hm;
 }
 

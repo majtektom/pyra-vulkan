@@ -5,6 +5,13 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - Paczka gry do przekazania (Linux): `tools/build_release.sh` buduje w kontenerze Ubuntu 25.04 (glibc 2.38+),
+   opcja CMake `ENGINE3D_PORTABLE` (statyczne libstdc++/libgcc), `ENGINE3D_OUTPUT_DIR` (katalog wyjścia),
+   RUNPATH `$ORIGIN` dla wszystkich binarek (libengine3d.so obok binarki); SDL3_ttf i SDL3_image jako wymagane
+   zależności - obrazy (mapy wysokości terenu, tekstury glTF przez `TinyGLTF::SetImageLoader`) wczytuje SDL3_image
+   zamiast systemowego `stb_image.h`; usunięte nieużywane SDL3_sound;
+   usunięte nieużywane bezwzględne ścieżki shaderów z definicji kompilacji; puste `add_dependencies` w 01/02
+   (błąd w CMake z Ubuntu)
  - Cienie terenu teselowanego (fix "plam cieni znikąd" w 08_game): teren rysuje się do mapy cieni tym samym
    shaderem co na ekranie (`terrain_shadow`: teselacja + wysokość z mapy, wspólna funkcja
    `shared/terrain_height.hlsl`), więc cień powstaje z widocznej geometrii - wcześniej rzucała go siatka CPU 17x17

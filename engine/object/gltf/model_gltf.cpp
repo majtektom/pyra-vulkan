@@ -12,7 +12,8 @@
 #include <algorithm>
 
 
-#define STB_IMAGE_IMPLEMENTATION
+// Obrazy (tekstury w plikach glTF) dekoduje SDL3_image - tiny_gltf bez wbudowanego stb_image.
+#define TINYGLTF_NO_STB_IMAGE
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #define TINYGLTF_NO_EXTERNAL_IMAGE
 #define TINYGLTF_IMPLEMENTATION
@@ -21,9 +22,36 @@
 #include <stdexcept>
 #include <string>
 #include "object/gltf/tiny_gltf.h"
+#include <SDL3_image/SDL_image.h>
 
 namespace engine3d {
 namespace {
+
+// Dekoder obrazów dla tiny_gltf: bajty pliku (PNG/JPG z glTF) -> SDL3_image -> RGBA 8 bitów na kanał.
+bool loadGltfImage(tinygltf::Image* image, const int, std::string* err, std::string*, int, int,
+                   const unsigned char* bytes, int size, void*) {
+    SDL_IOStream* io = SDL_IOFromConstMem(bytes, static_cast<size_t>(size));
+    SDL_Surface* loaded = io ? IMG_Load_IO(io, true) : nullptr;   // true = IMG_Load_IO zamyka strumień
+    SDL_Surface* rgba = loaded ? SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32) : nullptr;
+    if (loaded) SDL_DestroySurface(loaded);
+    if (!rgba) {
+        if (err) *err += std::string("SDL3_image: ") + SDL_GetError() + "\n";
+        return false;
+    }
+    image->width = rgba->w;
+    image->height = rgba->h;
+    image->component = 4;
+    image->bits = 8;
+    image->pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
+    image->image.resize(static_cast<size_t>(rgba->w) * rgba->h * 4);
+    for (int y = 0; y < rgba->h; ++y) {
+        std::memcpy(image->image.data() + static_cast<size_t>(y) * rgba->w * 4,
+                    static_cast<const unsigned char*>(rgba->pixels) + static_cast<size_t>(y) * rgba->pitch,
+                    static_cast<size_t>(rgba->w) * 4);
+    }
+    SDL_DestroySurface(rgba);
+    return true;
+}
 
 Matrix4 inverseMatrix4(const Matrix4& m) {
     Matrix4 inv = Matrix4::identity();
@@ -126,6 +154,7 @@ std::string texturePath(const tinygltf::Model& model, int texIdx, const std::str
 GltfModel loadGltfModel(const std::string& path) {
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;
+    loader.SetImageLoader(loadGltfImage, nullptr);
     std::string err, warn;
 
     bool ok = false;

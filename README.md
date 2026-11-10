@@ -13,10 +13,14 @@ Silnik 3D w C++20 i Vulkanie z dynamiczną biblioteką `libengine3d.so`.
 
 - C++20 (gcc 13+)
 - CMake 3.20+
-- Vulkan SDK
-- SDL3 + SDL3_ttf
-- `dxc` (do kompilacji shaderów HLSL)
-- `stb_image.h`
+- Vulkan (nagłówki + loader)
+- SDL3 (okno, wejście, wyjście dźwięku), SDL3_ttf (czcionki), SDL3_image (obrazy: mapy wysokości, tekstury glTF)
+- `glslangValidator` lub `glslc` (kompilacja shaderów HLSL do SPIR-V)
+- nagłówek `nlohmann/json.hpp`
+- w repozytorium (bez instalacji): `stb_vorbis` (dekodowanie OGG), `tiny_gltf`, własne wczytywanie DDS/BMP
+
+Fedora: `sudo dnf install gcc-c++ cmake vulkan-loader-devel glslang SDL3-devel SDL3_ttf-devel SDL3_image-devel json-devel`
+Ubuntu 25.04+: `sudo apt install g++ cmake pkg-config libvulkan-dev glslang-tools libsdl3-dev libsdl3-ttf-dev libsdl3-image-dev nlohmann-json3-dev`
 
 ## Budowanie
 
@@ -33,6 +37,22 @@ cmake --build build -j11
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j11
 ```
+
+### Paczka do przekazania innym (Linux)
+
+```bash
+tools/build_release.sh        # wynik: dist/osadnicy-linux-x86_64.tar.gz
+```
+
+Skrypt buduje Osadników w kontenerze Ubuntu 25.04 (podman) z `-DENGINE3D_PORTABLE=ON`:
+- libstdc++ i libgcc są wkompilowane statycznie (u odbiorcy nie trzeba tej samej wersji kompilatora),
+- `libengine3d.so` leży obok binarki i jest szukany w jej katalogu (RUNPATH `$ORIGIN`),
+- biblioteka C (glibc) jest dynamiczna - binarka działa na systemie, na którym ją zbudowano, i nowszych
+  (dlatego budujemy w starszym Ubuntu, a nie na najnowszej Fedorze); wymagane glibc 2.38+,
+- w paczce są tylko assety używane przez grę (~40 MB) i skrypt `uruchom.sh`.
+
+U odbiorcy: sterownik Vulkan 1.3 oraz SDL3, SDL3_ttf i SDL3_image
+(Ubuntu 25.04+: `sudo apt install libsdl3-0 libsdl3-ttf0 libsdl3-image0 libvulkan1 mesa-vulkan-drivers`).
 
 Binaria lądują w `bin/`:
 - `bin/libengine3d.so` — biblioteka silnika

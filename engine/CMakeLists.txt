@@ -187,15 +187,10 @@ add_shader_bundle(
     fog_composite.frag.hlsl=fog/fog_composite.hlsl@fragmentMain
 )
 
-target_compile_definitions(engine3d
-    PUBLIC
-        ENGINE3D_HAS_TTF=${ENGINE3D_HAS_TTF}
-    PRIVATE
-        ENGINE_TEXT_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/text_overlay"
-        ENGINE_GRID_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/grid"
-        ENGINE_SKYBOX_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/skybox"
-        ENGINE_FOG_SHADER_DIR="${PROJECT_SHADER_OUTPUT_DIR}/fog"
-)
+target_compile_definitions(engine3d PUBLIC ENGINE3D_HAS_TTF=${ENGINE3D_HAS_TTF})
+target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_TTF PkgConfig::SDL3_IMAGE)
+
+# Shadery ładowane są względnie: bin/assets/shaders/... (od katalogu, z którego uruchamia się grę).
 
 target_include_directories(engine3d
     PUBLIC
@@ -208,17 +203,6 @@ else()
     target_link_libraries(engine3d PUBLIC sdl3::sdl3)
 endif()
 
-if(TARGET PkgConfig::SDL3_TTF AND SDL3_TTF_FOUND)
-    target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_TTF)
-endif()
-
-if(TARGET PkgConfig::SDL3_IMAGE AND SDL3_IMAGE_FOUND)
-    target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_IMAGE)
-endif()
-
-if(TARGET PkgConfig::SDL3_SOUND AND SDL3_SOUND_FOUND)
-    target_link_libraries(engine3d PRIVATE PkgConfig::SDL3_SOUND)
-endif()
 
 find_package(Threads REQUIRED)
 

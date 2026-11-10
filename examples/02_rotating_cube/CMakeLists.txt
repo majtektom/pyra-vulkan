@@ -1,3 +1,2 @@
 add_executable(02_rotating_cube_example main.cpp)
 target_link_libraries(02_rotating_cube_example PRIVATE engine3d)
-add_dependencies(02_rotating_cube_example)
