@@ -715,6 +715,54 @@ void SettlersApp::autoRecruitTest() {
     selectedBuilding_ = -1;
 }
 
+// Planista AI (zgłoszenie gracza: AI budowało pełno kamieniarzy i drwali według sztywnej listy):
+//  1. kamieniarz bez skał w zasięgu zostaje zburzony przez AI (i tak nic nie wydobędzie),
+//  2. AI z 4 drwalami i 1 tartakiem przy braku desek stawia tartak, a nie piątego drwala (1 tartak = 4 drwali).
+void SettlersApp::aiPlannerTest() {
+    World& w = *world_;
+    w.aiEnabled = false;
+    const int f = kEnemy;
+    const Vec3 home = w.buildings[w.factions[f].castle].pos;
+    auto place = [&](BuildingType t, bool needRock) {
+        for (float r = 40.0f; r < 230.0f; r += 6.0f) {
+            for (int k = 0; k < 48; ++k) {
+                const float a = static_cast<float>(k) * 2.0f * PI / 48.0f + r * 0.02f;
+                const Vec3 p = w.snapToGrid(add(home, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                if (!w.canPlace(t, p, f)) continue;
+                if (needRock && w.countNodesInRangePublic(NodeKind::Rock, p, buildingDef(t).workRadius) > 0) continue;
+                return w.placeBuilding(t, p, f, true);
+            }
+        }
+        return -1;
+    };
+    // 1. Kamieniarz w miejscu bez skał
+    const int q = place(BuildingType::Quarry, true);
+    if (q < 0) {
+        LOG_INFO("[uitest] planista AI: brak miejsca bez skał - część 1 pominięta");
+    } else {
+        for (int i = 0; i < 60; ++i) w.update(0.1f);   // licznik surowców w zasięgu (co 2 s)
+        w.aiEnabled = true;
+        for (int i = 0; i < 80 && w.buildings[q].alive; ++i) w.update(0.1f);
+        w.aiEnabled = false;
+        LOG_INFO("[uitest] planista AI: kamieniarz bez skał {}", w.buildings[q].alive ? "STOI" : "zburzony");
+        uiCheck("AI burzy kamieniarza, któremu skończyły się skały", !w.buildings[q].alive);
+    }
+    // 2. Proporcja tartak : drwale
+    for (auto& b : w.buildings) {
+        if (b.alive && b.faction == f && (b.type == BuildingType::Woodcutter || b.type == BuildingType::Sawmill)) w.demolish(static_cast<int>(&b - &w.buildings[0]));
+    }
+    w.update(0.1f);
+    for (int k = 0; k < 4; ++k) place(BuildingType::Woodcutter, false);
+    place(BuildingType::Sawmill, false);
+    w.update(0.1f);
+    for (auto& b : w.buildings) {   // "pracowały już" - nie traktujemy ich jak świeżo postawionych
+        if (b.alive && b.faction == f && (b.type == BuildingType::Woodcutter || b.type == BuildingType::Sawmill)) b.produced = 5;
+    }
+    const BuildingType choice = w.aiPlanForPublic(f, CarryType::Planks);
+    LOG_INFO("[uitest] planista AI: 4 drwali + 1 tartak, brak desek -> {}", choice == BuildingType::Count ? "nic" : buildingDef(choice).name);
+    uiCheck("przy 4 drwalach i 1 tartaku AI dokłada tartak, a nie drwala", choice == BuildingType::Sawmill);
+}
+
 // Łańcuchy produkcji: każdy warsztat dostaje drogą swoje towary wejściowe z zamku i oddaje wyrób.
 // Zamek startuje z surowcami (kłody, zboże, mąka, ruda, węgiel, żelazo, żywność); po kilku minutach gry
 // sprawdzamy, że każdy budynek coś wyprodukował, a kopalnia zużyła żywność.
@@ -954,6 +1002,7 @@ void SettlersApp::runUiTestStep() {
         productionChainTest();
         storageJamTest();
         autoRecruitTest();
+        aiPlannerTest();
         showPause();
         uiOrigW_ = static_cast<int>(renderer_->width());
         uiOrigH_ = static_cast<int>(renderer_->height());
@@ -1202,7 +1251,31 @@ void SettlersApp::updateAutoplay() {
                     list += std::string(list.empty() ? "" : ", ") + buildingDef(static_cast<BuildingType>(t)).name + " " +
                             std::to_string(done[t]) + (sites[t] ? "(+" + std::to_string(sites[t]) + ")" : "");
                 }
-                LOG_INFO("[autoplay] budynki {}: {} | magazyny: {}", factionName(f), list, stockSummary(w.factions[f].res, 12));
+                std::string trees;   // drzewa w zasięgu każdego drwala (las się nie kończy = leśniczy działa)
+                for (const auto& b : w.buildings) {
+                    if (b.alive && b.faction == f && b.type == BuildingType::Woodcutter && b.constructed) {
+                        trees += (trees.empty() ? "" : "/") + std::to_string(b.resourcesInRange);
+                    }
+                }
+                LOG_INFO("[autoplay] budynki {}: {} | drzewa przy drwalach: {} | magazyny: {}", factionName(f), list,
+                         trees.empty() ? "-" : trees, stockSummary(w.factions[f].res, 12));
+            }
+            // Place budowy: droga, dowiezione materiały, zlecenia i czy ich źródło jest osiągalne drogami.
+            for (const auto& b : w.buildings) {
+                if (!b.alive || b.faction != f || b.constructed) continue;
+                int ord = 0, unreachable = 0;
+                std::vector<float> dist;
+                std::vector<int> prev;
+                if (b.flag >= 0) w.networkDistancesPublic(b.flag, dist, prev);
+                for (const auto& o : w.orders) {
+                    if (!o.alive || &w.buildings[o.dest] != &b) continue;
+                    ++ord;
+                    const int src = o.source >= 0 ? w.buildings[o.source].flag : o.sourceFlag;
+                    if (o.funded && !o.picked && src >= 0 && (dist.empty() || dist[src] >= 1e8f)) ++unreachable;
+                }
+                LOG_INFO("[autoplay] plac {} {}: droga {}, dowiezione {}/{}, zlecenia {} (źródło bez drogi: {}), postęp {:.0f}%",
+                         factionName(f), buildingDef(b.type).name, w.flagConnected(b.flag) ? "tak" : "NIE", b.delivered.total(),
+                         buildingDef(b.type).cost.total(), ord, unreachable, b.progress * 100.0f);
             }
             LOG_INFO("[autoplay] wojsko {}: broń={} koszary={} w kolejce={} wieże={} w załogach={}", factionName(f),
                      w.factions[f].res[CarryType::Weapons], barracks, queued, towers, garrisoned);
@@ -1210,6 +1283,11 @@ void SettlersApp::updateAutoplay() {
                      "magazyn={}/{} warsztaty={} bez drogi={} wstrzymane={}",
                      factionName(f), roadCount, ts.carriers, ts.target, ts.busy, onFlags, ts.ordersWaiting, ts.ordersUnfunded,
                      w.storageUsedOf(f), w.storageCapacityOf(f), producers, unlinked, blocked);
+        }
+        {
+            int units = 0;
+            for (const auto& u : w.units) units += u.alive ? 1 : 0;
+            LOG_INFO("[autoplay] wydajność gry: fps={:.0f} jednostek={} (przyspieszenie x{})", engine_.getCurrentFPS(), units, gameSpeed_);
         }
         if (audio_) LOG_INFO("[autoplay] audio: muzyka={} grająca={} szczyt={:.3f} głosy={}", audio_->currentMusic(),
                              audio_->isMusicPlaying(), audio_->peakLevel(), audio_->activeVoices());
@@ -1223,6 +1301,23 @@ void SettlersApp::updateAutoplay() {
                          fl.building >= 0 ? buildingDef(w.buildings[fl.building].type).name : "-", fl.goods.size(),
                          w.flagAvailableGoods(fl), fl.connected);
             }
+        }
+        // Wydajność warsztatów: najlepszy budynek danego typu (bez przestojów), towary na minutę od ukończenia.
+        // Do strojenia czasów pracy tak, by zgadzały się proporcje AI (np. tartak przerabia kłody 4 drwali).
+        {
+            std::array<float, kBuildingTypeCount> best{};
+            for (const auto& b : w.buildings) {
+                const float minutes = (w.gameTime - b.constructedTime) / 60.0f;
+                if (!b.alive || !b.constructed || !producesGoods(b.type) || minutes < 5.0f) continue;
+                best[static_cast<size_t>(b.type)] =
+                    std::max(best[static_cast<size_t>(b.type)], static_cast<float>(b.produced * productionDef(b.type).outputCount) / minutes);
+            }
+            std::string line;
+            for (size_t t = 0; t < best.size(); ++t) {
+                if (best[t] <= 0.0f) continue;
+                line += std::format("{}{} {:.1f}", line.empty() ? "" : ", ", buildingDef(static_cast<BuildingType>(t)).name, best[t]);
+            }
+            LOG_INFO("[autoplay] wydajność (najlepszy budynek, towary/min): {}", line);
         }
         LOG_INFO("[autoplay] koniec: t={}s zwycięzca={}", static_cast<int>(w.gameTime),
                  w.winner >= 0 ? factionName(w.winner) : "brak");

@@ -325,6 +325,10 @@ void SettlersApp::beginPlacement(BuildingType type) {
     if (mode_ != Mode::Game || spectator_) return;
     cancelRoad();
     const BuildingDef& def = buildingDef(type);
+    if (type == BuildingType::House && world_->factions[kPlayer].popCap >= kMaxPopulation) {
+        world_->pushMessage("Ludność osiągnęła maksimum (" + std::to_string(kMaxPopulation) + ") - nowy Dom nie zwiększy limitu",
+                            {1.0f, 0.75f, 0.4f, 1.0f});
+    }
     const Resources have = world_->spendable(kPlayer);
     if (!have.canAfford(def.cost)) {
         world_->pushMessage(std::string(def.name) + ": brakuje " + missingText(def.cost, have),
@@ -640,7 +644,7 @@ void SettlersApp::changeCarriers(int delta) {
         fs.carrierTarget = world_->carrierTargetOf(kPlayer);   // start od bieżącej wartości automatu
         fs.carrierAuto = false;
     }
-    fs.carrierTarget = std::clamp(fs.carrierTarget + delta, 0, 60);
+    fs.carrierTarget = std::clamp(fs.carrierTarget + delta, 0, 80);
 }
 
 void SettlersApp::changeStockLimit(CarryType good, int delta) {

@@ -21,6 +21,8 @@
 
 #include "world_internal.h"
 
+#include <unordered_map>
+
 namespace settlers {
 
 namespace {
@@ -641,12 +643,20 @@ bool World::fundOrder(TransportOrder& o) {
         return best;
     };
 
+    // Tylko źródła osiągalne po drogach od odbiorcy - towaru z magazynu bez drogi nikt nie doniesie,
+    // a opłacone zlecenie blokowałoby budowę na zawsze. Odbiorca bez drogi: zlecenie poczeka na drogę.
+    if (dst.flag < 0 || !flags[dst.flag].alive || !flags[dst.flag].connected) return false;
+    std::vector<float> dist;
+    std::vector<int> prev;
+    networkDistances(dst.flag, dist, prev);
+
     int bestStore = -1, bestFlag = -1;
     float bestD = 1e9f;
     CarryType bestType = o.type;
     for (size_t i = 0; i < buildings.size(); ++i) {
         const Building& b = buildings[i];
         if (!b.alive || !b.constructed || b.faction != o.faction || storageCapacity(b.type) <= 0) continue;
+        if (b.flag < 0 || dist[b.flag] >= 1e8f) continue;
         const CarryType type = pickType([&](CarryType t) { return b.stock[t]; });
         if (b.stock[type] < o.amount) continue;
         const float d = dist2D(b.pos, at);
@@ -657,10 +667,7 @@ bool World::fundOrder(TransportOrder& o) {
         }
     }
 
-    // Flagi: tylko osiągalne drogami z flagi odbiorcy (Dijkstra liczona dopiero, gdy jakaś flaga ma towar).
-    std::vector<float> dist;
-    std::vector<int> prev;
-    bool distReady = false;
+    // Flagi: tylko osiągalne drogami z flagi odbiorcy.
     for (size_t i = 0; i < flags.size(); ++i) {
         const Flag& fl = flags[i];
         if (!fl.alive || fl.faction != o.faction || static_cast<int>(i) == dst.flag || fl.goods.empty()) continue;
@@ -670,13 +677,7 @@ bool World::fundOrder(TransportOrder& o) {
         const CarryType type = pickType(freeOf);
         if (freeOf(type) < o.amount) continue;
         const float d = dist2D(fl.pos, at) * 0.8f;
-        if (d >= bestD) continue;
-        if (!distReady) {
-            if (dst.flag < 0 || !flags[dst.flag].alive) break;
-            networkDistances(dst.flag, dist, prev);
-            distReady = true;
-        }
-        if (dist[i] >= 1e8f) continue;
+        if (d >= bestD || dist[i] >= 1e8f) continue;
         bestD = d;
         bestFlag = static_cast<int>(i);
         bestStore = -1;
@@ -804,6 +805,7 @@ void World::updateFlags(float dt) {
     transportTimer_ -= dt;
     if (transportTimer_ > 0.0f) return;
     transportTimer_ = 0.5f;
+    std::unordered_map<int, std::vector<float>> reach;   // flaga odbiorcy -> odległości po drogach (raz na przebieg)
     for (auto& o : orders) {
         if (!o.alive) continue;
         const bool destOk = o.dest >= 0 && buildings[o.dest].alive;
@@ -827,18 +829,32 @@ void World::updateFlags(float dt) {
                 o.sourceFlag = -1;
             }
         }
+        if (o.funded && !o.picked && o.carrier < 0 && o.dest >= 0) {
+            // Źródło przestało być osiągalne (zburzona droga) - cofamy opłatę, zlecenie opłaci się z innego miejsca.
+            const int dflag = buildings[o.dest].flag;
+            const int src = o.source >= 0 ? buildings[o.source].flag : o.sourceFlag;
+            auto it = reach.find(dflag);
+            if (it == reach.end()) {
+                std::vector<float> d;
+                std::vector<int> p;
+                if (dflag >= 0 && flags[dflag].alive) networkDistances(dflag, d, p);
+                it = reach.emplace(dflag, std::move(d)).first;
+            }
+            if (src < 0 || it->second.empty() || it->second[src] >= 1e8f) unfundOrder(o);
+        }
         if (!o.funded && !o.picked) fundOrder(o);
     }
     refreshFactionResources();
     for (int f = 0; f < kFactionCount; ++f) assignTransportJobs(f);
 }
 
-// Pracownik odkłada kGoodsPerTrip towarów na fladze swojego warsztatu.
+// Pracownik odkłada wyrób (ProductionDef::outputCount sztuk) na fladze swojego warsztatu.
 bool World::depositAtWorkshopFlag(Unit& u, Building& b) {
     if (u.carry == CarryType::None) return true;
     const bool hasFlag = b.flag >= 0 && b.flag < static_cast<int>(flags.size()) && flags[b.flag].alive;
-    if (hasFlag && flags[b.flag].goods.size() + kGoodsPerTrip <= static_cast<size_t>(kFlagCapacity)) {
-        for (int k = 0; k < kGoodsPerTrip; ++k) flags[b.flag].goods.push_back(u.carry);
+    const int count = productionDef(b.type).outputCount;
+    if (hasFlag && flags[b.flag].goods.size() + static_cast<size_t>(count) <= static_cast<size_t>(kFlagCapacity)) {
+        for (int k = 0; k < count; ++k) flags[b.flag].goods.push_back(u.carry);
         b.outputBlocked = false;
         return true;
     }
@@ -879,7 +895,7 @@ int World::carrierTargetOf(int f) const {
     for (const auto& o : orders) {
         if (o.alive && o.faction == f && o.carrier < 0) ++pending;
     }
-    return std::clamp(2 + producers + pending / 3 + waiting / 4, 2, 40);
+    return std::clamp(2 + producers + pending / 3 + waiting / 4, 2, 80);   // duże osady potrzebują wielu tragarzy
 }
 
 TransportStats World::transportStats(int f) const {

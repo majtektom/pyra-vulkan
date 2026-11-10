@@ -79,6 +79,15 @@ bool SettlersApp::initialize() {
                 }
             }
         }
+        // SETTLERS_STRESS=<n> (z OPEN=game): każda strona dostaje n osadników więcej (test wydajności przy dużej ludności)
+        if (const char* st = std::getenv("SETTLERS_STRESS"); st && gameStarted_) {
+            const int n = std::clamp(std::atoi(st), 0, kMaxPopulation);
+            for (int f = 0; f < kFactionCount; ++f) {
+                const Vec3 door = world_->buildings[world_->factions[f].castle].door();
+                for (int i = 0; i < n; ++i) world_->debugSpawnUnit(UnitType::Settler, f, door);
+            }
+            LOG_INFO("[stress] dodano {} osadników na stronę", n);
+        }
         if (std::getenv("SETTLERS_SHOWCASE")) {
             if (!gameStarted_) startNewGame();
             showcaseBuildings();
@@ -198,6 +207,8 @@ void SettlersApp::newWorld(uint32_t seed, Difficulty diff) {
 
     world_ = std::make_unique<World>(engine_, materials_);
     world_->create(scene_, seed, diff);
+    // Decyzje AI do logu ("[ai] ... buduje Tartak - ..."): w autoplayu albo z SETTLERS_AILOG=1.
+    world_->aiLog = std::getenv("SETTLERS_AUTOPLAY") || std::getenv("SETTLERS_AILOG");
 
     debugNavEntity_ = scene_->createEntity("debug_nav");
     {
@@ -261,9 +272,9 @@ void SettlersApp::changeGameSpeed(int dir) {
     if (world_) world_->pushMessage("Prędkość gry: x" + std::to_string(gameSpeed_), {0.8f, 0.95f, 1.0f, 1.0f});
 }
 
-// Przycisk w pauzie: kolejna prędkość, po x16 wraca do x1.
+// Przycisk w pauzie: kolejna prędkość, po najwyższej (x24) wraca do x1.
 void SettlersApp::cycleGameSpeed() {
-    if (gameSpeed_ >= 16) {
+    if (gameSpeed_ >= kSpeeds[std::size(kSpeeds) - 1]) {
         gameSpeed_ = 1;
         updateSpeedButton();
         if (world_) world_->pushMessage("Prędkość gry: x1", {0.8f, 0.95f, 1.0f, 1.0f});

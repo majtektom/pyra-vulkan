@@ -86,8 +86,21 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
 
 ## 7. AI
 
-- Lista budowy + cykl późnej gry; pilne potrzeby nadpisują listę (Dom przy limicie ludności, Magazyn przy
-  zapełnieniu/korkach). Po kilku nieudanych próbach postawienia pomiń pozycję.
+- NIE sztywna lista budowy (użytkownik odrzucił: AI stawiało pełno drwali/kamieniarzy). Planista potrzeb
+  (`world_ai.cpp`) co 3 s czyta te same statystyki i ostrzeżenia co gracz:
+  sprzątanie (zburz wyczerpanego kamieniarza / drwala bez drzew i sadzonek, plac bez drogi) → Dom przy limicie
+  ludności → wieża w stronę brakującego surowca (gdy nie da się postawić potrzebnego budynku) → Magazyn (tylko gdy
+  warsztaty stoją przez pełne magazyny) → proporcje warsztatów (tabela: 1 tartak / 4 drwali, 1 leśniczy / 3 drwali,
+  1 młyn / 3 farmy...) → braki towarów (dostawy czekające na towar + zapas poniżej celu) z zejściem po łańcuchu →
+  minimalna gospodarka (tabela) → wzrost (domy).
+- Proporcje muszą zgadzać się z prawdziwą wydajnością budynków - zmierz (log autoplay "wydajność") i dostrój czasy
+  pracy, inaczej AI liczy źle (tartak przerabiał kłody 1 drwala zamiast 4).
+- Pułapki planisty (każda realnie wystąpiła): stan równowagi "niczego nie brakuje" = AI nic nie robi (potrzebny cel
+  rozwoju); wydanie startowych desek przed tartakiem (rezerwa materiałów na tartak/źródło kamienia/magazyn);
+  limit budów naraz zajęty przez place bez budowniczych przy limicie ludności (Dom ponad limit); zaległe towary na
+  flagach to brak transportu, nie producentów (nie dobudowuj producenta z zaległościami ani "rozgrzewającego się");
+  kopalnie bez żywności (najpierw jedzenie); towary bez limitu zapychają magazyny (AI ustawia sobie limity).
+- Log decyzji (`[ai] ... buduje X - powód`) od razu - bez niego planisty nie da się debugować.
 - AI używa tych samych rozkazów i zasad co gracz (koszty, drogi, tragarze). Każdy postawiony budynek od razu
   łączy drogą (`autoConnectFlag`) i okresowo naprawia brakujące połączenia (limit prób na krok).
 - Fale ataku: wymagany rozmiar armii rośnie z numerem fali, kilku obrońców zostaje.

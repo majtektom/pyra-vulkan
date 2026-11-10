@@ -125,6 +125,11 @@ inline int resourceOf(const Resources& r, CarryType t) {
     return r[t];
 }
 
+// --- Ludność ---
+// Górna granica ludności jednej strony (osadnicy + żołnierze), niezależnie od liczby domów: chroni płynność gry
+// (każda osoba to osobna jednostka z wyszukiwaniem ścieżek). Domy ponad tę granicę nic nie dają - gra o tym mówi.
+constexpr int kMaxPopulation = 250;
+
 // --- Drogi i transport ---
 constexpr int kFlagCapacity = 8;           // tyle towarów mieści flaga przed warsztatem
 constexpr float kFlagMinSpacing = 7.0f;    // minimalna odległość między flagami
@@ -189,12 +194,13 @@ struct ProductionDef {
     CarryType output = CarryType::None;
     std::array<CarryType, 2> inputs{CarryType::None, CarryType::None};
     float workTime = 5.0f;    // sekundy pracy na cykl (we wnętrzu / przy surowcu)
+    int outputCount = kGoodsPerTrip;   // ile sztuk wyrobu daje cykl (odkładane naraz na fladze)
 };
 const ProductionDef& productionDef(BuildingType type);
-// Ile sztuk wejścia zużywa jeden cykl (cykl daje kGoodsPerTrip = 2 sztuki wyrobu):
-// żywność kopalni - 1 sztuka, tartak - 1 kłoda na 2 deski, pozostałe - 2 sztuki.
+// Ile sztuk wejścia zużywa jeden cykl (wyrób: ProductionDef::outputCount, zwykle 2 sztuki):
+// żywność kopalni - 1 sztuka, pozostałe - 2 sztuki (tartak: 2 kłody na 4 deski).
 [[nodiscard]] inline int inputPerCycle(CarryType input) {
-    return (input == CarryType::AnyFood || input == CarryType::Wood) ? 1 : 2;
+    return input == CarryType::AnyFood ? 1 : 2;
 }
 // Zapas wejść, który warsztat zamawia z magazynów (na ok. 2 cykle).
 constexpr int kInputBuffer = 4;

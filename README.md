@@ -98,6 +98,10 @@ towarem, a warsztat z pełną flagą czeka, aż ktoś zużyje jego wyroby. Surow
 w magazynie; zamek i Magazyn mieszczą po 200 towarów, więc Magazyny warto stawiać blisko produkcji. Okno Gospodarka
 pokazuje towary w magazynach, na flagach i w drodze, zapełnienie magazynów, tragarzy i wstrzymane warsztaty.
 Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.
+AI nie ma listy budowy: co kilka sekund czyta te same statystyki co gracz (braki towarów, przestoje, zapasy,
+ludność) i stawia to, czego brakuje, pilnując proporcji warsztatów (1 tartak obsługuje 4 drwali, 1 leśniczy
+wystarcza na 3 drwali, 1 młyn na 3 farmy); wyczerpanych kamieniarzy burzy, a gdy brakuje miejsca lub surowców,
+stawia wieżę w ich stronę. Gra na tych samych zasadach co gracz - bez darmowych surowców.
 
 Sterowanie: WSAD/krawędź ekranu — kamera, Q/E/środkowy przycisk — obrót, kółko — zoom,
 Budowanie: dolny pasek z ikonami budynków pogrupowanymi tematycznie (karta z opisem i kosztem po najechaniu).
@@ -112,7 +116,7 @@ Kod przykładu jest podzielony na symulację (`World`, pliki `world_*.cpp`) i ap
 Mapa plików i kolejność czytania: komentarz na początku `examples/10_settlers/main.cpp`; opisy klas
 w `settlers_world.h` i `settlers_app.h`.
 
-Prędkość czasu: klawisze **[** i **]** (x1, x2, x4, x8, x16) albo przycisk w menu pauzy. W menu głównym
+Prędkość czasu: klawisze **[** i **]** (x1, x2, x4, x8, x16, x24) albo przycisk w menu pauzy. W menu głównym
 **Pokaz: AI kontra AI** — komputer gra za obie strony, a gracz ogląda (domyślnie x4).
 
 Debugowanie: **F3** przełącza tryby (1: ścieżki, cele, stany jednostek, wejścia budynków, panel statystyk;

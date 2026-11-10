@@ -114,6 +114,7 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
     b.faction = faction;
     b.rotY = rotY;
     b.pos = posIn;
+    b.placedTime = gameTime;
 
     // Wysokość: średnia z narożników i środka obrysu
     const float h = def.halfSize;
@@ -136,6 +137,7 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
 
     if (instant) {
         b.constructed = true;
+        b.constructedTime = gameTime;
         b.progress = 1.0f;
         b.hp = def.maxHp;
     } else {
@@ -189,6 +191,7 @@ void World::completeBuilding(int id) {
     Building& b = buildings[id];
     const BuildingDef& def = buildingDef(b.type);
     b.constructed = true;
+    b.constructedTime = gameTime;
     b.progress = 1.0f;
     b.hp = std::max(b.hp, def.maxHp * 0.9f);
     b.hp = std::min(b.hp, def.maxHp);

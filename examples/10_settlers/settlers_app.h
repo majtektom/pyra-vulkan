@@ -181,7 +181,7 @@ inline const ControlLine kControls[] = {
     {"ESC", "pauza / powrót z okna"},
     {"F1", "pomoc na ekranie gry"},
     {"M", "muzyka wł. / wył."},
-    {"[  /  ]", "wolniej / szybciej (x1, x2, x4, x8, x16)"},
+    {"[  /  ]", "wolniej / szybciej (x1, x2, x4, x8, x16, x24)"},
     {"F3 / F9", "tryb debug / zrzut stanu do konsoli"},
 };
 
@@ -280,10 +280,10 @@ private:
     void startNewGame(bool spectator = false);
 
     // Dostępne prędkości czasu (kroków symulacji na klatkę).
-    static constexpr int kSpeeds[] = {1, 2, 4, 8, 16};
+    static constexpr int kSpeeds[] = {1, 2, 4, 8, 16, 24};
     // Zmienia prędkość czasu o jeden stopień (dir = -1 wolniej, +1 szybciej).
     void changeGameSpeed(int dir);
-    // Przełącza prędkość w kółko x1 -> x2 -> ... -> x16 -> x1 (przycisk w pauzie).
+    // Przełącza prędkość w kółko x1 -> x2 -> ... -> x24 -> x1 (przycisk w pauzie).
     void cycleGameSpeed();
     // Aktualizuje napis na przycisku prędkości w menu pauzy.
     void updateSpeedButton();
@@ -523,6 +523,7 @@ private:
     void productionChainTest();
     void storageJamTest();
     void autoRecruitTest();
+    void aiPlannerTest();
     void showcaseBuildings();
     bool constructionStressTest();
     // Log stanu partii w trybie SETTLERS_AUTOPLAY i zakończenie po zadanym czasie.

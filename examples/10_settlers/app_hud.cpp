@@ -106,7 +106,7 @@ void SettlersApp::drawTopBar(Engine& e) {
     const int used = w.storageUsedOf(kPlayer), cap = w.storageCapacityOf(kPlayer);
     item("Magazyn:", std::to_string(used) + "/" + std::to_string(cap),
          used * 10 >= cap * 9 ? Color{1.0f, 0.5f, 0.4f, 1.0f} : Color{0.85f, 0.85f, 0.75f, 1.0f});
-    item("Ludność:", std::to_string(fs.population) + "/" + std::to_string(fs.popCap),
+    item("Ludność:", std::to_string(fs.population) + "/" + std::to_string(fs.popCap) + (fs.popCap >= kMaxPopulation ? " (maks.)" : ""),
          fs.population >= fs.popCap ? Color{1.0f, 0.5f, 0.4f, 1.0f} : Color{0.8f, 1.0f, 0.8f, 1.0f});
     item("Wojsko:", std::to_string(soldiers), {0.7f, 0.85f, 1.0f, 1.0f});
 

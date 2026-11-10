@@ -82,27 +82,27 @@ const BuildingDef& buildingDef(BuildingType type) {
         {"Zamek",            "b_castle",     C(0, 0),   1.0f,  2200, 16.0f, 175.0f, false, 14, 0.0f,   95.0f, 7.0f, 1.6f, 34.0f,
          "Siedziba rodu. Przyjmuje nowych osadników. Jego utrata kończy grę."},
         {"Dom",              "b_house",      C(20, 10), 14.0f, 320,  7.0f,  0.0f,   false, 6,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
-         "Zwiększa limit populacji o 6."},
+         "Zwiększa limit populacji o 6 (ludność najwyżej 250)."},
         {"Drwal",            "b_wood",       C(12, 0),  12.0f, 260,  7.5f,  0.0f,   true,  0,  170.0f, 0.0f,  0.0f, 0.0f, 13.0f,
-         "Ścina drzewa i przynosi kłody - surowiec dla tartaku."},
+         "Ścina drzewa i przynosi kłody. 1 tartak przerabia kłody 4 drwali."},
         {"Kamieniarz",       "b_quarry",     C(15, 5),  14.0f, 300,  7.5f,  0.0f,   true,  0,  170.0f, 0.0f,  0.0f, 0.0f, 13.0f,
          "Wydobywa kamień ze skał w okolicy."},
         {"Farma",            "b_farm",       C(20, 5),  16.0f, 260,  12.0f, 0.0f,   true,  0,  10.0f,  0.0f,  0.0f, 0.0f, 12.0f,
-         "Uprawia zboże dla młyna."},
+         "Uprawia zboże. 1 młyn miele zboże 3 farm."},
         {"Koszary",          "b_barracks",   C(35, 30), 22.0f, 650,  11.0f, 0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 16.0f,
          "Szkoli żołnierzy - każdy potrzebuje broni z kuźni."},
         {"Wieża",            "b_tower",      C(20, 40), 20.0f, 750,  5.5f,  125.0f, false, 0,  0.0f,   120.0f,9.0f, 1.3f, 32.0f,
          "Poszerza terytorium i razi wrogów strzałami."},
         {"Leśniczy",         "b_forester",   C(15, 5),  12.0f, 240,  7.0f,  0.0f,   true,  0,  60.0f,  0.0f,  0.0f, 0.0f, 13.0f,
-         "Sadzi drzewa w okolicy - las odrasta dla drwala."},
+         "Sadzi drzewa - 1 leśniczy wystarcza na 3 drwali. Stawiaj obok nich."},
         {"Kopalnia kamienia", "b_mine",      C(25, 5),  18.0f, 420,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 14.0f,
          "Kamień z wnętrza góry. Tylko w górach; górnik zjada żywność."},
         {"Magazyn",          "b_store",      C(30, 20), 16.0f, 500,  8.5f,  0.0f,   false, 0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
          "Przechowuje do 200 towarów. Stawiaj blisko produkcji - krótsze drogi."},
         {"Tartak",           "b_sawmill",    C(15, 5),  14.0f, 300,  8.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
-         "Tnie kłody na deski - główny materiał budowlany."},
+         "Tnie kłody na deski (2 kłody = 4 deski). Obsłuży 4 drwali."},
         {"Młyn",             "b_mill",       C(20, 10), 16.0f, 320,  7.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 20.0f,
-         "Miele zboże z farmy na mąkę."},
+         "Miele zboże na mąkę. Obsłuży 3 farmy, mąka wystarczy 1 piekarni."},
         {"Piekarnia",        "b_bakery",     C(20, 15), 16.0f, 320,  7.0f,  0.0f,   true,  0,  0.0f,   0.0f,  0.0f, 0.0f, 13.0f,
          "Piecze chleb z mąki."},
         {"Rybak",            "b_fisher",     C(10, 0),  10.0f, 220,  6.5f,  0.0f,   true,  0,  70.0f,  0.0f,  0.0f, 0.0f, 11.0f,
@@ -124,19 +124,21 @@ const BuildingDef& buildingDef(BuildingType type) {
 const ProductionDef& productionDef(BuildingType type) {
     using C = CarryType;
     using K = WorkKind;
-    //                      zachowanie     wyjście      wejścia                     czas
+    // Czasy dobrane pomiarem (autoplay: "wydajność") tak, by zgadzały się proporcje AI (world_ai.cpp, kAiRatios):
+    // tartak = 4 drwali, młyn = 3 farmy, piekarnia = młyn, huta = kopalnia rudy, kuźnia = huta.
+    //                      zachowanie     wyjście      wejścia                     czas  [ilość wyrobu, domyślnie 2]
     static const std::array<ProductionDef, kBuildingTypeCount> defs = {{
         {K::None,      C::None,    {C::None, C::None},     0.0f},   // Zamek
         {K::None,      C::None,    {C::None, C::None},     0.0f},   // Dom
-        {K::Gather,    C::Wood,    {C::None, C::None},     4.0f},   // Drwal
+        {K::Gather,    C::Wood,    {C::None, C::None},    20.0f},   // Drwal (wolny: tartak przerabia kłody 4 drwali)
         {K::Gather,    C::Stone,   {C::None, C::None},     5.0f},   // Kamieniarz
-        {K::Farm,      C::Grain,   {C::None, C::None},     6.0f},   // Farma
+        {K::Farm,      C::Grain,   {C::None, C::None},    30.0f},   // Farma (wolna: młyn miele zboże 3 farm)
         {K::None,      C::None,    {C::None, C::None},     0.0f},   // Koszary
         {K::None,      C::None,    {C::None, C::None},     0.0f},   // Wieża
         {K::Forester,  C::None,    {C::None, C::None},     4.0f},   // Leśniczy
         {K::Mine,      C::Stone,   {C::AnyFood, C::None},  7.0f},   // Kopalnia kamienia
         {K::None,      C::None,    {C::None, C::None},     0.0f},   // Magazyn
-        {K::Process,   C::Planks,  {C::Wood, C::None},     5.0f},   // Tartak
+        {K::Process,   C::Planks,  {C::Wood, C::None},     2.0f, 4},   // Tartak: 2 kłody -> 4 deski (= 4 drwali)
         {K::Process,   C::Flour,   {C::Grain, C::None},    6.0f},   // Młyn
         {K::Process,   C::Bread,   {C::Flour, C::None},    6.0f},   // Piekarnia
         {K::Fisher,    C::Fish,    {C::None, C::None},     6.0f},   // Rybak
@@ -179,9 +181,13 @@ const char* factionName(int faction) {
     return faction == kPlayer ? "Gracz" : "Wróg";
 }
 
-// Surowce i półprodukty mają limit (zapychały magazyny), deski, żywność i broń - bez limitu.
+// Surowce, półprodukty i żywność mają limit (zapychały magazyny: żywność zużywa się powoli),
+// deski i broń - bez limitu.
 int defaultStockLimit(CarryType t) {
     switch (t) {
+    case CarryType::Bread:
+    case CarryType::Fish:
+    case CarryType::Meat: return 40;
     case CarryType::Wood: return 40;
     case CarryType::Stone: return 60;
     case CarryType::Grain:

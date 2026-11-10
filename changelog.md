@@ -56,6 +56,25 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: limit ludności 250 na stronę (był ukryty limit 120 - domy ponad niego nic nie dawały, gra o tym nie
+   mówiła); stała `kMaxPopulation`, "(maks.)" w górnym pasku, komunikat przy stawianiu Domu przy maksimum, AI nie
+   stawia wtedy domów; `SETTLERS_STRESS=<n>` (n osadników więcej na stronę) i FPS w logu autoplay - pomiar wydajności
+ - Osadnicy: nowe AI - planista potrzeb zamiast sztywnej listy budowy: czyta statystyki i ostrzeżenia (dostawy
+   czekające na towar, zapasy, przestoje, zaległości na flagach, brak ludzi) i buduje to, czego brakuje; proporcje
+   warsztatów z tabeli `kAiRatios` (1 tartak na 4 drwali, 1 leśniczy na 3 drwali, 1 młyn na 3 farmy, piekarnia /
+   młyn, huta / kopalnia rudy, kuźnia / huta); burzy wyczerpanych kamieniarzy i drwali bez drzew, place bez drogi;
+   drwal przy lesie, kamieniarz przy skałach, leśniczy przy drwalu; wieże w stronę brakującego lasu / skał / gór,
+   gdy na terytorium brakuje miejsca; rezerwa materiałów na tartak / źródło kamienia / magazyn; Dom ponad limit
+   budów przy limicie ludności; AI ustawia sobie limity zapasu desek i broni; log decyzji `[ai]` (autoplay,
+   `SETTLERS_AILOG=1`), log autoplay: place budowy i wydajność warsztatów (towary/min); test `aiPlannerTest`
+ - Osadnicy: balans pod proporcje AI (zmierzony): drwal wolniejszy (rąbanie 20 s), tartak 2 kłody → 4 deski
+   w 2 s (`ProductionDef::outputCount`), farma wolniejsza (30 s); limity zapasu żywności (chleb/ryby/mięso po 40);
+   dostawy opłacane tylko z magazynów/flag osiągalnych drogami (wcześniej plac bez drogi blokował się na zawsze);
+   limit tragarzy w trybie Auto 80; prędkość gry x24
+ - Osadnicy: las się nie kończy — AI stawia Leśniczego wcześnie (zaraz po drugim drwalu) i zawsze przy drwalu
+   (sadzi w promieniu 60, drwal wycina w 170), a gdy drwalowi zostaje ≤10 drzew bez leśniczego obok - pilnie;
+   gracz dostaje ostrzeżenie już przy 10 drzewach z podpowiedzią "postaw obok Leśniczego"; log autoplay
+   `drzewa przy drwalach`
  - Osadnicy: rekrutacja automatyczna w koszarach — przełącznik "Auto-rekrutacja" i udział mieczników (−/+ co 10%,
    reszta łucznicy); kolejka (do 2) uzupełnia się sama wg proporcji, przy braku kosztu jednego typu szkoli drugi;
    naprawione okno koszar zasłaniane przez okno akcji (okna przy lewej krawędzi układane co klatkę jedno nad drugim,

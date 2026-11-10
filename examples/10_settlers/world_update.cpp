@@ -28,16 +28,27 @@ void World::checkWorkResources(Building& b) {
     const int inRange = countNodesInRange(tree ? NodeKind::Tree : NodeKind::Rock, b.pos, def.workRadius);
     const int prevInRange = b.resourcesInRange;
     b.resourcesInRange = inRange;
-    // Ostrzeżenie, gdy surowiec się kończy (zostały 1-2 drzewa/skały)
-    if (b.faction == kPlayer && inRange > 0 && inRange <= 2 && (prevInRange < 0 || prevInRange > 2) &&
+    // Drwal bez leśniczego w pobliżu (leśniczy sadzi w promieniu 60) wytnie cały las - ostrzegamy wcześnie.
+    bool forester = false;
+    if (tree) {
+        for (const auto& o : buildings) {
+            forester |= o.alive && o.faction == b.faction && o.type == BuildingType::Forester && dist2D(o.pos, b.pos) < def.workRadius * 0.6f;
+        }
+    }
+    // Ostrzeżenie, gdy surowiec się kończy (drwal bez leśniczego: od 10 drzew, inaczej od 2)
+    const int lowAt = tree && !forester ? 10 : 2;
+    if (b.faction == kPlayer && inRange > 0 && inRange <= lowAt && (prevInRange < 0 || prevInRange > lowAt) &&
         gameTime - b.lowResourcesMsgTime > 60.0f) {
         b.lowResourcesMsgTime = gameTime;
-        pushMessage(std::string(def.name) + (tree ? ": kończą się drzewa w okolicy" : ": kończy się kamień w okolicy"),
+        pushMessage(std::string(def.name) + (tree ? (forester ? ": kończą się drzewa w okolicy"
+                                                              : ": kończą się drzewa - postaw obok Leśniczego (sadzi las)")
+                                                  : ": kończy się kamień w okolicy"),
                     {1.0f, 0.85f, 0.45f, 1.0f});
     }
     const bool lacks = inRange == 0;
     if (lacks && !b.lacksResources && b.faction == kPlayer) {
-        pushMessage(std::string(def.name) + (tree ? ": BRAK DRZEW w zasięgu - przenieś drwala" : ": BRAK KAMIENIA w zasięgu - przenieś kamieniarza"),
+        pushMessage(std::string(def.name) + (tree ? ": BRAK DRZEW w zasięgu - postaw obok Leśniczego albo przenieś drwala"
+                                                  : ": BRAK KAMIENIA w zasięgu - przenieś kamieniarza (albo kopalnia w górach)"),
                     {1.0f, 0.55f, 0.35f, 1.0f});
         emitSound("ui_error", b.pos, 0.6f, false);
     }
@@ -138,7 +149,7 @@ void World::updateFactions(float dt) {
         for (const auto& b : buildings) {
             if (b.alive && b.faction == f && b.constructed) fs.popCap += buildingDef(b.type).popBonus;
         }
-        fs.popCap = std::min(fs.popCap, 120);
+        fs.popCap = std::min(fs.popCap, kMaxPopulation);
 
         // Zamek przyjmuje nowych osadników, gdy brakuje rąk do pracy
         if (fs.castle >= 0 && buildings[fs.castle].alive) {
@@ -172,7 +183,10 @@ void World::updateFactions(float dt) {
             } else if (f == kPlayer && fs.population >= fs.popCap && idleSettlers < wantedIdle && jobs > 0 &&
                        gameTime - fs.popCapMsgTime > 45.0f) {
                 fs.popCapMsgTime = gameTime;
-                pushMessage("Limit populacji osiągnięty - zbuduj Dom", {1.0f, 0.85f, 0.4f, 1.0f});
+                pushMessage(fs.popCap >= kMaxPopulation
+                                ? "Osiągnięto maksymalną ludność (" + std::to_string(kMaxPopulation) + ") - kolejne domy nie zwiększą limitu"
+                                : std::string("Limit populacji osiągnięty - zbuduj Dom"),
+                            {1.0f, 0.85f, 0.4f, 1.0f});
             }
         }
 

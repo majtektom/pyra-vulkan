@@ -167,6 +167,8 @@ struct Building {
     int worker = -1;             // pracownik warsztatu (indeks jednostki)
     int produced = 0;            // ile razy pracownik dostarczył surowiec
     float lastDamagedTime = -100.0f;
+    float placedTime = 0.0f;     // kiedy postawiono (plac budowy) - AI burzy place, które długo stoją bez drogi
+    float constructedTime = 0.0f;   // kiedy ukończono (pomiar wydajności warsztatów)
     bool selected = false;
 
     // Koszary
@@ -333,10 +335,10 @@ struct FactionState {
     int enemiesKilled = 0;
     // Pamięć AI
     float aiThinkTimer = 0.0f;
-    int placementFailures = 0;
+    int aiPlacementFailures = 0;   // nieudane próby postawienia z rzędu (-> wieża poszerzająca teren)
+    int aiExpandFor = -1;          // BuildingType, dla którego zabrakło miejsca/surowców (-1 = brak)
     float waveTimer = 0.0f;
     int waveNumber = 0;
-    size_t buildOrderIndex = 0;
     int soldiersTrained = 0;
     // Tragarze: docelowa liczba (gracz ustawia w oknie gospodarki) albo dobierana automatycznie.
     int carrierTarget = 6;
@@ -445,6 +447,13 @@ public:
     // Towary do wydania: zapas magazynów + wolne towary na flagach połączonych drogami (tragarz dowiezie je
     // prosto do odbiorcy). Tym sprawdzamy "czy stać nas" na budynek i szkolenie.
     [[nodiscard]] Resources spendable(int faction) const;
+    // Testy planisty AI.
+    [[nodiscard]] int countNodesInRangePublic(NodeKind kind, const Vec3& p, float r) const { return countNodesInRange(kind, p, r); }
+    BuildingType aiPlanForPublic(int faction, CarryType good) { return aiPlanFor(faction, aiEconomy(faction), good, 0); }
+    // Odległości po drogach od flagi (diagnostyka, testy).
+    void networkDistancesPublic(int fromFlag, std::vector<float>& dist, std::vector<int>& prevRoad) const {
+        networkDistances(fromFlag, dist, prevRoad);
+    }
     // Zapas "do limitu": towary w magazynach + niesione właśnie do magazynów.
     [[nodiscard]] Resources storeBound(int faction) const;
     // Ile towarów z flagi tragarze mogą teraz zanieść do magazynu (limity zapasu nieprzekroczone).
@@ -511,6 +520,7 @@ public:
     int winner = -1;                 // -1 = gra trwa, inaczej indeks zwycięskiej frakcji
     bool aiEnabled = true;           // AI przeciwnika
     bool aiControlsPlayer = false;   // AI gra też za gracza (pokaz, autotest)
+    bool aiLog = false;              // decyzje AI do logu ([ai] ...) - autoplay
     Difficulty difficulty = Difficulty::Normal;
     Vec3 startPos[kFactionCount]{};
 
@@ -717,7 +727,25 @@ private:
     void aiBuildNext(int faction);
     void aiTrainArmy(int faction);
     // Jaki budynek wyprodukuje brakujący materiał budowlany (Count = żaden / już powstaje).
-    BuildingType aiProducerFor(int faction, const Resources& cost, const Resources& have);
+    // Planista budowy AI (world_ai.cpp): stan gospodarki, wybór producenta towaru, miejsce na budynek.
+    struct AiEconomy {
+        std::array<int, kBuildingTypeCount> total{}, inProgress{}, warmingUp{}, blocked{}, starved{};
+        std::array<int, kBuildingTypeCount> backlog{};   // producenci z zaległymi towarami na fladze (>= 4)
+        int underConstruction = 0;
+        int onFlags = 0;
+        bool peopleShort = false;   // za mało tragarzy / brak jedzenia na nowych osadników
+        Resources have;      // magazyny + wolne towary na flagach
+        Resources waiting;   // dostawy czekające na towar (brak w magazynach)
+    };
+    [[nodiscard]] AiEconomy aiEconomy(int faction) const;
+    [[nodiscard]] bool aiProducerReady(const AiEconomy& e, BuildingType t) const;
+    BuildingType aiPlanFor(int faction, const AiEconomy& e, CarryType good, int depth);
+    int aiResourceCluster(int faction, NodeKind kind, BuildingType worker, Vec3& center) const;
+    bool aiFindSpot(int faction, BuildingType type, Vec3& spot);
+    // Punkt poza terytorium, w stronę którego warto postawić wieżę (las / skały / góry / wolny teren).
+    bool aiExpansionTarget(int faction, BuildingType wanted, Vec3& target) const;
+    void aiLogDecision(int faction, const std::string& text);
+    [[nodiscard]] bool aiNeedsWarehouse(int faction, const AiEconomy& e) const;
     // Łączy drogami warsztaty i magazyny, które nie mają połączenia z magazynem.
     void aiConnectRoads(int faction);
     void aiLaunchAttackWave(int faction, float dt);

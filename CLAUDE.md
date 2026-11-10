@@ -65,7 +65,9 @@ Zasada: elementy przydatne innym grom (GUI, ustawienia, szum, matematyka) trafia
 Mapa plików i opis każdego modułu: komentarz na górze `main.cpp`, `settlers_world.h`, `settlers_app.h`.
 Wszystkie liczby balansu: `settlers_defs.h/.cpp` (budynki, `productionDef` - co produkuje i zużywa warsztat,
 jednostki, nazwy/kolory towarów). Nowy warsztat = wpis w obu tabelach + model (`settlers_assets.cpp`) + ikona
-(`app_buildbar.cpp`) + pozycja w `kBuildMenu`; zachowanie wynika z `WorkKind`.
+(`app_buildbar.cpp`) + pozycja w `kBuildMenu`; zachowanie wynika z `WorkKind`; dla AI: producent towaru w
+`aiPlanFor`, ewentualnie proporcja w `kAiRatios` (`world_ai.cpp`) - czasy pracy dostroić pomiarem (log "wydajność").
+AI to planista potrzeb (bez listy budowy) - decyzje w logu `[ai]` (`SETTLERS_AILOG=1` lub autoplay).
 
 Tryby uruchomienia (zmienne środowiskowe):
 
@@ -73,7 +75,8 @@ Tryby uruchomienia (zmienne środowiskowe):
 |---|---|
 | `SETTLERS_UITEST=1` | test UI (wstrzykuje zdarzenia SDL) + testy symulacji; kończy się linią `koniec, błędów: N` |
 | `SETTLERS_UITEST_KEEP=1` | nie zamyka okna po teście |
-| `SETTLERS_AUTOPLAY=<s>` + `SETTLERS_SPEED=<x>` | AI gra za obie strony, log `[autoplay]` co 30 s gry |
+| `SETTLERS_AUTOPLAY=<s>` + `SETTLERS_SPEED=<x>` | AI gra za obie strony, log `[autoplay]` co 30 s gry (budynki, place, transport, wydajność) i decyzje `[ai]` |
+| `SETTLERS_AILOG=1` | decyzje AI (`[ai] ... buduje X - powód`) także w zwykłej grze |
 | `SETTLERS_FLAGDUMP=1` | przy końcu autoplay wypisuje flagi z towarami |
 | `SETTLERS_DEBUG=1|2` | tryb debug od startu (jak F3) |
 | `SETTLERS_OPEN=settings|controls|help|demo|economy|game` | otwiera okno / rozpoczyna partię od razu |
@@ -81,11 +84,13 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_HOVERBAR=<n>` | kursor nad n-tym przyciskiem paska budowy (0-8, -1 droga) - do zrzutów karty informacji |
 | `SETTLERS_CAMERA=<odl>` | odległość kamery (do zrzutów ekranu) |
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
+| `SETTLERS_STRESS=<n>` | każda strona dostaje n osadników więcej (wydajność; FPS w logu autoplay) |
 | `SETTLERS_SELECT=barracks` | z `OPEN=game`: gotowe koszary obok zamku, zaznaczone (zrzut okna koszar) |
 
 Weryfikacja zmian: build bez ostrzeżeń → `SETTLERS_UITEST=1` (kilka razy, mapy są losowe) →
-`SETTLERS_AUTOPLAY=900 SETTLERS_SPEED=16` → zrzut ekranu (`spectacle -a -b -n -o plik.png` po uruchomieniu gry w tle).
+`SETTLERS_AUTOPLAY=900 SETTLERS_SPEED=24` → zrzut ekranu (`spectacle -a -b -n -o plik.png` po uruchomieniu gry w tle).
 Testy klikające w menu bywają niestabilne, gdy użytkownik rusza prawdziwą myszą — powtórzyć przebieg.
+`spectacle -a` łapie AKTYWNE okno - gdy użytkownik gra równolegle, zrzut może pokazać jego grę (sprawdź czas/stan).
 
 Ustawienia gracza: `save/settlers_settings.json` (w trybach testowych nie są wczytywane ani zapisywane).
 
