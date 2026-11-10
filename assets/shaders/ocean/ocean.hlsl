@@ -1,4 +1,5 @@
 #include "shared/light_types.hlsl"
+#include "shared/fog_of_war.hlsl"
 
 cbuffer GlobalUniformBufferObject : register(b0)
 {
@@ -22,6 +23,14 @@ cbuffer GlobalUniformBufferObject : register(b0)
     float fogEnd;
     float fogDensity;
     uint fogEnabled;
+    float windTime;
+    float windStrength;
+    float fowOriginX;           // mgła wojny (shared/fog_of_war.hlsl)
+    float fowOriginZ;
+    float fowSize;
+    float fowExplored;
+    uint fowEnabled;
+    uint fowTextureIndex;
 };
 
 // Parametry oceanu przesyłane co klatkę
@@ -332,5 +341,11 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
         result = lerp(fogColor.rgb, result, fogFactor);
     }
 
+    // Mgła wojny: nieodkryte morze ciemne jak nieodkryty ląd.
+    if (fowEnabled != 0u)
+    {
+        float vis = fogOfWarVisibility(textures[fowTextureIndex], globalSampler, fogOfWarUv(input.worldPos, fowOriginX, fowOriginZ, fowSize));
+        result = applyFogOfWar(result, vis, fowExplored);
+    }
     return float4(result, 1.0);
 }

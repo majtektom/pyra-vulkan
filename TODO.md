@@ -123,9 +123,6 @@ VK_LAYER_VALIDATE_SYNC=1 VK_LAYER_DUPLICATE_MESSAGE_LIMIT=1000 ./bin/09_vegetati
 
 Rozgrywka (największy efekt):
 
-Mgła wojny i zwiad: teren wroga jest niewidoczny, dopóki nie podejdą tam twoje jednostki. Można ją zrobić jako teksturę widoczności nakładaną w shaderze terenu i na minimapie.
-Silnik (przyda się też innym przykładom):
-
 Instancing: drzewa, słupki granicy i jednostki to setki osobnych obiektów. Rysowanie ich jedną komendą na typ siatki mocno podniesie FPS przy dużych mapach.
 Animacje jednostek: szkieletowe albo proste chodzenie i machanie narzędziem, zamiast przesuwania brył.
 Cząsteczki: dym z kominów, pożar przy paleniu budynków, kurz przy budowie.

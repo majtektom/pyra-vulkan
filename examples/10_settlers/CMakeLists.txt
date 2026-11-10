@@ -14,6 +14,7 @@ add_executable(10_settlers_example
     world_ai.cpp
     world_roads.cpp
     world_save.cpp
+    world_fog.cpp
     # Aplikacja (klasa SettlersApp)
     app_core.cpp
     app_menus.cpp

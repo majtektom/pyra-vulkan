@@ -593,6 +593,7 @@ void World::updateProjectiles(float dt) {
         const float horiz = std::sqrt(vel.x * vel.x + vel.z * vel.z);
         auto& tr = p.entity->transform();
         tr.position = pos;
+        p.entity->setActive(visibleToPlayer(pos));   // mgła wojny: strzał widać tylko w zasięgu wzroku
         tr.rotation.y = std::atan2(vel.x, vel.z);
         tr.rotation.x = -std::atan2(vel.y, horiz);
 

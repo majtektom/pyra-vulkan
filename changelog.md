@@ -5,6 +5,11 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - Mgła wojny (fog of war): `Renderer::setFogOfWar(enabled, origin, size, explored)` + `updateFogOfWar(dane)` -
+   tekstura widoczności 256x256 (0 nieodkryte, 128 odkryte, 255 widoczne), osobna kopia na każdą klatkę w locie
+   (przesył na początku klatki, bez czekania na GPU); przyciemnianie w deferred (budynki, roślinność), w shaderze
+   terenu i oceanu (przez tablicę bindless, indeks w UBO) - wspólna funkcja `shared/fog_of_war.hlsl`;
+   poza obszarem mapy widoczność = 0 (fix: odkryte miejsca powtarzały się na oceanie za krawędzią mapy)
  - Wydajność: warstwy walidacji Vulkana tylko w buildzie Debug albo z `ENGINE_VALIDATION=1` - w grze sprawdzały
    każde polecenie na CPU i zajmowały ~90% klatki (duża osada Osadników: 20 ms -> 1,9 ms na klatkę, GPU wcześniej
    czekało na CPU); profiler klatki `ENGINE_PROFILE=1` (`core/profiler.h`: `PROFILE_SCOPE`, `Profiler::lap/count`)
@@ -60,6 +65,11 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: mgła wojny i zwiad (`world_fog.cpp`) - siatka widoczności gracza 256x256 (4 x 4 j.), zasięg wzroku
+   jednostek (łucznik najdalej) i budynków (zamek, wieże - dalej niż terytorium); jednostki wroga widać tylko
+   w zasięgu wzroku, budynki/flagi/drogi/granice wroga - na odkrytym terenie; bez zaznaczania niewidocznego wroga,
+   bez pasków zdrowia we mgle; minimapa przyciemniona; odkryty teren w zapisie gry (RLE); wyłączona w pokazie AI
+   i autoplay, `SETTLERS_NOFOG=1`; AI mgły nie używa; test `fogOfWarTest`
  - Osadnicy: wolna gra po zwycięstwie - przycisk "Graj dalej" w oknie końca gry (po porażce: "Oglądaj mapę"),
    symulacja i budowa działają dalej, "Wolna gra" w górnym pasku, stan zapisywany w pliku zapisu; test `freePlayTest`
  - Osadnicy: zapis i wczytanie gry (F5 / F8, przyciski w menu głównym i pauzie, `save/settlers_save.json`) -

@@ -748,7 +748,8 @@ void SettlersApp::saveLoadTest() {
     nlohmann::json after;
     world_->saveState(after);
     std::string diff;
-    for (const char* key : {"seed", "gameTime", "rng", "buildings", "units", "flags", "roads", "orders", "factions", "nodes"}) {
+    for (const char* key : {"seed", "gameTime", "rng", "buildings", "units", "flags", "roads", "orders", "factions", "nodes",
+                            "fogOfWar", "fogExplored"}) {
         if (before[key] != after[key]) diff += std::string(diff.empty() ? "" : ", ") + key;
     }
     LOG_INFO("[uitest] zapis/wczytanie: budynki {}, jednostki {}, plik {} KB, różnice: {}", buildingsBefore, unitsBefore,
@@ -764,6 +765,31 @@ void SettlersApp::saveLoadTest() {
     std::error_code ec;
     std::filesystem::remove(path, ec);
     mode_ = prevMode;
+}
+
+// Mgła wojny i zwiad: zamek wroga na początku nieodkryty (jego jednostek nie widać, nie można ich zaznaczyć);
+// miecznik gracza podchodzi - zamek odkryty i widoczny; miecznik ginie - zamek zostaje odkryty, ale nie jest widoczny.
+void SettlersApp::fogOfWarTest() {
+    World& w = *world_;
+    w.fogOfWar = true;
+    for (int i = 0; i < 5; ++i) w.update(0.1f);
+    const Vec3 home = w.buildings[w.factions[kPlayer].castle].pos;
+    const int ec = w.factions[kEnemy].castle;
+    const Vec3 enemy = w.buildings[ec].pos;
+    const bool homeVisible = w.visibleToPlayer(home);
+    const bool enemyHiddenAtStart = !w.exploredByPlayer(enemy) && !w.visibleToPlayer(enemy);
+    // Zwiadowca obok zamku wroga
+    const int scout = w.debugSpawnUnit(UnitType::Swordsman, kPlayer, add(w.buildings[ec].door(), {0.0f, 0.0f, 25.0f}));
+    for (int i = 0; i < 5; ++i) w.update(0.1f);
+    const bool enemySeen = w.exploredByPlayer(enemy) && w.visibleToPlayer(enemy);
+    w.debugKillUnit(scout);
+    for (int i = 0; i < 5; ++i) w.update(0.1f);
+    const bool enemyRemembered = w.exploredByPlayer(enemy) && !w.visibleToPlayer(enemy);
+    LOG_INFO("[uitest] mgła wojny: zamek gracza widoczny {}, zamek wroga na starcie ukryty {}, po zwiadzie widoczny {}, "
+             "po odejściu zwiadowcy odkryty-niewidoczny {}",
+             homeVisible, enemyHiddenAtStart, enemySeen, enemyRemembered);
+    uiCheck("mgła wojny: teren wroga ukryty, dopóki nie dotrze tam zwiadowca", homeVisible && enemyHiddenAtStart && enemySeen);
+    uiCheck("mgła wojny: odkryty teren zostaje odkryty, ale bez zwiadu nie jest widoczny", enemyRemembered);
 }
 
 // Wolna gra po zwycięstwie (zgłoszenie gracza: po pokonaniu wroga chce dalej rozbudowywać osadę):
@@ -1082,6 +1108,7 @@ void SettlersApp::runUiTestStep() {
         storageJamTest();
         autoRecruitTest();
         aiPlannerTest();
+        fogOfWarTest();
         saveLoadTest();
         freePlayTest();
         showPause();

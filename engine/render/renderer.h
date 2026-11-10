@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 #include <string>
 #include <functional>
 
@@ -135,6 +137,17 @@ public:
 
     // Sterowanie mgłą (Fog)
     void setFogEnabled(bool enabled);
+
+    // Mgła wojny (fog of war): kwadratowa tekstura widoczności kFogOfWarSize x kFogOfWarSize nad prostokątem mapy
+    // [originX, originX + worldSize] x [originZ, originZ + worldSize]. Wartość komórki (wiersze wzdłuż Z):
+    //   0 = nieodkryte (prawie czarne), 128 = odkryte - widać teren, ale nie to, co się tam teraz dzieje
+    //   (przyciemnione do exploredBrightness i wyszarzone), 255 = widoczne. Między komórkami - płynne przejście.
+    // Działa w przebiegu deferred, więc obejmuje teren, roślinność i budynki. Domyślnie wyłączona.
+    static constexpr uint32_t kFogOfWarSize = 256;
+    void setFogOfWar(bool enabled, float originX = 0.0f, float originZ = 0.0f, float worldSize = 1.0f,
+                     float exploredBrightness = 0.45f);
+    // Nowe dane widoczności (kFogOfWarSize^2 bajtów); przesyłane na GPU na początku najbliższych klatek.
+    void updateFogOfWar(const std::vector<uint8_t>& visibility);
     bool isFogEnabled() const;
     void setFogColor(float r, float g, float b);
     void setFogStart(float start);

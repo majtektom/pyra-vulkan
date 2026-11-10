@@ -213,6 +213,8 @@ void World::saveState(json& out) const {
         nodesJ.push_back(std::move(j));
     }
     out["nodes"] = std::move(nodesJ);
+    out["fogOfWar"] = fogOfWar;
+    out["fogExplored"] = fogExploredRle();
     out["nodesGenerated"] = nodesGenerated_;
 }
 
@@ -344,6 +346,8 @@ bool World::loadState(engine3d::Scene* scene, const json& in, std::string* error
             Reader r{fj[f]};
             fields(r, factions[f]);
         }
+        fogOfWar = in.value("fogOfWar", false);
+        if (in.contains("fogExplored")) setFogExploredRle(in["fogExplored"].get<std::string>());
         gameTime = in.value("gameTime", 0.0f);
         winner = in.value("winner", -1);
         if (in.contains("lastCombatTime")) dec(in["lastCombatTime"], lastCombatTime);

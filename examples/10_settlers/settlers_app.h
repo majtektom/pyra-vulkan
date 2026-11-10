@@ -289,6 +289,7 @@ private:
     // Czy symulacja biegnie: gra trwa albo wolna gra po zwycięstwie.
     [[nodiscard]] bool simulationRunning() const { return world_ && (world_->winner < 0 || freePlay_); }
     void freePlayTest();
+    void fogOfWarTest();
     bool loadGame(const std::string& path = kSavePath);
     [[nodiscard]] bool saveExists(const std::string& path = kSavePath) const;
     // Rozpoczyna partię z poziomem trudności z menu. spectator = pokaz "AI kontra AI".
@@ -604,6 +605,7 @@ private:
     bool autoplaySaved_ = false;   // SETTLERS_SAVEAT: zapis już wykonany
     // Wolna gra po zwycięstwie ("Graj dalej"): symulacja biegnie dalej, okno końca gry się nie pokazuje.
     bool freePlay_ = false;
+    uint64_t fogVersionSent_ = ~0ull;   // wersja tekstury mgły wojny wysłana do renderera
     GuiButton* btnGameOverContinue_ = nullptr;
     int selectedFlag_ = -1;
 

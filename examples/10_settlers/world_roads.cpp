@@ -1320,11 +1320,19 @@ void World::updateCarrier(Unit& u, int id, float dt) {
 
 // Towary leżące przy flagach: do kFlagCapacity modeli na flagę, ułożonych w krąg wokół masztu.
 void World::syncFlagVisuals() {
+    // Mgła wojny: drogi i flagi wroga widać na odkrytym terenie.
+    for (auto& r : roads) {
+        if (r.alive && r.entity && !r.points.empty()) {
+            r.entity->setActive(r.faction == kPlayer || exploredByPlayer(r.points[r.points.size() / 2]));
+        }
+    }
     for (auto& fl : flags) {
         if (!fl.alive) continue;
+        const bool known = fl.faction == kPlayer || exploredByPlayer(fl.pos);
+        if (fl.entity) fl.entity->setActive(known);
         for (int k = 0; k < kFlagCapacity; ++k) {
             Entity*& e = fl.goodEntities[k];
-            const bool show = k < static_cast<int>(fl.goods.size());
+            const bool show = known && k < static_cast<int>(fl.goods.size());
             if (!show) {
                 if (e) e->setActive(false);
                 continue;

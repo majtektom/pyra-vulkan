@@ -52,6 +52,10 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
   przy najbliższej widocznej geometrii (granice siatek i węzłów terenu) i liczy zasięg od niej.
   `08_game`: `GAME08_MAP=demo.map GAME08_HOUR=12 GAME08_CAMY=900 GAME08_NOLIGHT=1 GAME08_NOFOG=1`
   (użytkownik ogląda cienie z wyłączonym światłem i mgłą - tryb `lightingEnabled == 0` w deferred.hlsl).
+- Mgła wojny (silnik): przyciemnia przebieg deferred ORAZ shadery rysowane osobno (teren, ocean) - nowy shader
+  rysujący świat poza deferred musi dołączyć `shared/fog_of_war.hlsl` i pola `fow*` UBO (koniec `GlobalUBO`).
+  Czytać przez `fogOfWarVisibility()` - wspólny sampler tablicy bindless powtarza teksturę, więc bez sprawdzenia
+  zakresu UV odkryte miejsca pojawiały się drugi raz poza mapą (ocean sięga daleko za wyspę).
 - Zmiana materiału encji: po podmianie `materialHandle` wyzerować `materialInstance`.
 - Pozycja myszy SDL to (0,0) przed pierwszym ruchem — przewijanie krawędzią ekranu dopiero po ruchu myszy.
 - Kółko myszy: używać `InputSnapshot::mouseWheelF` (float), nie wersji int.
@@ -93,6 +97,7 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
 | `SETTLERS_SAVEAT=<s>` | z autoplay: zapis w tej chwili gry do `save/settlers_autoplay_save.json` |
 | `SETTLERS_OPEN=load` (+ `SETTLERS_LOAD=<plik>`) | start od wczytania zapisu (domyślnie `save/settlers_save.json`) |
+| `SETTLERS_NOFOG=1` | bez mgły wojny (zrzuty całej mapy; w pokazie AI i autoplay mgły i tak nie ma) |
 | `SETTLERS_STRESS=<n>` | każda strona dostaje n osadników więcej (wydajność; FPS w logu autoplay) |
 | `SETTLERS_SELECT=barracks` | z `OPEN=game`: gotowe koszary obok zamku, zaznaczone (zrzut okna koszar) |
 

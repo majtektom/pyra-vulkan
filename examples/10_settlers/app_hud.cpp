@@ -149,6 +149,7 @@ void SettlersApp::drawWorldBars() {
     const Vec3 eye = camera_->getOwner()->transform().position;
     for (const auto& u : w.units) {
         if (!u.alive) continue;
+        if (u.faction != kPlayer && !w.visibleToPlayer(u.pos)) continue;   // mgła wojny
         const UnitDef& def = unitDef(u.type);
         const bool show = u.selected || u.hp < def.maxHp || w.gameTime - u.lastDamagedTime < 4.0f;
         if (!show) continue;
@@ -161,6 +162,7 @@ void SettlersApp::drawWorldBars() {
     }
     for (const auto& b : w.buildings) {
         if (!b.alive) continue;
+        if (b.faction != kPlayer && !w.visibleToPlayer(b.pos)) continue;   // mgła wojny: stan budynku tylko w zasięgu wzroku
         const BuildingDef& def = buildingDef(b.type);
         const bool show = b.selected || !b.constructed || b.hp < def.maxHp * 0.999f || w.gameTime - b.lastDamagedTime < 4.0f;
         if (!show) continue;
@@ -229,7 +231,13 @@ void SettlersApp::drawMinimap() {
     const auto& colors = w.minimapColors();
     for (int y = 0; y < n; ++y) {
         for (int x = 0; x < n; ++x) {
-            const Vec3& c = colors[static_cast<size_t>(y) * n + x];
+            Vec3 c = colors[static_cast<size_t>(y) * n + x];
+            if (w.fogOfWar) {   // mgła wojny: jak na terenie - nieodkryte prawie czarne, odkryte przyciemnione
+                const Vec3 p{(static_cast<float>(x) + 0.5f) / n * 2.0f * kWorldHalf - kWorldHalf, 0.0f,
+                             (static_cast<float>(y) + 0.5f) / n * 2.0f * kWorldHalf - kWorldHalf};
+                const float k = w.visibleToPlayer(p) ? 1.0f : (w.exploredByPlayer(p) ? 0.45f : 0.0f);
+                c = multiply(c, k);
+            }
             gui_->addOverlayRect(r.x + x * cell, r.y + y * cell, cell + 0.5f, cell + 0.5f, {c.x, c.y, c.z, 1.0f}, 0.965f);
         }
     }
@@ -239,6 +247,7 @@ void SettlersApp::drawMinimap() {
     };
     for (const auto& b : w.buildings) {
         if (!b.alive) continue;
+        if (b.faction != kPlayer && !w.exploredByPlayer(b.pos)) continue;   // mgła wojny
         float mx, my;
         toMap(b.pos, mx, my);
         const Vec3 fc = factionColor(b.faction);
@@ -248,6 +257,7 @@ void SettlersApp::drawMinimap() {
     }
     for (const auto& u : w.units) {
         if (!u.alive || u.state == UnitState::Garrison) continue;
+        if (u.faction != kPlayer && !w.visibleToPlayer(u.pos)) continue;   // mgła wojny
         float mx, my;
         toMap(u.pos, mx, my);
         const Vec3 fc = u.faction == kPlayer ? Vec3{0.5f, 0.75f, 1.0f} : Vec3{1.0f, 0.45f, 0.4f};

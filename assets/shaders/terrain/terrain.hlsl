@@ -23,10 +23,19 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     float fogEnd;
     float fogDensity;
     uint fogEnabled;
+    float windTime;
+    float windStrength;
+    float fowOriginX;           // mgła wojny (shared/fog_of_war.hlsl)
+    float fowOriginZ;
+    float fowSize;
+    float fowExplored;
+    uint fowEnabled;
+    uint fowTextureIndex;
 };
 
 #include "shared/shadow_pcf.hlsl"
 #include "shared/terrain_height.hlsl"
+#include "shared/fog_of_war.hlsl"
 
 // Parametry push constants dla terenu (w tym tablice indeksów warstw i masek)
 [[vk::push_constant]]
@@ -362,6 +371,13 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
         float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
         fogFactor = saturate(fogFactor);
         color = lerp(fogColor.rgb, color, fogFactor);
+    }
+
+    // Mgła wojny: teren rysowany jest osobnym przebiegiem (nie przez deferred), więc przyciemniamy go tutaj.
+    if (fowEnabled != 0u)
+    {
+        float vis = fogOfWarVisibility(textures[fowTextureIndex], globalSampler, fogOfWarUv(input.worldPos, fowOriginX, fowOriginZ, fowSize));
+        color = applyFogOfWar(color, vis, fowExplored);
     }
 
     return float4(color, baseColor.a);

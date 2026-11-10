@@ -30,6 +30,7 @@
  *   world_ai.cpp        - komputerowy przeciwnik
  *   world_roads.cpp     - drogi, flagi, tragarze i magazyny (transport towarów)
  *   world_save.cpp      - zapis i wczytanie stanu gry (JSON: ziarno mapy + listy obiektów)
+ *   world_fog.cpp       - mgła wojny i zwiad (widoczność gracza, tekstura dla renderera)
  *
  * GOSPODARKA (world_roads.cpp)
  * ----------------------------
@@ -530,6 +531,14 @@ public:
     bool aiEnabled = true;           // AI przeciwnika
     bool aiControlsPlayer = false;   // AI gra też za gracza (pokaz, autotest)
     bool aiLog = false;              // decyzje AI do logu ([ai] ...) - autoplay
+    // Mgła wojny (world_fog.cpp): teren i jednostki wroga widać tylko tam, gdzie dotarli ludzie gracza.
+    bool fogOfWar = false;
+    static constexpr int kFowSize = 256;   // siatka widoczności kFowSize^2 (= Renderer::kFogOfWarSize)
+    [[nodiscard]] bool visibleToPlayer(const Vec3& p) const;   // w zasięgu wzroku teraz
+    [[nodiscard]] bool exploredByPlayer(const Vec3& p) const;  // kiedyś widziane
+    // Tekstura widoczności dla renderera (0 / 128 / 255) i jej wersja (zmienia się, gdy dane się zmienią).
+    [[nodiscard]] const std::vector<uint8_t>& fogTexture() const { return fowTexture_; }
+    [[nodiscard]] uint64_t fogVersion() const { return fowVersion_; }
     Difficulty difficulty = Difficulty::Normal;
     Vec3 startPos[kFactionCount]{};
 
@@ -562,7 +571,17 @@ public:
 private:
     std::vector<std::pair<int64_t, int>> sepKeys_;   // separateUnits: (komórka siatki, jednostka), posortowane
     float separateTimer_ = 0.0f;   // odliczanie do kolejnego rozpychania jednostek
-    size_t nodesGenerated_ = 0;    // ile surowców wygenerowano z ziarna (dalsze to sadzonki leśniczych)
+    size_t nodesGenerated_ = 0;
+    // Mgła wojny (world_fog.cpp)
+    std::vector<uint8_t> fowExplored_, fowVisible_, fowTexture_;
+    uint64_t fowVersion_ = 0;
+    float fowTimer_ = 0.0f;
+    int fowNewlyExplored_ = 0;
+    [[nodiscard]] int fowCellOf(float x, float z) const;
+    void revealCircle(const Vec3& center, float radius);
+    void updateFogOfWar(float dt);
+    [[nodiscard]] std::string fogExploredRle() const;
+    void setFogExploredRle(const std::string& rle);    // ile surowców wygenerowano z ziarna (dalsze to sadzonki leśniczych)
     void createLand(engine3d::Scene* scene, uint32_t seed, Difficulty difficulty);
     void createStartingBases(Difficulty difficulty);
     void finishCreate();

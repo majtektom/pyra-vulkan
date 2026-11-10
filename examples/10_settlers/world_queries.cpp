@@ -36,6 +36,7 @@ int World::pickUnit(const Ray& ray) const {
     for (size_t i = 0; i < units.size(); ++i) {
         const Unit& u = units[i];
         if (!u.alive || u.state == UnitState::Garrison) continue;
+        if (u.faction != kPlayer && !visibleToPlayer(u.pos)) continue;   // mgła wojny
         const UnitDef& def = unitDef(u.type);
         float t;
         if (raySphere(ray, add(u.pos, {0.0f, def.height * 0.5f, 0.0f}), std::max(3.2f, def.radius * 1.5f), t) && t < bestT) {
@@ -53,6 +54,7 @@ int World::pickBuilding(const Ray& ray) const {
     for (size_t i = 0; i < buildings.size(); ++i) {
         const Building& b = buildings[i];
         if (!b.alive) continue;
+        if (b.faction != kPlayer && !exploredByPlayer(b.pos)) continue;   // mgła wojny
         const BuildingDef& def = buildingDef(b.type);
         float t;
         const float h = def.height * (b.constructed ? 0.4f : 0.15f);

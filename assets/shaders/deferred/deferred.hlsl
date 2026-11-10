@@ -23,9 +23,19 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
     float fogEnd;
     float fogDensity;
     uint fogEnabled;
+    float windTime;
+    float windStrength;
+    // Mgła wojny: tekstura widoczności nad kwadratem mapy [origin, origin + size] (XZ)
+    float fowOriginX;
+    float fowOriginZ;
+    float fowSize;
+    float fowExplored;
+    uint fowEnabled;
+    uint fowTextureIndex;
 };
 
 #include "shared/shadow_pcf.hlsl"
+#include "shared/fog_of_war.hlsl"
 
 // Powiązanie tekstur G-Buffera (Set 1 / space1)
 [[vk::binding(0, 1)]] Texture2D<float4> gbufferAlbedo;             // Albedo + metalness
@@ -35,6 +45,8 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
 [[vk::binding(3, 1)]] Texture2D<float4> gbufferWorldPos;           // World Position + depth mask
 [[vk::binding(4, 1)]] Texture2DArray<float> shadowMapArray;        // Tablica map cieni słońca
 [[vk::binding(4, 1)]] SamplerComparisonState shadowSampler;
+[[vk::binding(5, 1)]] Texture2D<float> fogOfWarTexture;            // Widoczność: 0 nieodkryte, 0.5 odkryte, 1 widoczne
+[[vk::binding(5, 1)]] SamplerState fogOfWarSampler;
 
 struct VertexOutput
 {
@@ -144,6 +156,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
         float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
         fogFactor = saturate(fogFactor);
         color = lerp(fogColor.rgb, color, fogFactor);
+    }
+
+    // MGŁA WOJNY: teren, którego jeszcze nie widziano, jest prawie czarny; odkryty, ale bez zwiadu -
+    // przyciemniony i wyszarzony (widać ukształtowanie, nie widać, co się tam teraz dzieje).
+    // Filtrowanie liniowe tekstury daje miękkie krawędzie między komórkami widoczności.
+    if (fowEnabled != 0u)
+    {
+        float2 fowUv = fogOfWarUv(worldPos, fowOriginX, fowOriginZ, fowSize);
+        float vis = (any(fowUv < 0.0) || any(fowUv > 1.0)) ? 0.0 : fogOfWarTexture.SampleLevel(fogOfWarSampler, fowUv, 0);
+        color = applyFogOfWar(color, vis, fowExplored);
     }
 
     return float4(color, 1.0);

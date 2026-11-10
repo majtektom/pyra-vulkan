@@ -217,6 +217,7 @@ bool SettlersApp::newWorld(uint32_t seed, Difficulty diff, const nlohmann::json*
 
     world_ = std::make_unique<World>(engine_, materials_);
     freePlay_ = false;
+    fogVersionSent_ = ~0ull;
     if (save) {
         if (!world_->loadState(scene_, *save, error)) return false;
     } else {
@@ -266,6 +267,8 @@ void SettlersApp::startNewGame(bool spectator) {
     newWorld(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()), diff);
     world_->aiEnabled = true;
     world_->aiControlsPlayer = spectator;
+    // Mgła wojny w zwykłej grze (w pokazie AI widz ogląda całą mapę; SETTLERS_NOFOG=1 wyłącza - zrzuty, testy).
+    world_->fogOfWar = !spectator && !std::getenv("SETTLERS_NOFOG") && !std::getenv("SETTLERS_AUTOPLAY");
     spectator_ = spectator;
     gameSpeed_ = spectator ? 4 : 1;
     updateSpeedButton();
@@ -419,6 +422,14 @@ void SettlersApp::update(float dt, Engine& e) {
     // 5. Interfejs rysowany od nowa w każdej klatce.
     cleanupSelection();
     updateContextWindows();
+    // Mgła wojny -> renderer (tekstura widoczności tylko po zmianie).
+    if (world_) {
+        renderer_->setFogOfWar(world_->fogOfWar, -kWorldHalf, -kWorldHalf, 2.0f * kWorldHalf, 0.45f);
+        if (world_->fogOfWar && world_->fogVersion() != fogVersionSent_ && !world_->fogTexture().empty()) {
+            renderer_->updateFogOfWar(world_->fogTexture());
+            fogVersionSent_ = world_->fogVersion();
+        }
+    }
     {
         PROFILE_SCOPE("gra.HUD");
         drawHud(e, in);

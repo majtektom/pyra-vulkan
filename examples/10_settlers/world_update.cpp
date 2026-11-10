@@ -159,6 +159,10 @@ void World::update(float dt) {
         }
     }
     {
+        PROFILE_SCOPE("świat.mgła wojny");
+        updateFogOfWar(dt);
+    }
+    {
         PROFILE_SCOPE("świat.modele (sync)");
         syncVisuals(dt);
     }
@@ -560,7 +564,9 @@ void World::syncVisuals(float dt) {
             const WorkKind kind = productionDef(buildings[u.building].type).kind;
             insideMine = kind == WorkKind::Mine || kind == WorkKind::Process;
         }
-        u.entity->setActive(!insideMine && u.state != UnitState::Garrison);   // załoga jest w wieży
+        // Mgła wojny: jednostki wroga widać tylko w zasięgu wzroku ludzi gracza.
+        const bool seen = u.faction == kPlayer || visibleToPlayer(u.pos);
+        u.entity->setActive(!insideMine && u.state != UnitState::Garrison && seen);   // załoga jest w wieży
         u.pos.y = heightAt(u.pos.x, u.pos.z);
         auto& tr = u.entity->transform();
         Vec3 p = u.pos;
@@ -596,6 +602,10 @@ void World::syncVisuals(float dt) {
 
     for (auto& b : buildings) {
         if (!b.alive || !b.entity) continue;
+        // Mgła wojny: budynki wroga widać na odkrytym terenie (pamiętamy, gdzie stały).
+        const bool known = b.faction == kPlayer || exploredByPlayer(b.pos);
+        b.entity->setActive(known);
+        if (b.scaffold) b.scaffold->setActive(known);
         if (!b.constructed) {
             b.entity->transform().scale = {1.0f, 0.05f + 0.95f * b.progress, 1.0f};
         }
@@ -644,6 +654,7 @@ void World::rebuildTerritory() {
         std::vector<Vec3> posts;
         // Słupek nie stoi w wodzie ani bliżej niż kPostSpacing od innego słupka tej frakcji.
         auto addPost = [&](float x, float z) {
+            if (f != kPlayer && !exploredByPlayer({x, 0.0f, z})) return;   // granica wroga tylko na odkrytym terenie
             for (const auto& q : posts) {
                 if ((q.x - x) * (q.x - x) + (q.z - z) * (q.z - z) < kPostSpacing * kPostSpacing) return;
             }

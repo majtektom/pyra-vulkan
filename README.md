@@ -98,6 +98,9 @@ towarem, a warsztat z pełną flagą czeka, aż ktoś zużyje jego wyroby. Surow
 w magazynie; zamek i Magazyn mieszczą po 200 towarów, więc Magazyny warto stawiać blisko produkcji. Okno Gospodarka
 pokazuje towary w magazynach, na flagach i w drodze, zapełnienie magazynów, tragarzy i wstrzymane warsztaty.
 Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.
+**Mgła wojny**: teren poza zasięgiem wzroku twoich ludzi jest czarny, dopóki go nie odkryjesz; odkryty, ale bez
+zwiadu - przyciemniony (widać teren i zapamiętane budynki wroga, nie widać jego wojska). Najdalej widzą łucznicy,
+wieże i zamek. Teren, roślinność, budynki, morze i minimapa są przyciemniane tą samą teksturą widoczności.
 Po zwycięstwie przycisk **Graj dalej** przełącza w wolną grę - osadę można rozbudowywać bez końca (zapis też działa).
 AI nie ma listy budowy: co kilka sekund czyta te same statystyki co gracz (braki towarów, przestoje, zapasy,
 ludność) i stawia to, czego brakuje, pilnując proporcji warsztatów (1 tartak obsługuje 4 drwali, 1 leśniczy
