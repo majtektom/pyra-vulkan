@@ -26,6 +26,7 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
 };
 
 #include "shared/shadow_pcf.hlsl"
+#include "shared/terrain_height.hlsl"
 
 // Parametry push constants dla terenu (w tym tablice indeksów warstw i masek)
 [[vk::push_constant]]
@@ -182,11 +183,10 @@ VertexOutput domainMain(HS_CONSTANT_DATA_OUTPUT input, float3 barycentricCoords 
     // Przemieszczenie na podstawie mapy wysokości (Heightmap displacement)
     if (heightmapEnabled != 0)
     {
+        // Wysokość: wspólna funkcja z shaderem map cieni terenu (shared/terrain_height.hlsl).
+        position.y = terrainHeightAt(textures[heightmapTextureSet], globalSampler, position.xz, layerWorldSize, scaleY);
         float2 heightmapUV = position.xz / max(layerWorldSize, 0.0001);
-        // Dobór mip level heightmapy na podstawie odległości: im dalej/drobniejsza siatka, tym wyższy mip
-        float heightmapMip = max(0, 2.0 - log2(max(tessellationFactor, 1.0)));
-        float h = textures[heightmapTextureSet].SampleLevel(globalSampler, heightmapUV, heightmapMip).r * 255.0 * scaleY;
-        position.y = h;
+        float heightmapMip = 0.0;
 
         // Obliczenie szczegółowej normalnej z mapy wysokości za pomocą różnic centralnych
         float offset = 0.5; // Krok w jednostkach świata

@@ -18,6 +18,9 @@ struct GpuMesh {
     std::unique_ptr<VulkanBuffer> instanceBuffer;
     uint32_t indexCount;
     uint32_t instanceCount = 0;
+    // Prostopadłościan otaczający wierzchołki w układzie lokalnym siatki (do dopasowania cieni).
+    bool hasBounds = false;
+    Vec3 boundsMin{}, boundsMax{};
 };
 
 class MeshManager {

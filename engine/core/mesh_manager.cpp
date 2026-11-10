@@ -51,6 +51,18 @@ void MeshManager::loadMesh(const std::string& name, const MeshData& meshData) {
         gpuMesh->vertexBuffer->upload(meshData.vertices.data(), vertexBufferSize);
     }
 
+    // Granice siatki (lokalne) - renderer dopasowuje do nich zakres kaskad cieni.
+    if (!meshData.vertices.empty()) {
+        Vec3 mn{1e30f, 1e30f, 1e30f}, mx{-1e30f, -1e30f, -1e30f};
+        for (const auto& v : meshData.vertices) {
+            mn = {std::min(mn.x, v.position[0]), std::min(mn.y, v.position[1]), std::min(mn.z, v.position[2])};
+            mx = {std::max(mx.x, v.position[0]), std::max(mx.y, v.position[1]), std::max(mx.z, v.position[2])};
+        }
+        gpuMesh->hasBounds = true;
+        gpuMesh->boundsMin = mn;
+        gpuMesh->boundsMax = mx;
+    }
+
     gpuMesh->indexCount = static_cast<uint32_t>(meshData.indices.size());
     if (!meshData.indices.empty()) {
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * meshData.indices.size();

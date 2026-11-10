@@ -371,6 +371,8 @@ public:
     Vec3 worldOffset() const;
     float worldSizeXZ() const { return static_cast<float>(hmSize_) * scaleXZ_; }
     const std::vector<Node*>& getVisibleNodes() const { return visibleNodes_; }
+    // Zasięg (od kamery), w którym węzły spoza kadru i tak rzucają cienie.
+    void setShadowCasterDistance(float d) { shadowCasterDistance_ = d; }
     const std::vector<float>& getHeightmapData() const { return heightmap_; }
     int getHeightmapSize() const { return hmSize_; }
     float getScaleXZ() const { return scaleXZ_; }
@@ -491,6 +493,10 @@ private:
     // Drzewo przestrzenne
     Node* root_ = nullptr;             // Korzeń drzewa czwórkowego (Quadtree).
     std::vector<Node*> visibleNodes_;  // Lista widocznych węzłów w aktualnej klatce.
+    // Węzły pominięte przy rysowaniu (np. za kamerą), ale bliskie kamerze - rzucają cień w kadr
+    // (wzgórze za kamerą od strony słońca). Trafiają tylko do mapy cieni.
+    std::vector<Node*> shadowNodes_;
+    float shadowCasterDistance_ = 2000.0f;
 
     // Zależności
     MeshManager* meshManager_ = nullptr; // Menadżer siatek GPU.

@@ -143,6 +143,14 @@ add_shader_bundle(
 )
 
 add_shader_bundle(
+    terrain_shadow
+    terrain_shadow.vert.hlsl=terrain_shadow.hlsl@vertexMain
+    terrain_shadow.tesc.hlsl=terrain_shadow.hlsl@hullMain
+    terrain_shadow.tese.hlsl=terrain_shadow.hlsl@domainMain
+    terrain_shadow.frag.hlsl=terrain_shadow.hlsl@fragmentMain
+)
+
+add_shader_bundle(
     shadow_depth_skinned
     shadow_depth_skinned.vert.hlsl=shadow_depth_skinned.hlsl@vertexMain
     shadow_depth_skinned.frag.hlsl=shadow_depth_skinned.hlsl@fragmentMain

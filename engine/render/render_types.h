@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -80,7 +81,24 @@ struct RenderPacket {
     float windStrength = 0.0f;
     bool forwardOpaquePass = false;
     bool castShadows = true;
+    // Tylko do mapy cieni (nie jest rysowana na ekranie) - np. teren poza kadrem, który rzuca cień w kadr.
+    bool shadowOnly = false;
+    // Prostopadłościan otaczający w układzie świata (false = nieznany, np. instancje) - do dopasowania cieni.
+    bool hasBounds = false;
+    Vec3 boundsMin{}, boundsMax{};
 };
+
+// Granice w świecie: 8 narożników lokalnego prostopadłościanu przekształconych macierzą.
+inline void transformBounds(const Matrix4& m, const Vec3& localMin, const Vec3& localMax, Vec3& outMin, Vec3& outMax) {
+    outMin = {1e30f, 1e30f, 1e30f};
+    outMax = {-1e30f, -1e30f, -1e30f};
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 c{(i & 1) ? localMax.x : localMin.x, (i & 2) ? localMax.y : localMin.y, (i & 4) ? localMax.z : localMin.z};
+        const Vec3 w = transformPoint(m, c);
+        outMin = {std::min(outMin.x, w.x), std::min(outMin.y, w.y), std::min(outMin.z, w.z)};
+        outMax = {std::max(outMax.x, w.x), std::max(outMax.y, w.y), std::max(outMax.z, w.z)};
+    }
+}
 
 struct RenderView {
     Matrix4 view;

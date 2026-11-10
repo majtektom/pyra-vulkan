@@ -311,6 +311,10 @@ void VulkanContext::createLogicalDevice() {
     if (tessellationSupported_) {
         features.tessellationShader = VK_TRUE;
     }
+    // depthClamp - mapy cieni: obiekty rzucające cień leżące przed bliską płaszczyzną kaskady (np. wzgórze
+    // daleko w stronę słońca) nie są obcinane, tylko dociskane do niej, więc dalej rzucają cień.
+    depthClampSupported_ = supported.depthClamp == VK_TRUE;
+    features.depthClamp = supported.depthClamp;
     if (!supported.fillModeNonSolid) {
         LOG_WARN("[VulkanContext] fillModeNonSolid not supported - wireframe mode unavailable");
     }

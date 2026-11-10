@@ -34,6 +34,14 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
 
 - Pozycja świata w G-Bufferze musi być `R32G32B32A32_SFLOAT` (RGBA16F przy współrzędnych ~300 dawało shadow acne).
 - Bias/normal-offset cieni skalowany rozmiarem teksela kaskady (`assets/shaders/shared/shadow_pcf.hlsl`).
+- Teren teselowany rzuca cień potokiem `terrain_shadow` (ta sama teselacja i `shared/terrain_height.hlsl` co ekran) -
+  zmiana wysokości terenu w shaderze musi iść przez tę wspólną funkcję, inaczej wrócą "cienie znikąd".
+- `depthClamp` tylko dla kaskad słońca (ortho); w mapach cieni świateł lokalnych (perspektywa) psuje obcinanie.
+- Cienie słońca poruszają się płynnie (bez kwantyzacji kierunku - użytkownik woli płynne niż skokowe); zasięg ustawia gra `configureDirectionalShadow`
+  (Osadnicy dopasowują go do kamery co klatkę). Gdy gra nie poda `startDistance`, renderer sam zaczyna kaskady
+  przy najbliższej widocznej geometrii (granice siatek i węzłów terenu) i liczy zasięg od niej.
+  `08_game`: `GAME08_MAP=demo.map GAME08_HOUR=12 GAME08_CAMY=900 GAME08_NOLIGHT=1 GAME08_NOFOG=1`
+  (użytkownik ogląda cienie z wyłączonym światłem i mgłą - tryb `lightingEnabled == 0` w deferred.hlsl).
 - Zmiana materiału encji: po podmianie `materialHandle` wyzerować `materialInstance`.
 - Pozycja myszy SDL to (0,0) przed pierwszym ruchem — przewijanie krawędzią ekranu dopiero po ruchu myszy.
 - Kółko myszy: używać `InputSnapshot::mouseWheelF` (float), nie wersji int.

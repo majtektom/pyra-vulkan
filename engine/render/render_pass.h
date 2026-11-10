@@ -15,6 +15,10 @@ public:
     }
 
     void addPacket(RenderPacket packet) {
+        if (packet.shadowOnly) {
+            if (packet.castShadows && packet.vertexBuffer != VK_NULL_HANDLE) shadowPackets.push_back(std::move(packet));
+            return;
+        }
         const bool isTransparent = packet.material && packet.material->isTransparent();
         const bool castShadows = packet.castShadows && packet.vertexBuffer != VK_NULL_HANDLE;
 

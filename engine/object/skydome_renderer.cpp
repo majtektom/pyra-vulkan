@@ -439,21 +439,24 @@ Vec3 SkydomeRenderer::getSunDirection() const {
     return Vec3{x, y, z};
 }
 
+// Barwa słońca z tabeli pory dnia (biała w dzień, pomarańczowa o świcie i zmierzchu), znormalizowana do
+// jasności 1 - o sile światła decyduje getSunIntensity() (wysokość słońca), a nie przyciemniony kolor.
 Vec3 SkydomeRenderer::getSunColor() const {
     std::array<float, 4> topCol, horCol, sunCol;
     computeSkyColors(config_.timeOfDay, topCol, horCol, sunCol);
-    return Vec3{sunCol[0], sunCol[1], sunCol[2]};
+    const float m = std::max({sunCol[0], sunCol[1], sunCol[2]});
+    if (m < 1e-3f) return Vec3{1.0f, 0.25f, 0.02f};   // noc: barwa zachodu (siła i tak bliska zeru)
+    return Vec3{sunCol[0] / m, sunCol[1] / m, sunCol[2] / m};
 }
 
+// Siła słońca zależy od jego wysokości nad horyzontem: pełna od ~18°, łagodnie słabnie aż do horyzontu
+// (-2°). Wcześniej siła szła za godziną z tabeli i spadała 7x między 16 a 17 (słońce wciąż ~12° nad
+// horyzontem) - cienie gasły długo przed zachodem.
 float SkydomeRenderer::getSunIntensity() const {
-    std::array<float, 4> topCol, horCol, sunCol;
-    computeSkyColors(config_.timeOfDay, topCol, horCol, sunCol);
-    
-    // Smooth fade factor based on elevation between -5.0 and +5.0 degrees
-    float elevationFactor = std::clamp((config_.sunElevation + 5.0f) / 10.0f, 0.0f, 1.0f);
-    elevationFactor = elevationFactor * elevationFactor * (3.0f - 2.0f * elevationFactor); // Smoothstep
-
-    return sunCol[3] * elevationFactor;
+    constexpr float kDayIntensity = 4.5f;
+    float k = std::clamp((config_.sunElevation + 2.0f) / 20.0f, 0.0f, 1.0f);
+    k = k * k * (3.0f - 2.0f * k);   // smoothstep
+    return kDayIntensity * k;
 }
 
 float SkydomeRenderer::getAmbientStrength() const {

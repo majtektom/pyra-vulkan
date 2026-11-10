@@ -97,8 +97,11 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
         color = baseColor;
         if (shadowsEnabled != 0u && lightCount > 0u)
         {
+            // Bez oświetlenia: cień tylko przyciemnia teksturę, a jego siła zależy od siły światła
+            // (w nocy słońce ma siłę 0 - nie ma cieni).
             float shadow = sampleShadowPcf(shadowMapArray, shadowSampler, lights[0], worldPos, N);
-            color = baseColor * lerp(0.35, 1.0, shadow);
+            float strength = saturate(lights[0].color.w * 0.5);
+            color = baseColor * lerp(1.0, lerp(0.35, 1.0, shadow), strength);
         }
     }
     else

@@ -512,7 +512,6 @@ private:
     std::shared_ptr<SkydomeRenderer> skydome_;
     std::shared_ptr<OceanRenderer> ocean_;
     float skyTime_ = 0.0f;
-    Vec3 shadowSunDir_{0.0f, -1.0f, 0.0f};   // kierunek słońca użyty ostatnio do cieni
     float shadowStart_ = -1.0f, shadowEnd_ = -1.0f;
     float screenW_ = 1440.0f, screenH_ = 900.0f;
     int lastW_ = 0, lastH_ = 0;               // rozmiar ekranu przy ostatnim layoutGui

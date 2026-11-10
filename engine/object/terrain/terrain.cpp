@@ -283,6 +283,18 @@ void Terrain::update(const CameraComponent* cam, MeshManager& meshManager, const
     visibleNodes_.clear();
     updateNodes(root_, cam);
     visibleCount = (int)visibleNodes_.size();
+
+    // Cienie z terenu poza kadrem: liście niewidoczne, ale w zasięgu shadowCasterDistance_ od kamery.
+    // Bez nich wzgórze za kamerą nie rzucało cienia w kadr, a cień pojawiał się i znikał przy obrocie kamery.
+    shadowNodes_.clear();
+    const Vec3 shadowCamPos = cam->getOwner()->transform().position;
+    const Vec3 offset = worldOffset();
+    for (auto* node : leaves) {
+        if (node->visible) continue;
+        const float dx = node->cx + offset.x - shadowCamPos.x, dz = node->cz + offset.z - shadowCamPos.z;
+        const float reach = shadowCasterDistance_ + node->sizeXZ * 0.75f;
+        if (dx * dx + dz * dz < reach * reach) shadowNodes_.push_back(node);
+    }
 }
 
 void Terrain::updateNodes(Node* node, const CameraComponent* cam) {
@@ -448,7 +460,12 @@ void Terrain::collectRenderPackets(
     bool tessellationActive,
     float tessellationLevel) 
 {
-    for (auto* node : visibleNodes_) {
+    // Najpierw węzły widoczne, potem węzły tylko do cieni (poza kadrem).
+    std::vector<Node*> nodes = visibleNodes_;
+    const size_t visibleEnd = nodes.size();
+    nodes.insert(nodes.end(), shadowNodes_.begin(), shadowNodes_.end());
+    for (size_t ni = 0; ni < nodes.size(); ++ni) {
+        Node* node = nodes[ni];
         std::string nodeMeshName = meshName_ + "_node_" + std::to_string(node->meshId);
         auto gpuMesh = meshManager.getMesh(nodeMeshName);
         if (!gpuMesh) continue;
@@ -503,6 +520,14 @@ void Terrain::collectRenderPackets(
         packet.indexCount = gpuIndexMesh->indexCount;
         packet.transform = worldTransform;
         packet.castShadows = castShadows;
+        packet.shadowOnly = ni >= visibleEnd;
+        // Granice węzła (układ lokalny terenu, jak wierzchołki siatki) - do dopasowania kaskad cieni.
+        {
+            const float h = node->sizeXZ * 0.5f;
+            packet.hasBounds = true;
+            transformBounds(worldTransform, Vec3{node->cx - h, node->minY, node->cz - h}, Vec3{node->cx + h, node->maxY, node->cz + h},
+                            packet.boundsMin, packet.boundsMax);
+        }
         packet.materialHandle = materialHandle;
         packet.material = materialInstance;
 
@@ -530,6 +555,7 @@ void Terrain::collectRenderPackets(
         packet.tessellationFactor = tessFactor;
         packet.heightmapEnabled = heightmapEnabled;
 
+        // Teren teselowany rzuca cień przez potok terrain_shadow (renderer), z tej samej geometrii co na ekranie.
         packets.push_back(packet);
     }
 }

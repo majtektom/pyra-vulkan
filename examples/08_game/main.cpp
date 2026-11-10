@@ -1,5 +1,6 @@
 #include "core/logger.h"
 #include <SDL3/SDL.h>
+#include <cstdlib>
 
 #include <algorithm>
 #include <array>
@@ -124,6 +125,30 @@ public:
         };
 
         showMainMenu();
+
+        // Pomocnicze (testy, zrzuty ekranu): GAME08_MAP=<plik w assets/maps> - od razu gra na tej mapie,
+        // GAME08_HOUR=<0-24> - pora dnia na starcie (skydome: godzina = 11 + czas * 0.05).
+        if (const char* map = std::getenv("GAME08_MAP")) {
+            currentMapPath_ = std::string("assets/maps/") + map;
+            if (ensureGameScene(currentMapPath_)) {
+                if (const char* hour = std::getenv("GAME08_HOUR")) {
+                    worldTime_ = std::fmod(static_cast<float>(std::atof(hour)) - 11.0f + 24.0f, 24.0f) / 0.05f;
+                }
+                enterGame();
+                // GAME08_NOLIGHT=1 / GAME08_NOFOG=1 - bez oświetlenia / mgły (cienie lepiej widoczne)
+                if (std::getenv("GAME08_NOLIGHT")) engine_.setLightingEnabled(false);
+                if (std::getenv("GAME08_NOFOG")) engine_.setFogEnabled(false);
+                // GAME08_CAMY=<wysokość> - kamera wyżej nad terenem (test cieni przy oddaleniu)
+                if (const char* camY = std::getenv("GAME08_CAMY"); camY && gameCamera_) {
+                    Vec3 pos = gameCamera_->getOwner()->transform().position;
+                    const float dy = static_cast<float>(std::atof(camY)) - pos.y;
+                    pos.y += dy;
+                    Vec3 target = gameCamera_->target;
+                    target.y += dy * 0.3f;
+                    engine_.getCameraController()->setPositionAndTarget(pos, target);
+                }
+            }
+        }
         return true;
     }
 

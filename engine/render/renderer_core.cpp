@@ -147,6 +147,7 @@ public:
             createShadowResources();
             createShadowPipeline();
             createShadowSkinnedPipeline();
+            createTerrainShadowPipeline();
             createGBufferResources();
             createSceneColorResources();
             LOG_INFO("Deferred PBR Renderer initialized.");
@@ -195,6 +196,7 @@ public:
             vkResetFences(device, 1, &inFlightFences_[currentFrame_]);
         }
 
+        updateVisibleDepthRange(scene, view);
         updateUniformBuffer(view);
 
         VkCommandBuffer cmd = commandBuffers_[currentFrame_];
@@ -230,22 +232,67 @@ public:
 
             // Rysuje obiekty rzucające cień do bieżącego widoku cienia (macierz lvp).
             // cullCenter/cullRadius > 0: tylko obiekty w zasięgu światła lokalnego.
-            auto drawShadowCasters = [&](const Matrix4& lvp, const Vec3& cullCenter, float cullRadius) {
+            auto drawShadowCasters = [&](const Matrix4& lvp, const Vec3& cullCenter, float cullRadius, bool sun) {
                 for (const auto& packet : scene.getShadowPackets()) {
+                    // Obiekt w całości poza obszarem mapy cieni (x/y poza [-1, 1] w przestrzeni światła) - pomijamy.
+                    // Głębokości nie sprawdzamy: obiekt przed płaszczyzną światła i tak rzuca cień (depthClamp).
+                    if (packet.hasBounds) {
+                        int outL = 0, outR = 0, outB = 0, outT = 0;
+                        for (int c = 0; c < 8; ++c) {
+                            const Vec3 corner{(c & 1) ? packet.boundsMax.x : packet.boundsMin.x,
+                                              (c & 2) ? packet.boundsMax.y : packet.boundsMin.y,
+                                              (c & 4) ? packet.boundsMax.z : packet.boundsMin.z};
+                            const auto& m = lvp.values;
+                            const float x = m[0] * corner.x + m[4] * corner.y + m[8] * corner.z + m[12];
+                            const float y = m[1] * corner.x + m[5] * corner.y + m[9] * corner.z + m[13];
+                            const float w = m[3] * corner.x + m[7] * corner.y + m[11] * corner.z + m[15];
+                            if (w <= 0.0f) continue;   // za "okiem" światła lokalnego - nie oceniamy
+                            outL += (x < -w) ? 1 : 0;
+                            outR += (x > w) ? 1 : 0;
+                            outB += (y < -w) ? 1 : 0;
+                            outT += (y > w) ? 1 : 0;
+                        }
+                        if (outL == 8 || outR == 8 || outB == 8 || outT == 8) continue;
+                    }
                     if (cullRadius > 0.0f) {
                         // Pozycja obiektu z macierzy świata; zapas 30 j. na jego rozmiar.
                         const Vec3 p{packet.transform.values[12], packet.transform.values[13], packet.transform.values[14]};
                         const Vec3 d = subtract(p, cullCenter);
                         if (dot(d, d) > (cullRadius + 30.0f) * (cullRadius + 30.0f)) continue;
                     }
+                    // Teren teselowany: cień z tej samej geometrii co na ekranie (teselacja + mapa wysokości).
+                    const bool tessTerrain = packet.heightmapEnabled && terrainShadowPipeline_ && tessellationEnabled_ &&
+                                             packet.indexBuffer != VK_NULL_HANDLE;
+                    if (tessTerrain) {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sun ? terrainShadowSunPipeline_ : terrainShadowPipeline_);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainShadowPipelineLayout_, 0, 1,
+                                                &descriptorSets_[currentFrame_], 0, nullptr);
+                        VkBuffer tvb[] = {packet.vertexBuffer};
+                        VkDeviceSize toff[] = {0};
+                        vkCmdBindVertexBuffers(cmd, 0, 1, tvb, toff);
+                        vkCmdBindIndexBuffer(cmd, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                        TerrainShadowPush tp{};
+                        tp.model = packet.transform;
+                        tp.lvp = lvp;
+                        tp.heightmapTextureSet = packet.heightmapTextureIndex;
+                        tp.scaleY = packet.scaleY;
+                        tp.tessellationFactor = packet.tessellationFactor;
+                        tp.layerWorldSize = packet.layerWorldSize;
+                        vkCmdPushConstants(cmd, terrainShadowPipelineLayout_,
+                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                                               VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                           0, sizeof(tp), &tp);
+                        vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+                        continue;
+                    }
                     bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
 
                     if (isSkinned) {
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipeline_);
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sun && shadowSkinnedSunPipeline_ ? shadowSkinnedSunPipeline_ : shadowSkinnedPipeline_);
                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowSkinnedPipelineLayout_, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
                     } else {
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sun && shadowSunPipeline_ ? shadowSunPipeline_ : shadowPipeline_);
                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
                     }
 
@@ -317,7 +364,7 @@ public:
                 for (uint32_t cascade = 0; cascade < caster.cascadeCount; ++cascade) {
                     beginShadowLayer(caster.layer + cascade);
                     setShadowViewport(-1);
-                    drawShadowCasters(storedLights_[caster.lightIndex].lightViewProj[cascade], Vec3{}, 0.0f);
+                    drawShadowCasters(storedLights_[caster.lightIndex].lightViewProj[cascade], Vec3{}, 0.0f, true);
                     vkCmdEndRendering(cmd);
                 }
             }
@@ -328,7 +375,7 @@ public:
                 if (caster.atlasSlot < 0) continue;
                 const LightData& l = storedLights_[caster.lightIndex];
                 setShadowViewport(caster.atlasSlot);
-                drawShadowCasters(l.lightViewProj[0], Vec3{l.position[0], l.position[1], l.position[2]}, l.params[2]);
+                drawShadowCasters(l.lightViewProj[0], Vec3{l.position[0], l.position[1], l.position[2]}, l.params[2], false);
             }
             vkCmdEndRendering(cmd);
 
@@ -1014,18 +1061,20 @@ public:
 
         VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
 
-        // Convert float heightmap data (0..255) to 8-bit unorm values
+        // Dane 0..255 (mapa wysokości, maski) -> 16-bit UNORM z zaokrągleniem. Wcześniej było 8 bit z obcięciem:
+        // teren przesuwany na GPU leżał w "schodkach" do 1 jednostki mapy niżej niż siatka CPU, która rzuca cienie
+        // - siatka cieni wystawała ponad widoczny teren i rzucała pasy cieni wzdłuż schodków.
         TextureUploadData uploadData{};
         uploadData.width = width;
         uploadData.height = height;
         uploadData.mipLevels = 1;
-        uploadData.format = VK_FORMAT_R8_UNORM;
-        uploadData.pixelBytes.resize(width * height);
+        uploadData.format = VK_FORMAT_R16_UNORM;
+        uploadData.pixelBytes.resize(static_cast<size_t>(width) * height * 2);
         for (uint32_t i = 0; i < width * height; ++i) {
-            float val = data[i];
-            if (val < 0.0f) val = 0.0f;
-            if (val > 255.0f) val = 255.0f;
-            uploadData.pixelBytes[i] = static_cast<uint8_t>(val);
+            const float val = std::clamp(data[i], 0.0f, 255.0f);
+            const auto v = static_cast<uint16_t>(std::lround(val / 255.0f * 65535.0f));
+            uploadData.pixelBytes[i * 2] = static_cast<uint8_t>(v & 0xFF);
+            uploadData.pixelBytes[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
         }
 
         // Compute full mip chain
@@ -1397,6 +1446,11 @@ public:
         if (shadowMapMemory_) { vkFreeMemory(device, shadowMapMemory_, nullptr); shadowMapMemory_ = VK_NULL_HANDLE; }
         if (shadowSampler_) { vkDestroySampler(device, shadowSampler_, nullptr); shadowSampler_ = VK_NULL_HANDLE; }
         if (shadowPipeline_) { vkDestroyPipeline(device, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
+        if (shadowSunPipeline_) { vkDestroyPipeline(device, shadowSunPipeline_, nullptr); shadowSunPipeline_ = VK_NULL_HANDLE; }
+        if (terrainShadowPipeline_) { vkDestroyPipeline(device, terrainShadowPipeline_, nullptr); terrainShadowPipeline_ = VK_NULL_HANDLE; }
+        if (terrainShadowSunPipeline_) { vkDestroyPipeline(device, terrainShadowSunPipeline_, nullptr); terrainShadowSunPipeline_ = VK_NULL_HANDLE; }
+        if (terrainShadowPipelineLayout_) { vkDestroyPipelineLayout(device, terrainShadowPipelineLayout_, nullptr); terrainShadowPipelineLayout_ = VK_NULL_HANDLE; }
+        if (shadowSkinnedSunPipeline_) { vkDestroyPipeline(device, shadowSkinnedSunPipeline_, nullptr); shadowSkinnedSunPipeline_ = VK_NULL_HANDLE; }
         if (shadowPipelineLayout_) { vkDestroyPipelineLayout(device, shadowPipelineLayout_, nullptr); shadowPipelineLayout_ = VK_NULL_HANDLE; }
         if (shadowSkinnedPipeline_) { vkDestroyPipeline(device, shadowSkinnedPipeline_, nullptr); shadowSkinnedPipeline_ = VK_NULL_HANDLE; }
         if (shadowSkinnedPipelineLayout_) { vkDestroyPipelineLayout(device, shadowSkinnedPipelineLayout_, nullptr); shadowSkinnedPipelineLayout_ = VK_NULL_HANDLE; }
@@ -1438,6 +1492,11 @@ public:
         if (defaultBlackImage_) { vkDestroyImage(device, defaultBlackImage_, nullptr); defaultBlackImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultBlackImageMemory_, nullptr); defaultBlackImageMemory_ = VK_NULL_HANDLE; }
 
         if (shadowPipeline_) { vkDestroyPipeline(device, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
+        if (shadowSunPipeline_) { vkDestroyPipeline(device, shadowSunPipeline_, nullptr); shadowSunPipeline_ = VK_NULL_HANDLE; }
+        if (terrainShadowPipeline_) { vkDestroyPipeline(device, terrainShadowPipeline_, nullptr); terrainShadowPipeline_ = VK_NULL_HANDLE; }
+        if (terrainShadowSunPipeline_) { vkDestroyPipeline(device, terrainShadowSunPipeline_, nullptr); terrainShadowSunPipeline_ = VK_NULL_HANDLE; }
+        if (terrainShadowPipelineLayout_) { vkDestroyPipelineLayout(device, terrainShadowPipelineLayout_, nullptr); terrainShadowPipelineLayout_ = VK_NULL_HANDLE; }
+        if (shadowSkinnedSunPipeline_) { vkDestroyPipeline(device, shadowSkinnedSunPipeline_, nullptr); shadowSkinnedSunPipeline_ = VK_NULL_HANDLE; }
         if (shadowPipelineLayout_) { vkDestroyPipelineLayout(device, shadowPipelineLayout_, nullptr); shadowPipelineLayout_ = VK_NULL_HANDLE; }
         if (shadowSampler_) { vkDestroySampler(device, shadowSampler_, nullptr); shadowSampler_ = VK_NULL_HANDLE; }
         if (shadowMapView_) { vkDestroyImageView(device, shadowMapView_, nullptr); shadowMapView_ = VK_NULL_HANDLE; }
@@ -1540,8 +1599,8 @@ public:
      * dopiero z pewnej odległości, więc nie marnujemy rozdzielczości na pustą przestrzeń.
      * Wynik: dirShadowSplitDepths_[i] = dalsza granica kaskady i (głębokość w przestrzeni widoku).
      */
-    void computeCascadeSplits(float nearDepth, float farDepth) {
-        const float start = std::max(nearDepth, std::min(dirShadowStart_, farDepth - 1.0f));
+    void computeCascadeSplits(float nearDepth, float startDepth, float farDepth) {
+        const float start = std::max(nearDepth, std::min(startDepth, farDepth - 1.0f));
         const float end = std::max(start + 1.0f, farDepth);
         dirShadowSplitStart_ = start;
         for (int i = 0; i < kShadowCascades; ++i) {
@@ -1551,6 +1610,56 @@ public:
             dirShadowSplitDepths_[i] = dirShadowLambda_ * logSplit + (1.0f - dirShadowLambda_) * uniformSplit;
         }
         dirShadowSplitDepths_[kShadowCascades - 1] = end;
+    }
+
+    /**
+     * Zakres głębokości (w przestrzeni widoku), w którym kamera widzi geometrię: z granic paczek
+     * nieprzezroczystych (siatki, węzły terenu), które mogą być w kadrze. Pozwala rozłożyć kaskady cieni
+     * tam, gdzie coś jest - np. kamera wysoko nad terenem nie marnuje kaskad na pusty odcinek między sobą
+     * a ziemią, a oddalenie kamery nie "wypycha" terenu poza zasięg cieni.
+     */
+    void updateVisibleDepthRange(const RenderScene& scene, const RenderView& v) {
+        visDepthValid_ = false;
+        const float sx = std::abs(v.projection.values[0]), sy = std::abs(v.projection.values[5]);
+        float mn = 1e30f, mx = 0.0f;
+        for (const auto& p : scene.getOpaquePackets()) {
+            if (!p.hasBounds) continue;
+            float dmin = 1e30f, dmax = -1e30f;
+            bool behind = false;
+            int outL = 0, outR = 0, outT = 0, outB = 0;
+            for (int i = 0; i < 8; ++i) {
+                const Vec3 c{(i & 1) ? p.boundsMax.x : p.boundsMin.x, (i & 2) ? p.boundsMax.y : p.boundsMin.y,
+                             (i & 4) ? p.boundsMax.z : p.boundsMin.z};
+                const Vec3 vp = transformPoint(v.view, c);
+                const float d = -vp.z;   // głębokość przed kamerą
+                dmin = std::min(dmin, d);
+                dmax = std::max(dmax, d);
+                if (d <= 0.01f) {
+                    behind = true;
+                    continue;
+                }
+                outR += (vp.x * sx > d) ? 1 : 0;
+                outL += (-vp.x * sx > d) ? 1 : 0;
+                outT += (vp.y * sy > d) ? 1 : 0;
+                outB += (-vp.y * sy > d) ? 1 : 0;
+            }
+            if (dmax <= 0.0f) continue;   // cały za kamerą
+            if (!behind && (outR == 8 || outL == 8 || outT == 8 || outB == 8)) continue;   // poza kadrem
+            mn = std::min(mn, std::max(dmin, 0.0f));
+            mx = std::max(mx, dmax);
+        }
+        if (mx > 0.0f) {
+            // Wygładzanie w czasie: zakres zmienia się skokowo, gdy węzły terenu wchodzą w kadr lub zmieniają LOD -
+            // bez wygładzania kaskady (a z nimi ostrość cieni) przeskakiwałyby. Przy dużej zmianie (teleport kamery,
+            // nowa scena) przyjmujemy wartość od razu.
+            const bool jump = !visDepthSmoothed_ || std::abs(mn - visMinDepth_) > 0.5f * std::max(visMinDepth_, 50.0f) ||
+                              std::abs(mx - visMaxDepth_) > 0.5f * std::max(visMaxDepth_, 50.0f);
+            const float k = jump ? 1.0f : 0.08f;
+            visMinDepth_ += (mn - visMinDepth_) * k;
+            visMaxDepth_ += (mx - visMaxDepth_) * k;
+            visDepthSmoothed_ = true;
+            visDepthValid_ = true;
+        }
     }
 
     void setAmbientColor(float r, float g, float b) {
@@ -1627,6 +1736,11 @@ public:
             if (type == 1) {
                 if (!sunAssigned) {
                     sunAssigned = true;
+                    // Słońce pod horyzontem (kierunek do światła skierowany w dół) nie rzuca cieni -
+                    // mapa cieni "od spodu" dawałaby bezsensowne cienie terenu w nocy.
+                    const float len = std::sqrt(l.direction[0] * l.direction[0] + l.direction[1] * l.direction[1] +
+                                                l.direction[2] * l.direction[2]);
+                    if (len > 1e-4f && l.direction[1] / len < -0.02f) continue;
                     l.position[3] = 0.0f;
                     l.params[3] = static_cast<float>(kShadowCascades);
                     shadowCasters_.push_back({i, 0u, static_cast<uint32_t>(kShadowCascades), -1});
@@ -1776,7 +1890,17 @@ private:
             const auto corners = buildCameraFrustumCorners(view);
             const float nearDepth = std::abs(transformPoint(view.view, corners[0]).z);
             const float cameraFar = std::abs(transformPoint(view.view, corners[4]).z);
-            computeCascadeSplits(nearDepth, std::min(cameraFar, dirShadowHalfSize_));
+            float start = dirShadowStart_;
+            float far = std::min(cameraFar, dirShadowHalfSize_);
+            if (dirShadowStart_ <= 0.0f && visDepthValid_) {
+                // Gra nie ustawiła początku kaskad - dopasowanie automatyczne: kaskady od najbliższej widocznej
+                // geometrii, a zasięg (halfSize) liczony od niej, a nie od kamery.
+                start = std::max(nearDepth, visMinDepth_);
+                far = std::min({cameraFar, visMaxDepth_, start + dirShadowHalfSize_});
+                far = std::max(far, start + 1.0f);
+            }
+            shadowFarDepth_ = far;
+            computeCascadeSplits(nearDepth, start, far);
         }
         for (uint32_t i = 0; i < kShadowCascades; ++i) {
             ubo.directionalShadowSplits[i] = dirShadowSplitDepths_[i];
@@ -1808,12 +1932,12 @@ private:
                     const Vec3 ray = subtract(frustumCorners[corner], view.cameraPosition);
                     const Vec3 farViewPosition = transformPoint(view.view, frustumCorners[corner]);
                     const float farViewDepth = std::abs(farViewPosition.z);
-                    if (farViewDepth > dirShadowHalfSize_) {
+                    if (farViewDepth > shadowFarDepth_) {
                         // Kaskady i shader wybierają zakres według głębokości widoku,
                         // więc również narożniki frustum muszą być przycinane tą miarą.
                         frustumCorners[corner] = add(
                             view.cameraPosition,
-                            multiply(ray, dirShadowHalfSize_ / farViewDepth));
+                            multiply(ray, shadowFarDepth_ / farViewDepth));
                     }
                 }
                 // Narożniki dalekiej płaszczyzny leżą teraz na głębokości farUsed; punkt na promieniu
@@ -1822,10 +1946,12 @@ private:
                 auto depthToT = [&](float depth) {
                     return std::clamp((depth - nearDepth) / std::max(farUsed - nearDepth, 0.001f), 0.0f, 1.0f);
                 };
+                // Kierunek mapy cieni = bieżący kierunek światła (płynny ruch cieni razem ze słońcem).
+                const Vec3 shadowDir = normalize(lDir);
                 float previousSplit = depthToT(dirShadowSplitStart_);
                 for (uint32_t cascade = 0; cascade < kShadowCascades; ++cascade) {
                     const float splitFar = depthToT(dirShadowSplitDepths_[cascade]);
-                    l.lightViewProj[cascade] = buildDirectionalCascadeMatrix(frustumCorners, lDir, previousSplit, splitFar);
+                    l.lightViewProj[cascade] = buildDirectionalCascadeMatrix(frustumCorners, shadowDir, previousSplit, splitFar);
                     previousSplit = splitFar;
                 }
             } else if (type == 3) { // Spot
@@ -2267,6 +2393,125 @@ private:
         shadowMapLayout_ = newLayout;
     }
 
+    /**
+     * Potok map cieni dla terenu teselowanego (shader terrain_shadow): ta sama teselacja i wysokość z mapy
+     * co teren na ekranie, więc cień powstaje z widocznej geometrii. Dwa warianty: słońce (depthClamp)
+     * i światła lokalne. Tworzony tylko, gdy GPU obsługuje teselację.
+     */
+    void createTerrainShadowPipeline() {
+        if (!vulkanContext_->isTessellationSupported()) return;
+        VkDevice device = vulkanContext_->device();
+        const std::string dir = "bin/assets/shaders/terrain_shadow/terrain_shadow.";
+        std::vector<char> codes[4];
+        try {
+            codes[0] = vk::readFile(dir + "vert.spv");
+            codes[1] = vk::readFile(dir + "tesc.spv");
+            codes[2] = vk::readFile(dir + "tese.spv");
+            codes[3] = vk::readFile(dir + "frag.spv");
+        } catch (...) {
+            LOG_WARN("Brak shaderów terrain_shadow - cienie terenu z siatki CPU");
+            return;
+        }
+        const VkShaderStageFlagBits stageBits[4] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+                                                    VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
+        const char* entries[4] = {"vertexMain", "hullMain", "domainMain", "fragmentMain"};
+        VkShaderModule modules[4];
+        VkPipelineShaderStageCreateInfo stages[4]{};
+        for (int i = 0; i < 4; ++i) {
+            modules[i] = vk::createShaderModule(device, codes[i]);
+            stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[i].stage = stageBits[i];
+            stages[i].module = modules[i];
+            stages[i].pName = entries[i];
+        }
+
+        auto bindingDesc = Vertex::bindingDescription();
+        auto attrDescs = vk::filterVertexAttributes(codes[0], Vertex::attributeDescriptions());
+        VkPipelineVertexInputStateCreateInfo vertexInput{};
+        vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInput.vertexBindingDescriptionCount = 1;
+        vertexInput.pVertexBindingDescriptions = &bindingDesc;
+        vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDescs.size());
+        vertexInput.pVertexAttributeDescriptions = attrDescs.data();
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+        VkPipelineTessellationStateCreateInfo tess{};
+        tess.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+        tess.patchControlPoints = 3;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        // Domain shader HLSL z "triangle_cw" odwraca kolejność względem siatki - jak w potoku terenu
+        // na ekranie (ten sam frontFace/cull), żeby rzucały cień te same ściany co widać.
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.cullMode = VK_CULL_MODE_NONE;   // teren to "skorupa" - cień rzucają obie strony
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.depthBiasEnable = VK_TRUE;
+        rasterizer.depthBiasConstantFactor = 1.25f;
+        rasterizer.depthBiasSlopeFactor = 1.75f;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        dynamicState.dynamicStateCount = 2;
+        dynamicState.pDynamicStates = dynStates;
+
+        VkPushConstantRange pushRange{};
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                               VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushRange.offset = 0;
+        pushRange.size = sizeof(TerrainShadowPush);
+        VkPipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &descriptorSetLayout_;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushRange;
+        vkCreatePipelineLayout(device, &layoutInfo, nullptr, &terrainShadowPipelineLayout_);
+
+        VkPipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+        renderingInfo.colorAttachmentCount = 0;
+        renderingInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.pNext = &renderingInfo;
+        pipelineInfo.stageCount = 4;
+        pipelineInfo.pStages = stages;
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pTessellationState = &tess;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = terrainShadowPipelineLayout_;
+
+        rasterizer.depthClampEnable = VK_FALSE;
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &terrainShadowPipeline_);
+        rasterizer.depthClampEnable = vulkanContext_->isDepthClampSupported() ? VK_TRUE : VK_FALSE;
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &terrainShadowSunPipeline_);
+        for (auto m : modules) vkDestroyShaderModule(device, m, nullptr);
+    }
+
     void createShadowPipeline() {
         VkDevice device = vulkanContext_->device();
 
@@ -2318,6 +2563,7 @@ private:
         rasterizer.depthBiasEnable = VK_TRUE;
         rasterizer.depthBiasConstantFactor = 1.25f;
         rasterizer.depthBiasSlopeFactor = 1.75f;
+        rasterizer.depthClampEnable = VK_FALSE;   // wariant ze spłaszczaniem (słońce) tworzony niżej
 
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -2369,6 +2615,12 @@ private:
         pipelineInfo.pNext = &renderingInfo;
 
         vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowPipeline_);
+        // Wariant dla słońca (rzut ortograficzny): depthClamp - obiekty przed bliską płaszczyzną kaskady
+        // (np. wzgórze daleko w stronę słońca) są dociskane do niej, zamiast znikać z mapy cieni.
+        // Tylko dla słońca: w rzucie perspektywicznym (światła lokalne) depthClamp wyłącza obcinanie
+        // geometrii za "okiem" światła i psuje mapę.
+        rasterizer.depthClampEnable = vulkanContext_->isDepthClampSupported() ? VK_TRUE : VK_FALSE;
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSunPipeline_);
         vkDestroyShaderModule(device, vertModule, nullptr);
         vkDestroyShaderModule(device, fragModule, nullptr);
     }
@@ -2444,6 +2696,7 @@ private:
         rasterizer.depthBiasEnable = VK_TRUE;
         rasterizer.depthBiasConstantFactor = 1.25f;
         rasterizer.depthBiasSlopeFactor = 1.75f;
+        rasterizer.depthClampEnable = VK_FALSE;   // wariant ze spłaszczaniem (słońce) tworzony niżej
 
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -2496,6 +2749,8 @@ private:
         pipelineInfo.pNext = &renderingInfo;
 
         vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSkinnedPipeline_);
+        rasterizer.depthClampEnable = vulkanContext_->isDepthClampSupported() ? VK_TRUE : VK_FALSE;   // wariant słońca
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSkinnedSunPipeline_);
         vkDestroyShaderModule(device, vertModule, nullptr);
         vkDestroyShaderModule(device, fragModule, nullptr);
     }
@@ -3286,6 +3541,10 @@ private:
     TextureFilter textureFilter_ = TextureFilter::Anisotropic16x;
     float dirShadowHalfSize_ = 100.0f;
     std::array<float, kShadowCascades> dirShadowSplitDepths_ = {50.0f, 150.0f, 400.0f, 1000.0f};
+    float shadowFarDepth_ = 1000.0f;                  // koniec zasięgu kaskad w bieżącej klatce
+    bool visDepthValid_ = false;
+    bool visDepthSmoothed_ = false;                      // zakres głębokości widocznej geometrii (updateVisibleDepthRange)
+    float visMinDepth_ = 0.0f, visMaxDepth_ = 0.0f;   // ustabilizowany kierunek świateł kierunkowych dla map cieni
     float dirShadowSplitStart_ = 0.0f;
     float dirShadowStart_ = 0.0f;     // od jakiej głębokości widoku zaczynają się kaskady
     float dirShadowLambda_ = 0.6f;    // 0 = podział równomierny, 1 = logarytmiczny
@@ -3310,6 +3569,20 @@ private:
     std::vector<VkImageView> shadowMapLayerViews_;
     VkSampler shadowSampler_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
+    VkPipeline shadowSunPipeline_ = VK_NULL_HANDLE;
+    // Cienie terenu teselowanego (terrain_shadow).
+    struct TerrainShadowPush {
+        Matrix4 model;
+        Matrix4 lvp;
+        uint32_t heightmapTextureSet;
+        float scaleY;
+        float tessellationFactor;
+        float layerWorldSize;
+    };
+    VkPipeline terrainShadowPipeline_ = VK_NULL_HANDLE;
+    VkPipeline terrainShadowSunPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout terrainShadowPipelineLayout_ = VK_NULL_HANDLE;          // jak shadowPipeline_, z depthClamp (kaskady słońca)
+    VkPipeline shadowSkinnedSunPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout shadowPipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline shadowSkinnedPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout shadowSkinnedPipelineLayout_ = VK_NULL_HANDLE;

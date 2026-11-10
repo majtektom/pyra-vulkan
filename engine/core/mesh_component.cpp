@@ -27,6 +27,11 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     // aby poprawnie wspierac hierarchie parent-child.
     packet.transform = owner->transform().getWorldMatrix();
     packet.castShadows = castShadows;
+    // Instancje rozsiane po świecie i siatki animowane szkieletowo nie mają wiarygodnych granic.
+    if (gpuMesh->hasBounds && !gpuMesh->instanceBuffer && skinVertexBuffer == VK_NULL_HANDLE) {
+        packet.hasBounds = true;
+        transformBounds(packet.transform, gpuMesh->boundsMin, gpuMesh->boundsMax, packet.boundsMin, packet.boundsMax);
+    }
     packet.materialHandle = materialHandle;
 
     if (materialInstance) {

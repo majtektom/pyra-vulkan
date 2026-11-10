@@ -5,6 +5,33 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - Cienie terenu teselowanego (fix "plam cieni znikąd" w 08_game): teren rysuje się do mapy cieni tym samym
+   shaderem co na ekranie (`terrain_shadow`: teselacja + wysokość z mapy, wspólna funkcja
+   `shared/terrain_height.hlsl`), więc cień powstaje z widocznej geometrii - wcześniej rzucała go siatka CPU 17x17
+   (wierzchołek co 2 teksele), która w dolinach leżała nad terenem; mapa wysokości na GPU 16-bit z zaokrągleniem
+   (było 8-bit z obcięciem), próbkowanie w środku teksela i zawsze mip 0; odrzucanie obiektów spoza obszaru kaskady
+ - zwykła siatka 17x17 ma wierzchołek
+   co 2 teksele i w dolinach leżała nad widocznym terenem; mapa wysokości na GPU 16-bit z zaokrągleniem (było 8-bit
+   z obcięciem), próbkowanie w środku teksela i zawsze mip 0; odrzucanie obiektów spoza obszaru kaskady
+ - Cienie słońca: słońce pod horyzontem nie rzuca cieni (mapa cieni nie jest renderowana), przy horyzoncie cienie
+   zanikają łagodnie; w trybie bez oświetlenia siła cienia zależy od siły słońca (w nocy brak cieni);
+   `depthClamp` tylko w potokach kaskad słońca (osobne potoki `shadowSunPipeline_`) - obiekty przed bliską płaszczyzną
+   kaskady nie znikają z mapy; światła lokalne (rzut perspektywiczny) bez depthClamp, bo wyłącza on obcinanie
+   geometrii za "okiem" światła (cienie światła punktowego w 07 znikały, gdy światło zjeżdżało poniżej słupa)
+ - 08_game: `GAME08_NOLIGHT=1`, `GAME08_NOFOG=1` - bez oświetlenia / mgły (podgląd samych cieni)
+ - Teren rzuca cienie także spoza kadru: węzły pominięte przy rysowaniu (za kamerą), ale bliżej niż
+   `Terrain::setShadowCasterDistance` (domyślnie 2000), trafiają do mapy cieni jako `RenderPacket::shadowOnly` -
+   wcześniej wzgórze za kamerą nie rzucało cienia, a cień pojawiał się/znikał przy obrocie kamery
+ - Automatyczne dopasowanie kaskad cieni słońca do widocznej geometrii: renderer wyznacza zakres głębokości,
+   w którym w kadrze są obiekty (granice siatek `GpuMesh`/`RenderPacket::boundsMin/Max`, węzły terenu), kaskady
+   zaczynają się przy najbliższej widocznej geometrii, a zasięg (`configureDirectionalShadow(halfSize)`) liczony jest
+   od niej - przy oddaleniu kamery cienie nie znikają i są ostrzejsze (gry ustawiające `startDistance` > 0 bez zmian)
+ - 08_game: `GAME08_CAMY=<wysokość>` - kamera wyżej nad terenem (test cieni)
+ - Cienie słońca: płynny ruch razem ze słońcem (bez skokowej kwantyzacji kierunku), wygładzony w czasie zakres
+   kaskad (automatyczne dopasowanie i zasięg w 10_settlers), łagodne wygaszanie w ostatnich 15% zasięgu
+ - Skydome: siła słońca zależna od jego wysokości (pełna od ~18°, słabnie do horyzontu), barwa z pory dnia
+   znormalizowana - wcześniej siła spadała 7x między 16:00 a 17:00 i cienie gasły długo przed zachodem
+ - 08_game: `GAME08_MAP=<mapa>` i `GAME08_HOUR=<godzina>` - start od razu w grze (testy, zrzuty ekranu)
  - `Material::depthPrepass` — półprzezroczyste obiekty bez widocznego wnętrza (podglądy budowy, hologramy):
    `TransparentDepthPrepass` zapisuje najpierw samą głębokość obiektu (część 1 klatki, gdy depth jest zapisywalny),
    potem TransparentPass rysuje tylko najbliższą powierzchnię; wspólne rysowanie paczek `render/packet_draw.h`

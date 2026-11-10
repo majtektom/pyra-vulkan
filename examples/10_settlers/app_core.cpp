@@ -448,13 +448,7 @@ void SettlersApp::updateSky(float dt) {
     ocean_->setTime(world_->gameTime);
     if (sun_) {
         if (auto* light = sun_->getComponent<LightComponent>()) {
-            // Kierunek słońca zmieniamy skokowo (co ~0,5°), a nie w każdej klatce: każdy obrót światła
-            // przestawia siatkę tekseli mapy cieni, przez co krawędzie cieni "pełzały" i migały.
-            const Vec3 sunDir = skydome_->getSunDirection();
-            if (dot(sunDir, shadowSunDir_) < 0.99996f) {   // cos(0,5°)
-                shadowSunDir_ = sunDir;
-                light->direction = sunDir;
-            }
+            light->direction = skydome_->getSunDirection();   // płynnie, co klatkę
             light->color = skydome_->getSunColor();
             light->intensity = std::max(1.4f, skydome_->getSunIntensity());
         }
@@ -487,13 +481,14 @@ void SettlersApp::updateShadowRange() {
     // Zapas na wzgórza i wysokie budynki (wieża ma ~34 j.), które sięgają bliżej kamery niż płaski teren.
     float start = std::max(0.0f, nearDepth * 0.55f);
     float end = std::max(start + 150.0f, farDepth);
-    start = std::floor(start / 20.0f) * 20.0f;
-    end = std::ceil(end / 20.0f) * 20.0f;
-    if (start != shadowStart_ || end != shadowEnd_) {
+    // Płynnie (bez skoków przy zoomie): zakres podąża za kamerą z lekkim wygładzeniem.
+    if (shadowStart_ < 0.0f) {
         shadowStart_ = start;
         shadowEnd_ = end;
-        engine_.configureDirectionalShadow(end, start, 0.5f);
     }
+    shadowStart_ += (start - shadowStart_) * 0.15f;
+    shadowEnd_ += (end - shadowEnd_) * 0.15f;
+    engine_.configureDirectionalShadow(shadowEnd_, shadowStart_, 0.5f);
 }
 
 // W menu kamera powoli obraca się wokół punktu na mapie.

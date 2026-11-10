@@ -133,11 +133,10 @@ float sampleShadowPcf(Texture2DArray<float> shadowMaps,
     uint cascadeIndex = 0u;
     // params.w: dla słońca liczba kaskad, dla świateł lokalnych numer ćwiartki atlasu (kaskada zawsze jedna).
     uint cascadeCount = (light.direction.w == 1.0) ? max(1u, (uint)round(light.params.w)) : 1u;
-    float viewDepth = 0.0;
+    float viewDepth = abs(mul(view, float4(worldPos, 1.0)).z);
 
     if (light.direction.w == 1.0 && directionalShadowCascadeCount > 1u)
     {
-        viewDepth = abs(mul(view, float4(worldPos, 1.0)).z);
         cascadeCount = min(cascadeCount, directionalShadowCascadeCount);
         [unroll]
         for (uint i = 0u; i + 1u < 4u; ++i)
@@ -164,6 +163,16 @@ float sampleShadowPcf(Texture2DArray<float> shadowMaps,
                 shadowMaps, shadowSampler, light, worldPos, N, cascadeIndex + 1u);
             shadow = lerp(shadow, nextShadow, blend);
         }
+    }
+
+    // Koniec zasięgu cieni słońca: ostatnie 15% zasięgu łagodnie przechodzi w brak cienia
+    // (zamiast ostrej granicy, za którą cienie nagle znikają). Przy horyzoncie (0..~5°) cienie zanikają.
+    if (light.direction.w == 1.0)
+    {
+        shadow = lerp(1.0, shadow, saturate(normalize(light.direction.xyz).y * 12.0));
+        float shadowEnd = directionalShadowSplits[min(cascadeCount, directionalShadowCascadeCount) - 1u];
+        float fade = saturate((viewDepth - shadowEnd * 0.85) / max(shadowEnd * 0.15, 0.001));
+        shadow = lerp(shadow, 1.0, fade);
     }
 
     return shadow;
