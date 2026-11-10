@@ -1,4 +1,6 @@
 #include "core/profiler.h"
+#include "render/material_compiler.h"
+#include "render/packet_draw.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -489,9 +491,17 @@ public:
         Profiler::get().count("paczki nieprzezroczyste", static_cast<double>(opaquePackets.size()));
         Profiler::get().count("paczki cieni", static_cast<double>(scene.getShadowPackets().size()));
 
+        VkPipelineLayout materialLayout = VK_NULL_HANDLE;   // ostatnio zbindowany layout potoku materiału
         for (const auto& packet : opaquePackets) {
             if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
             if (packet.forwardOpaquePass) continue;
+            if (packet.gbufferMaterialPass) {
+                // Teren (własny shader z teselacją) zapisuje G-Buffer swoim potokiem materiału.
+                if (packet.material) {
+                    drawRenderPacket(cmd, packet, packet.material->getPipeline(), descriptorSets_[currentFrame_], materialLayout);
+                }
+                continue;
+            }
 
             bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
 
@@ -1333,6 +1343,7 @@ public:
 
     void prepareRenderPacket(RenderPacket& packet) {
         packet.forwardOpaquePass = false;
+        packet.gbufferMaterialPass = false;
         const bool wantsLayeredForward = packet.layerBlendEnabled;
         if (materialManager_) {
             if (const Material* materialData = materialManager_->get(packet.materialHandle)) {
@@ -1343,7 +1354,12 @@ public:
                     shaderProgram != "gbuffer" &&
                     shaderProgram != "gbuffer_skinned";
                 if ((usesCustomOpaqueShader || wantsLayeredForward) && materialData->blendMode == BlendMode::Disabled) {
-                    packet.forwardOpaquePass = true;
+                    // Własny shader piszący G-Buffer (teren) - przebieg G-Buffer; inny - przebieg forward.
+                    if (MaterialCompiler::writesGBuffer(shaderProgram)) {
+                        packet.gbufferMaterialPass = true;
+                    } else {
+                        packet.forwardOpaquePass = true;
+                    }
                 }
             }
         }
@@ -1452,7 +1468,8 @@ public:
     // ---------------------------------------------------------------------------------
     // Mgła wojny: tekstura widoczności R8 kFogOfWarSize^2, osobna na każdą klatkę w locie (CPU nadpisuje bufor
     // przejściowy swojej klatki i kopiuje go do jej obrazu na początku klatki - bez czekania na GPU i bez
-    // wyścigu z klatką, która jeszcze czyta poprzednią wersję). Shader deferred przyciemnia piksele wg pozycji świata.
+    // wyścigu z klatką, która jeszcze czyta poprzednią wersję). Shadery czytają ją z tablicy bindless
+    // (indeks bieżącej klatki w UBO: fowTextureIndex) - shared/surface_lighting.hlsl, applyAtmosphere().
     // ---------------------------------------------------------------------------------
     static constexpr uint32_t kFowSize = Renderer::kFogOfWarSize;
     VkImage fowImage_[kMaxFrames]{};
@@ -3412,7 +3429,7 @@ private:
         dynamicState.pDynamicStates = dynamicStates.data();
 
         // Set 1: GBuffer textures + Shadow Map
-        VkDescriptorSetLayoutBinding gbufferBindings[6] = {};
+        VkDescriptorSetLayoutBinding gbufferBindings[5] = {};
         for (int i = 0; i < 4; i++) {
             gbufferBindings[i].binding = i;
             gbufferBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -3423,18 +3440,14 @@ private:
         gbufferBindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         gbufferBindings[4].descriptorCount = 1;
         gbufferBindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        gbufferBindings[5].binding = 5;   // mgła wojny (tekstura widoczności)
-        gbufferBindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        gbufferBindings[5].descriptorCount = 1;
-        gbufferBindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo dslInfo{};
         dslInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        dslInfo.bindingCount = 6;
+        dslInfo.bindingCount = 5;
         dslInfo.pBindings = gbufferBindings;
         vkCreateDescriptorSetLayout(device, &dslInfo, nullptr, &deferredDescriptorSetLayout_);
 
-        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 * static_cast<uint32_t>(kMaxFrames)};
+        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * static_cast<uint32_t>(kMaxFrames)};
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.maxSets = kMaxFrames;
@@ -3450,8 +3463,8 @@ private:
             allocInfo.pSetLayouts = &deferredDescriptorSetLayout_;
             vkAllocateDescriptorSets(device, &allocInfo, &deferredDescriptorSets_[f]);
 
-            VkWriteDescriptorSet writes[6] = {};
-            VkDescriptorImageInfo imageInfos[6] = {};
+            VkWriteDescriptorSet writes[5] = {};
+            VkDescriptorImageInfo imageInfos[5] = {};
             for (int a = 0; a < 4; a++) {
                 imageInfos[a].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 imageInfos[a].imageView = gbufferViews_[a][f];
@@ -3472,16 +3485,7 @@ private:
             writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[4].descriptorCount = 1;
             writes[4].pImageInfo = &imageInfos[4];
-            imageInfos[5].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfos[5].imageView = fowView_[f];
-            imageInfos[5].sampler = fowSampler_;
-            writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[5].dstSet = deferredDescriptorSets_[f];
-            writes[5].dstBinding = 5;
-            writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[5].descriptorCount = 1;
-            writes[5].pImageInfo = &imageInfos[5];
-            vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
+            vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
         }
 
         VkPushConstantRange pushRange{};
@@ -3752,9 +3756,6 @@ private:
     // (bufor 3) potrzebuje 32 bitów: half float ma tylko 11 bitów mantysy, więc przy współrzędnych
     // rzędu 256-512 krok wynosi 0,25 jednostki. Cienie liczone z tak zaokrąglonej pozycji miały
     // regularne paski (shadow acne) niezależnie od biasu.
-    static VkFormat gbufferAttachmentFormat(int attachment) {
-        return attachment == 3 ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R16G16B16A16_SFLOAT;
-    }
     VkImage gbufferImages_[kGBufferAttachments][kMaxFrames] = {};
     VkDeviceMemory gbufferMemories_[kGBufferAttachments][kMaxFrames] = {};
     VkImageView gbufferViews_[kGBufferAttachments][kMaxFrames] = {};

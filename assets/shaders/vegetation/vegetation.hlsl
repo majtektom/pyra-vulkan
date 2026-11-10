@@ -1,30 +1,6 @@
-#include "shared/light_eval.hlsl"
+#include "shared/surface_lighting.hlsl"   // wspólne oświetlenie, cienie i atmosfera
 
-cbuffer GlobalUniformBufferObject : register(b0, space0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight;
-    float4 camUp;
-    float4 cameraPos;
-    float4 ambientColor;
-    float ambientStrength;
-    uint lightingEnabled;
-    uint lightCount;
-    uint shadowsEnabled;
-    LightData lights[16];
-    float4 directionalShadowSplits;
-    uint directionalShadowCascadeCount;
-    float3 shadowPadding;
-    float4 fogColor;
-    float fogStart;
-    float fogEnd;
-    float fogDensity;
-    uint fogEnabled;
-    float windTime;
-    float windStrength;
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 [[vk::push_constant]]
 cbuffer PushConstants
@@ -42,8 +18,6 @@ cbuffer PushConstants
     float alphaMaskCutoff;
 };
 
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0);
 
 struct VertexInput
 {
@@ -91,83 +65,24 @@ VertexOutput vertexMain(VertexInput input)
 
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
+    // Kolor bazowy (tekstura x kolor wierzchołka x kolor materiału); poniżej progu alfy - piksel odrzucony.
     float4 baseColor = textures[baseColorTextureSet].Sample(globalSampler, input.texCoord) * float4(input.color, 1.0) * input.matColor;
-
     if (baseColor.a < alphaMaskCutoff)
         discard;
 
-    float3 N = normalize(input.worldNormal);
+    // Powierzchnia: glTF trzyma metaliczność (B) i chropowatość (G) w jednej teksturze.
+    SurfaceData s;
+    s.albedo = baseColor.rgb;
+    s.alpha = baseColor.a;
+    float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
+    s.metallic = metallicRoughness.x * metallicFactor;
+    s.roughness = metallicRoughness.y * roughnessFactor;
+    s.ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
+    s.emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
+    s.normal = perturbNormal(normalize(input.worldNormal), input.worldPos, input.texCoord,
+                             textures[normalTextureSet].Sample(globalSampler, input.texCoord).xyz, bumpIntensity);
+    s.worldPos = input.worldPos;
 
-    float3 dp1 = ddx(input.worldPos);
-    float3 dp2 = ddy(input.worldPos);
-    float2 duv1 = ddx(input.texCoord);
-    float2 duv2 = ddy(input.texCoord);
-
-    if (bumpIntensity > 0.001)
-    {
-        float3 normalTex = textures[normalTextureSet].Sample(globalSampler, input.texCoord).xyz * 2.0 - 1.0;
-        normalTex.xy *= bumpIntensity;
-        normalTex = normalize(normalTex);
-
-        float r = 1.0 / (duv1.x * duv2.y - duv1.y * duv2.x + 0.0001);
-        float3 T_raw = (dp1 * duv2.y - dp2 * duv1.y) * r;
-        float3 T_proj = T_raw - N * dot(N, T_raw);
-        float lenSq = dot(T_proj, T_proj);
-        if (lenSq > 0.00001)
-        {
-            float3 T = T_proj / sqrt(lenSq);
-            float3 B = cross(N, T);
-            float3x3 TBN = float3x3(T, B, N);
-            N = normalize(mul(normalTex, TBN));
-        }
-    }
-
-    float3 color;
-    if (lightingEnabled == 0)
-    {
-        color = baseColor.rgb;
-    }
-    else
-    {
-        float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
-        float metallic = metallicRoughness.x * metallicFactor;
-        float roughness = max(metallicRoughness.y * roughnessFactor, 0.04);
-
-        float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
-        float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
-
-        float3 V = normalize(cameraPos.xyz - input.worldPos);
-        float NdotV = max(dot(N, V), 0.0);
-
-        float3 F0 = float3(0.04, 0.04, 0.04);
-        F0 = lerp(F0, baseColor.rgb, metallic);
-
-        float3 Lo = float3(0.0, 0.0, 0.0);
-        uint count = min(lightCount, 16u);
-        for (uint i = 0; i < count; i++)
-        {
-            float3 L;
-            float3 radiance;
-            uint valid;
-
-            unpackDirectLight(lights[i], input.worldPos, L, radiance, valid);
-            if (valid == 0u) continue;
-
-            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance);
-        }
-
-        float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
-        color = ambientContrib + Lo + emissive;
-        color = saturate(color);
-    }
-
-    if (fogEnabled != 0u)
-    {
-        float dist = distance(cameraPos.xyz, input.worldPos);
-        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
-        fogFactor = saturate(fogFactor);
-        color = lerp(fogColor.rgb, color, fogFactor);
-    }
-
-    return float4(color, baseColor.a);
+    // Oświetlenie (z cieniami) i atmosfera - te same funkcje co w przebiegu deferred.
+    return float4(shadeSurfaceForward(s), s.alpha);
 }

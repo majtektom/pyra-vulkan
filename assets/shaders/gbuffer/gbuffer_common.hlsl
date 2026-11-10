@@ -5,30 +5,7 @@
 
 #include "shared/light_types.hlsl"
 
-// UBO globalne do renderingu geometry pass
-cbuffer GlobalUniformBufferObject : register(b0, space0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight;
-    float4 camUp;
-    float4 cameraPos;
-    float4 ambientColor;
-    float ambientStrength;
-    uint lightingEnabled;
-    uint lightCount;
-    uint shadowsEnabled;
-    LightData lights[16];
-    float4 directionalShadowSplits;
-    uint directionalShadowCascadeCount;
-    float3 shadowPadding;
-    float4 fogColor;
-    float fogStart;
-    float fogEnd;
-    float fogDensity;
-    uint fogEnabled;
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 // Parametry push constants pojedynczego obiektu
 [[vk::push_constant]]
@@ -52,8 +29,6 @@ cbuffer PushConstants
     uint4 layerMaskTextureSets[3];          // Spakowane indeksy tekstur masek przejść (12 masek)
 };
 
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0);
 
 struct VertexOutput
 {
@@ -64,28 +39,7 @@ struct VertexOutput
     [[vk::location(3)]] float3 worldPos : TEXCOORD4;
 };
 
-/**
- * @brief Struktura wyjściowa G-Buffera (Geometry Buffer Multi-Render Target).
- * 
- * Zamiast bezpośrednio oświetlać piksele na ekranie (Forward Rendering), 
- * w renderingu odroczonym (Deferred Rendering) zapisujemy parametry fizyczne 
- * powierzchni geometrycznych do zestawu tekstur (G-Buffer) o tym samym rozmiarze co ekran.
- * Dopiero w kolejnym kroku (Lighting Pass) cieniujemy scenę na podstawie tych tekstur.
- */
-struct GBufferOutput
-{
-    // Target 0: RGB = Kolor Albedo, A = Współczynnik metaliczności (metallic)
-    float4 albedoMetallic : SV_Target0;
-    
-    // Target 1: RGB = Wektor normalny w przestrzeni świata zmapowany na [0.0, 1.0], A = Szorstkość (roughness)
-    float4 normalRoughness : SV_Target1;
-    
-    // Target 2: R = Ocienienie (AO), GBA = Kolor samozjarzenia (emissive RGB)
-    float4 occlusionEmissive : SV_Target2;
-    
-    // Target 3: RGB = Pozycja świata w trójwymiarze (XYZ), A = 1.0 (maska głębi geometrycznej)
-    float4 worldPosition : SV_Target3;
-};
+#include "shared/gbuffer_output.hlsl"   // GBufferOutput i packGBuffer (wspólne z terenem)
 
 float3x3 inverseTranspose3x3(float4x4 m)
 {
@@ -138,50 +92,19 @@ GBufferOutput shadeGBuffer(VertexOutput input)
     if (baseColor.a < alphaMaskCutoff)
         discard;
 
-    float3 N = normalize(input.worldNormal);
-
-    // 2. Normal mapping na podstawie pochodnych ekranowych
-    if (bumpIntensity > 0.001)
-    {
-        float3 normalTex = textures[normalTextureSet].Sample(globalSampler, input.texCoord).xyz * 2.0 - 1.0;
-        float3 dp1 = ddx(input.worldPos);
-        float3 dp2 = ddy(input.worldPos);
-        float2 duv1 = ddx(input.texCoord);
-        float2 duv2 = ddy(input.texCoord);
-        normalTex.xy *= bumpIntensity;
-        normalTex = normalize(normalTex);
-        float re = 1.0 / (duv1.x * duv2.y - duv1.y * duv2.x + 0.0001);
-        float3 T_raw = (dp1 * duv2.y - dp2 * duv1.y) * re;
-        float3 T_proj = T_raw - N * dot(N, T_raw);
-        float lenSq = dot(T_proj, T_proj);
-        if (lenSq > 0.00001)
-        {
-            float3 T = T_proj / sqrt(lenSq);
-            float3 B = cross(N, T);
-            float3x3 TBN = float3x3(T, B, N);
-            N = normalize(mul(normalTex, TBN));
-        }
-    }
-
-    // 3. Odczyt parametrów PBR
+    // 2. Powierzchnia: normalna (z mapą normalnych) i parametry PBR - zapis wspólną funkcją packGBuffer.
+    SurfaceData surf;
+    surf.albedo = baseColor.rgb;
+    surf.alpha = 1.0;
     float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
-    float metallic = metallicRoughness.x * metallicFactor;
-    float roughness = metallicRoughness.y * roughnessFactor;
-
-    float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
-    float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
-
-    // KROK 4: WYPEŁNIENIE KANAŁÓW WYJŚCIOWYCH G-BUFFERA
-    GBufferOutput output;
-    output.albedoMetallic = float4(baseColor.rgb, metallic);
-    
-    // Normalne są mapowane z zakresu [-1.0, 1.0] na [0.0, 1.0], ponieważ standardowe formaty tekstur buforu koloru (np. UNORM)
-    // nie wspierają bezpośrednio zapisu wartości ujemnych. Re-mapowanie to: N_mapped = N * 0.5 + 0.5.
-    output.normalRoughness = float4(N * 0.5 + 0.5, roughness);
-    output.occlusionEmissive = float4(ao, emissive.r, emissive.g, emissive.b);
-    output.worldPosition = float4(input.worldPos, 1.0);
-    
-    return output;
+    surf.metallic = metallicRoughness.x * metallicFactor;
+    surf.roughness = metallicRoughness.y * roughnessFactor;
+    surf.ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
+    surf.emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
+    surf.normal = perturbNormal(normalize(input.worldNormal), input.worldPos, input.texCoord,
+                                textures[normalTextureSet].Sample(globalSampler, input.texCoord).xyz, bumpIntensity);
+    surf.worldPos = input.worldPos;
+    return packGBuffer(surf);
 }
 
 #endif

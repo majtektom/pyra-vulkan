@@ -385,10 +385,21 @@ const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& mate
         colorBlendAttachment.blendEnable = VK_FALSE;
     }
 
+    // Shader piszący G-Buffer (teren): 4 tekstury bez mieszania; inaczej jeden kolor (ekran).
+    const bool gbufferOutput = writesGBuffer(shaderName) && materialData.blendMode == BlendMode::Disabled;
+    std::array<VkPipelineColorBlendAttachmentState, kGBufferAttachmentCount> gbufferBlend{};
+    std::array<VkFormat, kGBufferAttachmentCount> gbufferFormats{};
+    for (int a = 0; a < kGBufferAttachmentCount; ++a) {
+        gbufferBlend[a].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                                         VK_COLOR_COMPONENT_A_BIT;
+        gbufferBlend[a].blendEnable = VK_FALSE;
+        gbufferFormats[a] = gbufferAttachmentFormat(a);
+    }
+
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
+    colorBlending.attachmentCount = gbufferOutput ? kGBufferAttachmentCount : 1;
+    colorBlending.pAttachments = gbufferOutput ? gbufferBlend.data() : &colorBlendAttachment;
 
     // Push Constants - mały, szybki blok pamięci (256 bajtów) przekazywany w linii komend renderowania.
     // Służy do przesyłania macierzy modelu, indeksów materiału itp.
@@ -436,8 +447,8 @@ const VulkanPipeline& MaterialCompiler::getOrCreatePipeline(const Material& mate
     // struktury opisujące formaty obrazów docelowych wprost podczas tworzenia potoku.
     VkPipelineRenderingCreateInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &colorFormat_;
+    renderingInfo.colorAttachmentCount = gbufferOutput ? kGBufferAttachmentCount : 1;
+    renderingInfo.pColorAttachmentFormats = gbufferOutput ? gbufferFormats.data() : &colorFormat_;
     renderingInfo.depthAttachmentFormat = depthFormat_;
     pipelineInfo.pNext = &renderingInfo;
 

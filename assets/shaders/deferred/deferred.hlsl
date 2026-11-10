@@ -1,41 +1,7 @@
-#include "shared/light_eval.hlsl"
 
-// Globalny bufor jednolity (UBO) - dane widoku i światła
-cbuffer GlobalUniformBufferObject : register(b0, space0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight;
-    float4 camUp;
-    float4 cameraPos;
-    float4 ambientColor;
-    float ambientStrength;
-    uint lightingEnabled;
-    uint lightCount;
-    uint shadowsEnabled;
-    LightData lights[16];
-    float4 directionalShadowSplits;
-    uint directionalShadowCascadeCount;
-    float3 shadowPadding;
-    float4 fogColor;
-    float fogStart;
-    float fogEnd;
-    float fogDensity;
-    uint fogEnabled;
-    float windTime;
-    float windStrength;
-    // Mgła wojny: tekstura widoczności nad kwadratem mapy [origin, origin + size] (XZ)
-    float fowOriginX;
-    float fowOriginZ;
-    float fowSize;
-    float fowExplored;
-    uint fowEnabled;
-    uint fowTextureIndex;
-};
+#include "shared/surface_lighting.hlsl"   // oświetlenie i atmosfera - wspólne z shaderami forward
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
-#include "shared/shadow_pcf.hlsl"
-#include "shared/fog_of_war.hlsl"
 
 // Powiązanie tekstur G-Buffera (Set 1 / space1)
 [[vk::binding(0, 1)]] Texture2D<float4> gbufferAlbedo;             // Albedo + metalness
@@ -45,8 +11,6 @@ cbuffer GlobalUniformBufferObject : register(b0, space0)
 [[vk::binding(3, 1)]] Texture2D<float4> gbufferWorldPos;           // World Position + depth mask
 [[vk::binding(4, 1)]] Texture2DArray<float> shadowMapArray;        // Tablica map cieni słońca
 [[vk::binding(4, 1)]] SamplerComparisonState shadowSampler;
-[[vk::binding(5, 1)]] Texture2D<float> fogOfWarTexture;            // Widoczność: 0 nieodkryte, 0.5 odkryte, 1 widoczne
-[[vk::binding(5, 1)]] SamplerState fogOfWarSampler;
 
 struct VertexOutput
 {
@@ -81,92 +45,26 @@ VertexOutput vertexMain(uint vid : SV_VertexID)
  */
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
-    // KROK 1: ODCZYT PARAMETRÓW GEOMETRII Z G-BUFFERA
+    // KROK 1: ODCZYT POWIERZCHNI Z G-BUFFERA (zapisanej przez packGBuffer)
     float4 albedoMetallic = gbufferAlbedo.Sample(gbufferSampler, input.uv);
     float4 normalRoughness = gbufferNormal.Sample(gbufferSampler, input.uv);
     float4 occlusionEmissive = gbufferOcclusion.Sample(gbufferSampler, input.uv);
     float4 worldPosData = gbufferWorldPos.Sample(gbufferSampler, input.uv);
 
-    float3 baseColor = albedoMetallic.rgb;
-    float metallic = albedoMetallic.a;
-    float roughness = max(normalRoughness.a, 0.04);
-    
-    // Przywrócenie wektora normalnego z zakresu [0.0, 1.0] z powrotem na [-1.0, 1.0]
-    float3 N = normalize(normalRoughness.rgb * 2.0 - 1.0);
-    
-    float ao = occlusionEmissive.r;
-    float3 emissive = occlusionEmissive.gba;
-    float3 worldPos = worldPosData.xyz;
-
-    // Jeżeli kanał W pozycji świata jest mniejszy niż 0.5, oznacza to, 
-    // że w tym pikselu nie ma żadnego obiektu (tło/skybox). Odrzucamy ten fragment,
-    // ponieważ nie wymaga on kalkulacji oświetlenia.
+    // W = 0: w tym pikselu nie ma geometrii (tło / niebo) - nic do oświetlenia.
     if (worldPosData.w < 0.5) discard;
 
-    float3 color;
-    if (lightingEnabled == 0)
-    {
-        color = baseColor;
-        if (shadowsEnabled != 0u && lightCount > 0u)
-        {
-            // Bez oświetlenia: cień tylko przyciemnia teksturę, a jego siła zależy od siły światła
-            // (w nocy słońce ma siłę 0 - nie ma cieni).
-            float shadow = sampleShadowPcf(shadowMapArray, shadowSampler, lights[0], worldPos, N);
-            float strength = saturate(lights[0].color.w * 0.5);
-            color = baseColor * lerp(1.0, lerp(0.35, 1.0, shadow), strength);
-        }
-    }
-    else
-    {
-        float3 V = normalize(cameraPos.xyz - worldPos);
-        float NdotV = max(dot(N, V), 0.0);
-        float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
+    SurfaceData s;
+    s.albedo = albedoMetallic.rgb;
+    s.alpha = 1.0;
+    s.metallic = albedoMetallic.a;
+    s.roughness = normalRoughness.a;
+    s.ao = occlusionEmissive.r;
+    s.emissive = occlusionEmissive.gba;
+    s.normal = normalize(normalRoughness.rgb * 2.0 - 1.0);   // z [0, 1] z powrotem na [-1, 1]
+    s.worldPos = worldPosData.xyz;
 
-        float3 Lo = float3(0.0, 0.0, 0.0);
-        uint count = min(lightCount, 16u);
-
-        // KROK 2: OBLICZANIE WPŁYWU DLA WSZYSTKICH ŹRÓDEŁ ŚWIATŁA (w jednym shaderze!)
-        // W odróżnieniu od forward renderingu, nie ma tu problemu z overdrawem (wielokrotnym
-        // uruchamianiem cieniowania pikseli dla nakładającej się geometrii).
-        for (uint i = 0; i < count; i++)
-        {
-            float3 L;
-            float3 radiance;
-            uint valid;
-            
-            unpackDirectLight(lights[i], worldPos, L, radiance, valid);
-            if (valid == 0u) continue;
-
-            // Próbkowanie mapy cieni z PCF
-            float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], worldPos, N) : 1.0;
-            
-            // Sumowanie oświetlenia Cook-Torrance
-            Lo += pbrDirectLight(N, V, baseColor, metallic, roughness, NdotV, F0, L, radiance) * shadow;
-        }
-
-        // KROK 3: DODANIE ŚWIATŁA OTOCZENIA I SAMOZJARZENIA
-        float3 ambientContrib = baseColor * ambientStrength * ambientColor.rgb * ao;
-        color = ambientContrib + Lo + emissive;
-        color = saturate(color);
-    }
-
-    if (fogEnabled != 0u)
-    {
-        float dist = distance(cameraPos.xyz, worldPos);
-        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
-        fogFactor = saturate(fogFactor);
-        color = lerp(fogColor.rgb, color, fogFactor);
-    }
-
-    // MGŁA WOJNY: teren, którego jeszcze nie widziano, jest prawie czarny; odkryty, ale bez zwiadu -
-    // przyciemniony i wyszarzony (widać ukształtowanie, nie widać, co się tam teraz dzieje).
-    // Filtrowanie liniowe tekstury daje miękkie krawędzie między komórkami widoczności.
-    if (fowEnabled != 0u)
-    {
-        float2 fowUv = fogOfWarUv(worldPos, fowOriginX, fowOriginZ, fowSize);
-        float vis = (any(fowUv < 0.0) || any(fowUv > 1.0)) ? 0.0 : fogOfWarTexture.SampleLevel(fogOfWarSampler, fowUv, 0);
-        color = applyFogOfWar(color, vis, fowExplored);
-    }
-
+    // KROK 2: OŚWIETLENIE (wszystkie światła, cienie, otoczenie) I ATMOSFERA (mgła, mgła wojny) - wspólne funkcje.
+    float3 color = applyAtmosphere(shadeSurface(s, shadowMapArray, shadowSampler), s.worldPos);
     return float4(color, 1.0);
 }

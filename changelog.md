@@ -5,6 +5,13 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - Porządek w shaderach: jedno miejsce na każdą rzecz - `shared/globals.hlsl` (UBO, tekstury bindless, mapa cieni;
+   wcześniej 12 kopii cbuffer), `shared/surface.hlsl` (`SurfaceData`, `perturbNormal` - wcześniej 4 kopie mapowania
+   normalnych), `shared/gbuffer_output.hlsl` (`packGBuffer`), `shared/surface_lighting.hlsl` (`shadeSurface`,
+   `applyAtmosphere` - wcześniej 4 kopie oświetlenia); teren zapisuje G-Buffer (`MaterialCompiler::writesGBuffer`,
+   `RenderPacket::gbufferMaterialPass`) - światło, cienie, mgłę i mgłę wojny liczy dla niego deferred; materiał
+   domyślny przezroczysty i roślinność dostały cienie (wspólna funkcja); deferred czyta mgłę wojny z tablicy
+   bindless (bez osobnego wiązania); formaty G-Buffera w `render_types.h` (`gbufferAttachmentFormat`)
  - Mgła wojny (fog of war): `Renderer::setFogOfWar(enabled, origin, size, explored)` + `updateFogOfWar(dane)` -
    tekstura widoczności 256x256 (0 nieodkryte, 128 odkryte, 255 widoczne), osobna kopia na każdą klatkę w locie
    (przesył na początku klatki, bez czekania na GPU); przyciemnianie w deferred (budynki, roślinność), w shaderze

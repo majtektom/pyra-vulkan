@@ -1,9 +1,4 @@
-// Globalny bufor jednolity (UBO) z macierzami kamery
-cbuffer GlobalUniformBufferObject : register(b0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 // Szybki blok push constants przesyłany bezpośrednio przed rysowaniem skyboxa
 [[vk::push_constant]]
@@ -15,8 +10,6 @@ cbuffer SkyboxPushConstants
 };
 
 // Globalne zasoby powiązane w Vulkan
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0); // Dynamicznie indeksowana tablica wszystkich tekstur (Bindless)
 
 struct VertexInput
 {

@@ -53,6 +53,15 @@ public:
     const VulkanPipeline& getOrCreatePipeline(const Material& materialData);
 
     /**
+     * @brief Czy shader materiału zapisuje G-Buffer (4 tekstury) zamiast koloru na ekran.
+     *
+     * Takie materiały (nieprzezroczyste) rysowane są w przebiegu G-Buffer, a oświetlenie, cienie, mgłę i mgłę wojny
+     * liczy dla nich przebieg deferred - jedno miejsce dla całej sceny. Shader musi zwracać GBufferOutput
+     * (shared/gbuffer_output.hlsl). Nowy taki shader = dopisać jego nazwę tutaj.
+     */
+    static bool writesGBuffer(const std::string& shaderProgram) { return shaderProgram == "terrain"; }
+
+    /**
      * @brief Usuwa z pamięci podręcznej potoki korzystające ze wskazanego shadera.
      * 
      * Wywoływane głównie przez system automatycznego przeładowywania shaderów (Hot Reloading).

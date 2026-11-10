@@ -1,28 +1,6 @@
 #include "shared/light_types.hlsl"
 
-cbuffer GlobalUniformBufferObject : register(b0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight;
-    float4 camUp;
-    float4 cameraPos;
-    float4 ambientColor;
-    float ambientStrength;
-    uint lightingEnabled;
-    uint lightCount;
-    uint shadowsEnabled;
-    LightData lights[16];
-    float4 directionalShadowSplits;
-    uint directionalShadowCascadeCount;
-    float3 shadowPadding;
-    float4 fogColor;
-    float fogStart;
-    float fogEnd;
-    float fogDensity;
-    uint fogEnabled;
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 // Parametry przesyłane co klatkę określające stan atmosfery
 [[vk::push_constant]]

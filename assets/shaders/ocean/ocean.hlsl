@@ -1,37 +1,7 @@
 #include "shared/light_types.hlsl"
-#include "shared/fog_of_war.hlsl"
+#include "shared/surface_lighting.hlsl"   // applyAtmosphere: mgła odległości i mgła wojny
 
-cbuffer GlobalUniformBufferObject : register(b0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight;
-    float4 camUp;
-    float4 cameraPos;
-    float4 ambientColor;
-    float ambientStrength;
-    uint lightingEnabled;
-    uint lightCount;
-    uint shadowsEnabled;
-    LightData lights[16];
-    float4 directionalShadowSplits;
-    uint directionalShadowCascadeCount;
-    float3 shadowPadding;
-    float4 fogColor;
-    float fogStart;
-    float fogEnd;
-    float fogDensity;
-    uint fogEnabled;
-    float windTime;
-    float windStrength;
-    float fowOriginX;           // mgła wojny (shared/fog_of_war.hlsl)
-    float fowOriginZ;
-    float fowSize;
-    float fowExplored;
-    uint fowEnabled;
-    uint fowTextureIndex;
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 // Parametry oceanu przesyłane co klatkę
 [[vk::push_constant]]
@@ -50,8 +20,6 @@ cbuffer OceanPushConstants
     float4 lightDir;        // Kierunek słońca (do odblasków specularity)
 };
 
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0);
 
 float3 sceneWorldPosition(float2 uv, uint depthTextureIndex, out bool valid)
 {
@@ -333,19 +301,7 @@ float4 fragmentMain(FragmentInput input) : SV_Target0
     result += subSurf;
     result = lerp(result, foamColor, foam * 0.4); // Nałożenie piany na grzbiety fal
 
-    if (fogEnabled != 0u)
-    {
-        float dist = distance(cameraPos.xyz, input.worldPos);
-        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
-        fogFactor = saturate(fogFactor);
-        result = lerp(fogColor.rgb, result, fogFactor);
-    }
-
-    // Mgła wojny: nieodkryte morze ciemne jak nieodkryty ląd.
-    if (fowEnabled != 0u)
-    {
-        float vis = fogOfWarVisibility(textures[fowTextureIndex], globalSampler, fogOfWarUv(input.worldPos, fowOriginX, fowOriginZ, fowSize));
-        result = applyFogOfWar(result, vis, fowExplored);
-    }
+    // Mgła odległości i mgła wojny - ta sama funkcja co dla reszty sceny.
+    result = applyAtmosphere(result, input.worldPos);
     return float4(result, 1.0);
 }

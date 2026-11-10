@@ -1,41 +1,8 @@
-#include "shared/light_eval.hlsl"
 
-// Globalny bufor jednolity (UBO) - dane widoku, kamery i oświetlenia
-cbuffer GlobalUniformBufferObject : register(b0, space0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight;
-    float4 camUp;
-    float4 cameraPos;
-    float4 ambientColor;
-    float ambientStrength;
-    uint lightingEnabled;
-    uint lightCount;
-    uint shadowsEnabled;
-    LightData lights[16];
-    float4 directionalShadowSplits;
-    uint directionalShadowCascadeCount;
-    float3 shadowPadding;
-    float4 fogColor;
-    float fogStart;
-    float fogEnd;
-    float fogDensity;
-    uint fogEnabled;
-    float windTime;
-    float windStrength;
-    float fowOriginX;           // mgła wojny (shared/fog_of_war.hlsl)
-    float fowOriginZ;
-    float fowSize;
-    float fowExplored;
-    uint fowEnabled;
-    uint fowTextureIndex;
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
-#include "shared/shadow_pcf.hlsl"
 #include "shared/terrain_height.hlsl"
-#include "shared/fog_of_war.hlsl"
+#include "shared/gbuffer_output.hlsl"   // teren zapisuje G-Buffer - oświetlenie, cienie i mgłę liczy deferred
 
 // Parametry push constants dla terenu (w tym tablice indeksów warstw i masek)
 [[vk::push_constant]]
@@ -63,12 +30,7 @@ cbuffer PushConstants
     uint heightmapEnabled;
 };
 
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0); // Dynamiczna tablica bindless
 
-// Powiązanie z tablicą map cieni oraz samplerem porównującym
-[[vk::binding(2, 0)]] Texture2DArray<float> shadowMapArray;
-[[vk::binding(2, 0)]] SamplerComparisonState shadowSampler;
 
 struct VertexInput
 {
@@ -255,9 +217,12 @@ float3 sampleTerrainLayer(uint index, float2 uv)
 }
 
 /**
- * @brief Shader pikseli terenu (Splatting + PBR + Cienie).
+ * @brief Shader pikseli terenu: mieszanie warstw (splatting) i zapis powierzchni do G-Buffera.
+ *
+ * Oświetlenia tu nie ma - teren trafia do G-Buffera jak każdy inny obiekt nieprzezroczysty, a światła, cienie,
+ * mgłę i mgłę wojny liczy raz przebieg deferred (shared/surface_lighting.hlsl).
  */
-float4 fragmentMain(VertexOutput input) : SV_Target0
+GBufferOutput fragmentMain(VertexOutput input)
 {
     // Domyślny kolor pobierany z głównej tekstury dyfuzyjnej
     float4 baseColor = textures[baseColorTextureSet].Sample(globalSampler, input.texCoord) * float4(input.color, 1.0) * baseColorFactor;
@@ -289,96 +254,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     if (baseColor.a < alphaMaskCutoff)
         discard;
 
-    // Normal mapping
-    float3 N = normalize(input.worldNormal);
-    float3 dp1 = ddx(input.worldPos);
-    float3 dp2 = ddy(input.worldPos);
-    float2 duv1 = ddx(input.texCoord);
-    float2 duv2 = ddy(input.texCoord);
-
-    if (bumpIntensity > 0.001)
-    {
-        float3 normalTex = textures[normalTextureSet].Sample(globalSampler, input.texCoord).xyz * 2.0 - 1.0;
-        normalTex.xy *= bumpIntensity;
-        normalTex = normalize(normalTex);
-
-        float r = 1.0 / (duv1.x * duv2.y - duv1.y * duv2.x + 0.0001);
-        float3 T_raw = (dp1 * duv2.y - dp2 * duv1.y) * r;
-        float3 T_proj = T_raw - N * dot(N, T_raw);
-        float lenSq = dot(T_proj, T_proj);
-        if (lenSq > 0.00001)
-        {
-            float3 T = T_proj / sqrt(lenSq);
-            float3 B = cross(N, T);
-            float3x3 TBN = float3x3(T, B, N);
-            N = normalize(mul(normalTex, TBN));
-        }
-    }
-
-    float3 color;
-    if (lightingEnabled == 0)
-    {
-        color = baseColor.rgb;
-        if (shadowsEnabled != 0u && lightCount > 0u)
-        {
-            float shadow = sampleShadowPcf(shadowMapArray, shadowSampler, lights[0], input.worldPos, N);
-            color = baseColor.rgb * lerp(0.35, 1.0, shadow);
-        }
-    }
-    else
-    {
-        // Odczyt parametrów PBR
-        float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
-        float metallic = metallicRoughness.x * metallicFactor;
-        float roughness = max(metallicRoughness.y * roughnessFactor, 0.04);
-
-        float ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
-        float3 emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
-
-        float3 V = normalize(cameraPos.xyz - input.worldPos);
-        float NdotV = max(dot(N, V), 0.0);
-
-        float3 F0 = float3(0.04, 0.04, 0.04);
-        F0 = lerp(F0, baseColor.rgb, metallic);
-
-        float3 Lo = float3(0.0, 0.0, 0.0);
-
-        // KROK 2: WYDLICZENIE OŚWIETLENIA BEZPOŚREDNIEGO Z UWZGLĘDNIENIEM MAPY CIENI
-        uint count = min(lightCount, 16u);
-        for (uint i = 0; i < count; i++)
-        {
-            float3 L;
-            float3 radiance;
-            uint valid;
-            unpackDirectLight(lights[i], input.worldPos, L, radiance, valid);
-            if (valid == 0u) continue;
-
-            // Próbkowanie mapy cieni (Shadow Map) z filtrowaniem PCF
-            float shadow = (shadowsEnabled != 0) ? sampleShadowPcf(shadowMapArray, shadowSampler, lights[i], input.worldPos, N) : 1.0;
-            
-            // Zastosowanie cienia jako mnożnik oświetlenia bezpośredniego
-            Lo += pbrDirectLight(N, V, baseColor.rgb, metallic, roughness, NdotV, F0, L, radiance) * shadow;
-        }
-
-        float3 ambientContrib = baseColor.rgb * ambientStrength * ambientColor.rgb * ao;
-        color = ambientContrib + Lo + emissive;
-        color = saturate(color);
-    }
-
-    if (fogEnabled != 0u)
-    {
-        float dist = distance(cameraPos.xyz, input.worldPos);
-        float fogFactor = (fogEnd - dist) / (fogEnd - fogStart);
-        fogFactor = saturate(fogFactor);
-        color = lerp(fogColor.rgb, color, fogFactor);
-    }
-
-    // Mgła wojny: teren rysowany jest osobnym przebiegiem (nie przez deferred), więc przyciemniamy go tutaj.
-    if (fowEnabled != 0u)
-    {
-        float vis = fogOfWarVisibility(textures[fowTextureIndex], globalSampler, fogOfWarUv(input.worldPos, fowOriginX, fowOriginZ, fowSize));
-        color = applyFogOfWar(color, vis, fowExplored);
-    }
-
-    return float4(color, baseColor.a);
+    SurfaceData surf;
+    surf.albedo = baseColor.rgb;
+    surf.alpha = 1.0;
+    float3 metallicRoughness = textures[physicalDescriptorTextureSet].Sample(globalSampler, input.texCoord).bga;
+    surf.metallic = metallicRoughness.x * metallicFactor;
+    surf.roughness = metallicRoughness.y * roughnessFactor;
+    surf.ao = textures[occlusionTextureSet].Sample(globalSampler, input.texCoord).r;
+    surf.emissive = textures[emissiveTextureSet].Sample(globalSampler, input.texCoord).rgb;
+    surf.normal = perturbNormal(normalize(input.worldNormal), input.worldPos, input.texCoord,
+                                textures[normalTextureSet].Sample(globalSampler, input.texCoord).xyz, bumpIntensity);
+    surf.worldPos = input.worldPos;
+    return packGBuffer(surf);
 }

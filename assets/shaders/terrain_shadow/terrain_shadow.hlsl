@@ -14,8 +14,7 @@ cbuffer PushConstants
     float layerWorldSize;                 // szerokość terenu w jednostkach
 };
 
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0);
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 struct VertexInput
 {

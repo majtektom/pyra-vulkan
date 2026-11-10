@@ -1,9 +1,4 @@
-// Globalny bufor jednolity (UBO) przechowujący macierze transformacji widoku i projekcji kamery
-cbuffer GlobalUniformBufferObject : register(b0)
-{
-    column_major float4x4 view; // Macierz widoku (View Matrix - przelicza współrzędne świata na przestrzeń oka)
-    column_major float4x4 proj; // Macierz projekcji (Projection Matrix - rzutuje przestrzeń oka na płaszczyznę ekranu)
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 struct VertexInput
 {

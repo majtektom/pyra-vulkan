@@ -1,4 +1,4 @@
-// Mgła wojny (fog of war) - wspólna dla przebiegu deferred i shadera terenu.
+// Mgła wojny (fog of war) - funkcje pomocnicze; używa ich applyAtmosphere() w shared/surface_lighting.hlsl.
 // Wartość widoczności z tekstury (filtrowanej liniowo - miękkie krawędzie):
 //   0   = nieodkryte - czarne,
 //   0.5 = odkryte, ale poza zasięgiem wzroku - przyciemnione do "explored" i wyszarzone

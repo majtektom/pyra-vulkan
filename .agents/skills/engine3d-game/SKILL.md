@@ -142,6 +142,15 @@ Procedura: build bez ostrzeżeń → test UI kilka razy (mapy losowe; kroki klik
 gdy ktoś rusza prawdziwą myszą) → autoplay → zrzut ekranu (`spectacle -a -b -n -o plik.png` przy grze w tle)
 i obejrzenie go. Wyniki raportuj uczciwie (także niestabilne/nieodtworzone błędy).
 
+## 8a. Shadery - gdzie co dopisać
+
+- Wspólne pliki w `assets/shaders/shared/`: `globals.hlsl` (UBO, tekstury), `surface.hlsl` (opis powierzchni),
+  `gbuffer_output.hlsl`, `surface_lighting.hlsl` (oświetlenie, cienie, mgła, mgła wojny). Shader obiektu tylko
+  wypełnia `SurfaceData`; nieprzezroczysty zwraca `packGBuffer(s)` (oświetla go deferred), przezroczysty
+  `shadeSurfaceForward(s)`.
+- Nowy efekt świetlny / atmosferyczny = zmiana w `surface_lighting.hlsl`, nie w każdym shaderze.
+- Nowy własny shader nieprzezroczysty piszący G-Buffer: dopisać nazwę w `MaterialCompiler::writesGBuffer`.
+
 ## 9a. Wydajność - najpierw zmierz
 
 - `ENGINE_PROFILE=1`: co 3 s `[profil]` z czasem sekcji klatki (update gry, sekcje symulacji, nagrywanie cieni i

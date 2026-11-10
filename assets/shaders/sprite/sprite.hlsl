@@ -1,11 +1,4 @@
-cbuffer GlobalUniformBufferObject : register(b0, space0)
-{
-    column_major float4x4 view;
-    column_major float4x4 proj;
-    column_major float4x4 invViewProj;
-    float4 camRight; // Prawy wektor kamery
-    float4 camUp;    // Górny wektor kamery
-};
+#include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
 [[vk::push_constant]]
 cbuffer PushConstants
@@ -23,8 +16,6 @@ cbuffer PushConstants
     float alphaMaskCutoff;
 };
 
-SamplerState globalSampler : register(s1, space0);
-Texture2D textures[] : register(t1, space0);
 
 struct VertexInput
 {

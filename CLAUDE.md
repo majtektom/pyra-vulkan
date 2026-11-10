@@ -52,9 +52,14 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
   przy najbliższej widocznej geometrii (granice siatek i węzłów terenu) i liczy zasięg od niej.
   `08_game`: `GAME08_MAP=demo.map GAME08_HOUR=12 GAME08_CAMY=900 GAME08_NOLIGHT=1 GAME08_NOFOG=1`
   (użytkownik ogląda cienie z wyłączonym światłem i mgłą - tryb `lightingEnabled == 0` w deferred.hlsl).
-- Mgła wojny (silnik): przyciemnia przebieg deferred ORAZ shadery rysowane osobno (teren, ocean) - nowy shader
-  rysujący świat poza deferred musi dołączyć `shared/fog_of_war.hlsl` i pola `fow*` UBO (koniec `GlobalUBO`).
-  Czytać przez `fogOfWarVisibility()` - wspólny sampler tablicy bindless powtarza teksturę, więc bez sprawdzenia
+- Shadery - jedno miejsce na każdą rzecz (`assets/shaders/shared/`):
+  `globals.hlsl` (UBO klatki + tablica tekstur bindless + mapa cieni; nowe pole UBO = tu i w `GlobalUBO` w
+  `renderer_core.cpp`), `surface.hlsl` (`SurfaceData`, `perturbNormal`), `gbuffer_output.hlsl` (`packGBuffer`),
+  `surface_lighting.hlsl` (`shadeSurface` - światła/cienie/otoczenie, `applyAtmosphere` - mgła i mgła wojny,
+  `shadeSurfaceForward`). Obiekty nieprzezroczyste (też teren - `MaterialCompiler::writesGBuffer`) zapisują
+  G-Buffer, oświetlenie liczy raz deferred; przezroczyste i woda wołają te same funkcje. NIE kopiować oświetlenia
+  ani cbuffer do shaderów - nowy efekt świetlny dopisuje się w `surface_lighting.hlsl`.
+- Mgła wojny czytana przez `fogOfWarVisibility()` - wspólny sampler bindless powtarza teksturę, bez sprawdzenia
   zakresu UV odkryte miejsca pojawiały się drugi raz poza mapą (ocean sięga daleko za wyspę).
 - Zmiana materiału encji: po podmianie `materialHandle` wyzerować `materialInstance`.
 - Pozycja myszy SDL to (0,0) przed pierwszym ruchem — przewijanie krawędzią ekranu dopiero po ruchu myszy.

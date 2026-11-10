@@ -66,6 +66,7 @@ bool SettlersApp::loadGame(const std::string& path) {
         in >> root;
         if (root.value("game", "") != "osadnicy" || !root.contains("world")) throw std::runtime_error("to nie jest zapis Osadników");
     } catch (const std::exception& e) {
+        LOG_WARN("Nie można wczytać gry z {}: {}", path, e.what());
         if (world_) world_->pushMessage(std::string("Nie można wczytać gry: ") + e.what(), {1.0f, 0.5f, 0.4f, 1.0f});
         sfx("ui_error", 0.7f);
         return false;

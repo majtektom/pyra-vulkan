@@ -38,6 +38,13 @@ public:
     virtual const VulkanPipeline* getDepthPrepassPipeline() const { return nullptr; }
 };
 
+// G-Buffer (rendering odroczony): 4 tekstury - albedo+metal, normalna+chropowatość, AO+emisja, pozycja świata.
+// Pozycja w 32-bitowych floatach (w 16 bitach przy współrzędnych ~300 pojawiał się shadow acne).
+constexpr int kGBufferAttachmentCount = 4;
+inline VkFormat gbufferAttachmentFormat(int attachment) {
+    return attachment == 3 ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R16G16B16A16_SFLOAT;
+}
+
 struct RenderPacket {
     VkBuffer vertexBuffer;
     VkBuffer indexBuffer;
@@ -80,6 +87,9 @@ struct RenderPacket {
     float windTime = 0.0f;
     float windStrength = 0.0f;
     bool forwardOpaquePass = false;
+    // Własny shader materiału, który zapisuje G-Buffer (np. teren z teselacją) - rysowany w przebiegu G-Buffer
+    // swoim potokiem; oświetlenie, cienie i mgłę liczy dla niego przebieg deferred.
+    bool gbufferMaterialPass = false;
     bool castShadows = true;
     // Tylko do mapy cieni (nie jest rysowana na ekranie) - np. teren poza kadrem, który rzuca cień w kadr.
     bool shadowOnly = false;

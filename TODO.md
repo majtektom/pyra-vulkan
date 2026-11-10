@@ -131,3 +131,35 @@ Szybkie usprawnienia (godzina–dwie każde):
 statystyki na koniec partii (wykres surowców, armii i strat w czasie);
 skróty i kolejki w koszarach, punkt zbiórki dla nowych żołnierzy;
 podgląd zasięgu terytorium nowej wieży przy jej stawianiu.
+
+
+
+ od największego zysku:
+1. Optymalizacje o najlepszym stosunku zysku do pracy
+Minimapa jako tekstura, nie 4096 prostokątów — app_hud.cpp:232-243 tworzy 64×64 = 4096 addOverlayRect co klatkę (plus ikony). To stały koszt niezależny od sceny. Trzeba dodać do GUI widget obrazka/tekstury i API Renderer::updateTexture (dziś jest tylko loadTextureFromMemory, renderer.h:94), a minimapę odświeżać tylko gdy zmieni się mgła/obiekty.
+Rozdzielić symulację od prezentacji — app_core.cpp:495 woła całe World::update gameSpeed_ razy (do x24), a w środku jest syncVisuals (world_update.cpp:166), mgła i przebudowa terytorium/regionów. Przy x24 to 24× zapisy transformów i upload tekstury mgły na klatkę. Wprowadziłbym stały krok z akumulatorem (limit podkroków, np. 8), a sync modeli, upload mgły i rebuildTerritory robił raz na klatkę. To naprawia też rozjazd czasu przy zacięciu (dt obcinane do 0,1 s, world_update.cpp:109).
+Transport: jedna Dijkstra na źródło, nie na zlecenie — world_roads.cpp:964-1080: dla każdego tragarza liczone są networkDistances(u.atFlag), a potem wewnątrz pętli po zleceniach kolejne networkDistances(src) (1006-1008) i jeszcze raz dla wybranej flagi (1037). networkDistances alokuje dwa wektory przy każdym wywołaniu (523-546). Do tego fundOrder robi Dijkstrę dla każdego nieopłaconego zlecenia co 0,5 s (633-703). Rozwiązanie: cache odległości per flaga ważny do routingDirty_, przeliczany raz na tick; zlecenia sortowane po źródle.
+Siatki przestrzenne — dziś: territoryOwnerAt skanuje wszystkie budynki (world_queries.cpp:72-86), isInTerritory robi do 17 takich wywołań (90-106), canPlace dodatkowo skanuje budynki/węzły/wszystkie punkty dróg (117-190) i jest wołane co klatkę w podglądzie stawiania (app_input.cpp:382), a findPlacementNear próbuje 120× (408-419). findEnemyUnitNear/findEnemyBuildingNear (373-405) to O(żołnierze × jednostki). Wzorzec już jest w separateUnits (world_movement.cpp:202-232) — warto go uogólnić na jednostki, budynki, węzły i terytorium.
+Drogi: batchowanie i wyciek siatek — rebuildRoadCells (pełne 256×256 + wszystkie punkty dróg) leci przy każdym createRoad/removeRoad (world_roads.cpp:258,272), a buildRoad tworzy wiele odcinków. Nazwy siatek "road_" + ++meshCounter (327-335) nigdy nie są zwalniane, bo MeshManager nie ma removeMesh (mesh_manager.cpp:64). Każda budowa/rozbiórka drogi i każde wczytanie zapisu zostawia VRAM. Fix: stabilna nazwa + updateMesh albo removeMesh i dirty-flag na przebudowę komórek raz na tick.
+Mgła wojny — world_fog.cpp:77-125: co 0,25 s gry pełne fill 65 536 komórek, revealCircle dla każdej jednostki (przy zasięgu 80 j. ~5000 komórek), rozmycie 3×3 (590 tys. operacji), a przy x24 to 96 razy na sekundę realnie. Dodatkowo mgła ustawia territoryDirty_ (121-124), sprzęgając ją z bardzo drogim rebuildTerritory. Rozwiązanie: rozmycie rozdzielne, odświeżanie tylko komórek wokół jednostek, która faktycznie się ruszyły; terytorium debounce raz na klatkę.
+2. Silnik/renderer
+G-Buffer: brak sortowania i zbędne bindowanie — renderer_core.cpp:493-558: dla każdej paczki ponownie vkCmdBindPipeline, vkCmdBindDescriptorSets (ten sam set 0 dla wszystkich!), vertex/index buffer i push constants. Sortowanie front-to-back + po (pipeline, mesh) i cache „ostatnio bindowane” to zwykle największy zysk CPU przy tysiącach obiektów.
+Cienie liczone nawet gdy wyłączone — render_pass.h:17-40 kopiuje każdą paczkę do shadowPackets, renderer_core.cpp:211 zawsze woła updateVisibleDepthRange, a assignShadowSlots alokuje i sortuje. Przy shadowsEnabled_ == false cały ten tor powinien być pominięty; cull 8 narożników policzyć raz na światło, nie dla każdej paczki i kaskady.
+Bufory siatek w pamięci hosta — mesh_manager.cpp:47-73 alokuje wierzchołki/indeksy jako HOST_VISIBLE|HOST_COHERENT. Statyczna geometria powinna iść do DEVICE_LOCAL przez staging. updateMesh (88-116) dodatkowo re-uploaduje niezmienione indeksy MD2 co klatkę.
+Cząsteczki i audio — emitter.cpp:181,342 tworzy std::async co klatkę per emitter (jest przecież JobSystem); audio_system.cpp:292-335 alokuje std::vector i dekoduje OGG w wątku audio pod mutexem trzymanym przez cały mix(). To proszenie się o glitche i blokowanie klatki. Real-time audio wymaga preallokowanych buforów pierścieniowych i kolejki komend z głównego wątku.
+Architektura — renderer_core.cpp ma 3894 linie i miesza alokację, tekstury, mgłę, cienie i UI; RenderOrchestrator/renderPlan_ są martwe (3622-3631); layout push-constants istnieje w trzech kopiach (packet_draw.cpp:51, renderer_core.cpp:325,519). Wydzieliłbym ShadowPass, GBufferPass, DeferredPass, SceneColorCopyPass, OverlayPass i jeden wspólny nagłówek push-constants. RenderPacket z 24 polami terenu w każdej paczce (render_types.h:41-89) to też powód dużych kopii.
+3. Co bym dodała (funkcje)
+Widget obrazka w GUI + dynamiczna tekstura — od razu rozwiązuje minimapę i pozwala robić podglądy/portrety.
+Overlay profilera w grze — Profiler::lastReport() już istnieje, brak tylko wyświetlania; plus benchmark regresyjny (250 jednostek/100 budynków < X ms).
+Stabilne uchwyty z generacją zamiast indeksów w wektorach z martwymi wpisami (settlers_world.h:10-14); listy żywych obiektów, bo wektory nigdy nie są kompaktowane i długie partie skanują coraz więcej trupów.
+Wersjonowanie zapisu + migracje; obecny saveLoadTest (app_tests.cpp:731-768) nie wykryje pola pominiętego w fields(...), bo porównuje JSON z JSON-em. Potrzebny test „ustaw wszystkie pola na niezerowe → round-trip”.
+Testy izolowane per seed — dziś wszystkie dzielą jeden World (app_tests.cpp:1098-1113) i losową mapę, więc awaria jednego zanieczyszcza następne.
+AI: cache ekonomii i deterministyczne szukanie miejsca zamiast 120 losowych prób; opcjonalnie mgła wojny dla AI jako poziom trudności.
+Sterowanie grupami/patrol/attack-move, flow-field lub lokalne unikanie zamiast samego rozpychania; UI kolejki produkcji.
+4. Kolejność, którą proponuję
+Zmierzyć: ENGINE_PROFILE=1 SETTLERS_AUTOPLAY=900 SETTLERS_SPEED=24 i SETTLERS_STRESS=200 — bez tego reszta to zgadywanie.
+Minimapa-tekstura + rozdzielenie symulacji/prezentacji (mały zakres, duży zysk).
+Cache transportu i siatki przestrzenne (największe O(n²)).
+Batchowanie renderera + pomijanie cieni, gdy wyłączone.
+DEVICE_LOCAL dla siatek, naprawa wycieku siatek dróg, wątki cząsteczek/audio.
+Testy izolowane + benchmark regresyjny, potem refaktoryzacja World/Renderer na moduły.
