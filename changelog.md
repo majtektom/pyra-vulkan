@@ -5,6 +5,10 @@
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
 Nowe w silniku:
+ - Wydajność: warstwy walidacji Vulkana tylko w buildzie Debug albo z `ENGINE_VALIDATION=1` - w grze sprawdzały
+   każde polecenie na CPU i zajmowały ~90% klatki (duża osada Osadników: 20 ms -> 1,9 ms na klatkę, GPU wcześniej
+   czekało na CPU); profiler klatki `ENGINE_PROFILE=1` (`core/profiler.h`: `PROFILE_SCOPE`, `Profiler::lap/count`)
+   z punktami pomiaru w pętli silnika i rendererze
  - Paczka gry do przekazania (Linux): `tools/build_release.sh` buduje w kontenerze Ubuntu 25.04 (glibc 2.38+),
    opcja CMake `ENGINE3D_PORTABLE` (statyczne libstdc++/libgcc), `ENGINE3D_OUTPUT_DIR` (katalog wyjścia),
    RUNPATH `$ORIGIN` dla wszystkich binarek (libengine3d.so obok binarki); SDL3_ttf i SDL3_image jako wymagane
@@ -56,6 +60,9 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: wydajność symulacji - rozpychanie jednostek przez siatkę przestrzenną zamiast porównywania każdej
+   z każdą i najwyżej 20 razy na sekundę czasu gry (500 jednostek przy x24: 11,8 ms -> 3,8 ms na klatkę);
+   sekcje świata w profilerze; `SETTLERS_NOVSYNC`, `SETTLERS_SLOWAT`; FPS w logu autoplay
  - Osadnicy: limit ludności 250 na stronę (był ukryty limit 120 - domy ponad niego nic nie dawały, gra o tym nie
    mówiła); stała `kMaxPopulation`, "(maks.)" w górnym pasku, komunikat przy stawianiu Domu przy maksimum, AI nie
    stawia wtedy domów; `SETTLERS_STRESS=<n>` (n osadników więcej na stronę) i FPS w logu autoplay - pomiar wydajności

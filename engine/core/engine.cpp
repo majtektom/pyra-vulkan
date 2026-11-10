@@ -24,6 +24,9 @@
 #include "object/terrain/terrain_placement_component.h"
 #include <fstream>
 #include <nlohmann/json.hpp>
+
+#include "core/profiler.h"
+#include <cstdlib>
 #include <random>
 
 #include <chrono>
@@ -37,6 +40,19 @@ Engine::Engine() = default;
 Engine::~Engine() { cleanup(); }
 
 bool Engine::initialize(const std::string& appName, int width, int height, bool enableValidationLayers) {
+    // Warstwy walidacji Vulkana sprawdzają KAŻDE polecenie na CPU - przy tysiącu rysowań na klatkę zjadają
+    // większość czasu klatki. To narzędzie programisty: włączone w buildzie Debug albo z ENGINE_VALIDATION=1
+    // (np. po zmianach w rendererze), w zwykłej grze (Release) - wyłączone. ENGINE_VALIDATION=0 wyłącza zawsze.
+    {
+#ifdef NDEBUG
+        bool wanted = false;
+#else
+        bool wanted = true;
+#endif
+        if (const char* v = std::getenv("ENGINE_VALIDATION")) wanted = std::string(v) != "0";
+        enableValidationLayers = enableValidationLayers && wanted;
+        LOG_INFO("Walidacja Vulkan: {}", enableValidationLayers ? "WŁĄCZONA (wolniej)" : "wyłączona (ENGINE_VALIDATION=1 włącza)");
+    }
     try {
         platform = std::make_unique<Platform>(appName, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
         if (!platform) {
@@ -112,12 +128,14 @@ void Engine::run() {
     // wejścia użytkownika, symulacji świata oraz renderowania.
     while (running && !platform->shouldClose()) {
         const auto frameStart = std::chrono::steady_clock::now();
+        Profiler::get().beginFrame();   // ENGINE_PROFILE=1: czasy sekcji klatki w logu
         
         // 1. Obsługa zdarzeń systemu operacyjnego i wejścia (Input)
         platform->processEvents();
         previousInput_ = currentInput_;
         currentInput_ = platform->pollInput();
         if (platform->shouldClose()) break;
+        Profiler::get().lap("wejście");
 
         // 2. Obliczenie Delta Time
         // Delta Time (dt) to czas, jaki upłynął od poprzedniej klatki.
@@ -127,7 +145,8 @@ void Engine::run() {
         
         // 3. Aktualizacja logiki (Update)
         update(dt);
-        
+        Profiler::get().lap("update");
+
         // 4. Renderowanie (Draw)
         renderFrame();
 
@@ -139,6 +158,8 @@ void Engine::run() {
                 std::this_thread::sleep_for(targetFrame - frameElapsed);
             }
         }
+        Profiler::get().lap("limiter FPS");
+        Profiler::get().endFrame();
     }
 
     renderer->waitIdle();
@@ -236,6 +257,7 @@ void Engine::update(TimeDelta deltaTime) {
 
     // Callback użytkownika (np. skryptowanie w pętli głównej)
     if (onUpdate) {
+        PROFILE_SCOPE("update.gra (onUpdate)");
         onUpdate(dtSeconds, *this);
     }
 
@@ -298,7 +320,10 @@ void Engine::update(TimeDelta deltaTime) {
         // Rozdzielenie tych kroków pozwala na lepszą optymalizację i porządek w danych.
     }
 
-    sceneManager.update(dtSeconds);
+    {
+        PROFILE_SCOPE("update.scena (ekstrakcja paczek)");
+        sceneManager.update(dtSeconds);
+    }
     layerManager.update(dtSeconds);
 }
 

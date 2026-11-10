@@ -7,6 +7,8 @@
  */
 #include "settlers_app.h"
 
+#include "core/profiler.h"
+
 namespace settlers {
 
 // Start aplikacji: okno i silnik, zasoby (modele, materiały), GUI, ustawienia, dźwięk,
@@ -49,6 +51,11 @@ bool SettlersApp::initialize() {
         startNewGame();
         world_->aiControlsPlayer = true;
         gameSpeed_ = autoplaySpeed_;
+        // Pomiar wydajności dużej osady: SETTLERS_SLOWAT=<s> - od tej chwili gry autoplay zwalnia do x1
+        // (z ENGINE_PROFILE=1 widać wtedy czasy klatki bez wielokrotnych kroków symulacji),
+        // SETTLERS_NOVSYNC=1 - bez synchronizacji pionowej (FPS nie jest ograniczony do odświeżania monitora).
+        if (const char* sa = std::getenv("SETTLERS_SLOWAT")) slowAt_ = static_cast<float>(std::atof(sa));
+        if (std::getenv("SETTLERS_NOVSYNC")) engine_.setPresentMode(PresentMode::Immediate);
         LOG_INFO("[autoplay] start: {} s czasu gry, przyspieszenie x{}", autoplaySeconds_, autoplaySpeed_);
     }
 
@@ -390,7 +397,10 @@ void SettlersApp::update(float dt, Engine& e) {
     // 5. Interfejs rysowany od nowa w każdej klatce.
     cleanupSelection();
     updateContextWindows();
-    drawHud(e, in);
+    {
+        PROFILE_SCOPE("gra.HUD");
+        drawHud(e, in);
+    }
     updateDebugNavMesh(dt);
     if (debugMode_ > 0 && mode_ != Mode::Menu) drawDebug(in);
     gui_->renderGui();

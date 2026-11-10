@@ -1194,6 +1194,10 @@ void SettlersApp::runUiTestStep() {
 // SETTLERS_AUTOPLAY: co 30 s gry wypisuje stan obu stron, a po zadanym czasie (lub końcu partii) zamyka program.
 void SettlersApp::updateAutoplay() {
     const World& w = *world_;
+    if (slowAt_ > 0.0f && w.gameTime >= slowAt_ && gameSpeed_ != 1) {
+        gameSpeed_ = 1;
+        LOG_INFO("[autoplay] t={}s: zwolnienie do x1 (pomiar wydajności)", static_cast<int>(w.gameTime));
+    }
     if (w.gameTime >= nextAutoplayLog_) {
         nextAutoplayLog_ += 30.0f;
         for (int f = 0; f < kFactionCount; ++f) {

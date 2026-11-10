@@ -7,6 +7,8 @@
  */
 #include "world_internal.h"
 
+#include "core/profiler.h"
+
 namespace settlers {
 
 // Wyznacza ścieżkę do celu. Gdy linia prosta jest wolna od przeszkód, wystarcza jeden punkt;
@@ -127,20 +129,16 @@ bool World::followPath(Unit& u, float dt, float reachDist) {
 //  - przeciskający się (ghostTimer) nie zderzają się wcale.
 // Na końcu jednostki stojące wewnątrz zablokowanych komórek (np. budynek postawiony na nich) wychodzą na zewnątrz.
 void World::separateUnits(float dt) {
-    const size_t n = units.size();
-    for (size_t i = 0; i < n; ++i) {
-        Unit& a = units[i];
-        if (!a.alive || a.state == UnitState::Garrison) continue;   // załoga wieży jest w środku
-        const float ra = unitDef(a.type).radius;
-        for (size_t j = i + 1; j < n; ++j) {
-            Unit& b = units[j];
-            if (!b.alive || b.state == UnitState::Garrison) continue;
+    // Para jednostek za blisko siebie - rozsuwamy je (zasady w komentarzach poniżej).
+    auto resolvePair = [&](Unit& a, Unit& b) {
+        {
+            const float ra = unitDef(a.type).radius;
             const float rb = unitDef(b.type).radius;
             const float dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
             const float minD = (ra + rb) * 0.9f;
-            if (std::abs(dx) > minD || std::abs(dz) > minD) continue;
+            if (std::abs(dx) > minD || std::abs(dz) > minD) return;
             float d = std::sqrt(dx * dx + dz * dz);
-            if (d >= minD) continue;
+            if (d >= minD) return;
             float nx, nz;
             if (d < 0.01f) {
                 nx = 1.0f;
@@ -151,11 +149,11 @@ void World::separateUnits(float dt) {
                 nz = dz / d;
             }
             // Przeciskająca się jednostka nie zderza się z innymi
-            if (a.ghostTimer > 0.0f || b.ghostTimer > 0.0f) continue;
+            if (a.ghostTimer > 0.0f || b.ghostTimer > 0.0f) return;
             const float push = (minD - d) * 0.5f;
             const bool aFixed = a.state == UnitState::Building || a.state == UnitState::Gathering;
             const bool bFixed = b.state == UnitState::Building || b.state == UnitState::Gathering;
-            if (aFixed && bFixed) continue;
+            if (aFixed && bFixed) return;
             const bool aMoving = a.pathIndex < a.path.size();
             const bool bMoving = b.pathIndex < b.path.size();
 
@@ -199,11 +197,45 @@ void World::separateUnits(float dt) {
             if (nav_.isWalkableWorld(na.x, na.z)) a.pos = na;
             if (nav_.isWalkableWorld(nb.x, nb.z)) b.pos = nb;
         }
+    };
+
+    // Siatka przestrzenna: zamiast porównywać każdą jednostkę z każdą (n^2 par - przy 500 jednostkach i x24
+    // ponad 8 ms na klatkę), dzielimy mapę na komórki o boku większym niż największy zasięg odpychania
+    // i sprawdzamy tylko jednostki z tej samej i sąsiednich komórek (3x3).
+    constexpr float kCell = 8.0f;
+    auto cellOf = [](float v) { return static_cast<int32_t>(std::floor(v / kCell)); };
+    auto keyOf = [](int32_t cx, int32_t cz) {
+        return (static_cast<int64_t>(cx) << 32) ^ static_cast<int64_t>(static_cast<uint32_t>(cz));
+    };
+    {
+    PROFILE_SCOPE("świat.rozpychanie.pary");
+    sepKeys_.clear();
+    for (size_t i = 0; i < units.size(); ++i) {
+        const Unit& u = units[i];
+        if (!u.alive || u.state == UnitState::Garrison) continue;   // załoga wieży jest w środku
+        sepKeys_.push_back({keyOf(cellOf(u.pos.x), cellOf(u.pos.z)), static_cast<int>(i)});
+    }
+    std::sort(sepKeys_.begin(), sepKeys_.end());
+    for (const auto& [key, i] : sepKeys_) {
+        Unit& a = units[i];
+        const int32_t cx = cellOf(a.pos.x), cz = cellOf(a.pos.z);   // pozycja mogła się zmienić - liczymy na nowo
+        for (int dz = -1; dz <= 1; ++dz) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                const int64_t k = keyOf(cx + dx, cz + dz);
+                auto it = std::lower_bound(sepKeys_.begin(), sepKeys_.end(), std::pair<int64_t, int>{k, -1});
+                for (; it != sepKeys_.end() && it->first == k; ++it) {
+                    if (it->second <= i) continue;   // każda para raz
+                    resolvePair(a, units[it->second]);
+                }
+            }
+        }
     }
 
+    }
+    PROFILE_SCOPE("świat.rozpychanie.uwięzione");
     // Jednostki uwięzione w zablokowanej komórce (np. budynek postawiony na nich) wychodzą na zewnątrz.
     // Wyjątek: rolnik pracujący na polu wewnątrz obrysu swojej farmy.
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < units.size(); ++i) {
         Unit& u = units[i];
         if (!u.alive || u.state == UnitState::Garrison || nav_.isWalkableWorld(u.pos.x, u.pos.z) ||
             isWorkerOnFarm(u, static_cast<int>(i))) continue;

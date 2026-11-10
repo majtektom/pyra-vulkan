@@ -1,5 +1,5 @@
 {
-  "fpsLimit": 0,
+  "fpsLimit": 30,
   "fullscreen": false,
   "masterVolume": 100,
   "musicOn": false,

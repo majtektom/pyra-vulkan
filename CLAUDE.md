@@ -20,7 +20,11 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
   (użytkownik woli biblioteki z rodziny SDL3 zamiast własnych/nagłówkowych zamienników - czcionki SDL3_ttf, obrazy
   SDL3_image; OGG zostaje na stb_vorbis, bo SDL3_sound/SDL3_mixer nie ma w pakietach Ubuntu). Nie budować paczki na
   hoście: glibc Fedory jest za nowa dla Ubuntu.
-- Walidacja Vulkan jest włączona — po zmianach w renderze sprawdzić log pod kątem `Validation`.
+- Walidacja Vulkan jest WYŁĄCZONA w buildzie Release (zjadała ~90% czasu klatki na CPU) - po zmianach w renderze
+  uruchomić z `ENGINE_VALIDATION=1` i sprawdzić log pod kątem `Validation`.
+- Profiler klatki: `ENGINE_PROFILE=1` (co 3 s `[profil]` - czasy sekcji: update gry, sekcje świata, nagrywanie
+  cieni/G-Buffer, czekanie na GPU, liczba paczek). W kodzie: `PROFILE_SCOPE("nazwa")` lub `Profiler::get().lap()`.
+  Osadnicy: `SETTLERS_NOVSYNC=1`, `SETTLERS_SLOWAT=<s>` (autoplay zwalnia do x1), `SETTLERS_STRESS=<n>`.
 
 ## Układ silnika (`engine/`)
 

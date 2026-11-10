@@ -1,6 +1,7 @@
 add_library(engine3d SHARED
     core/logger.cpp
     core/engine.cpp
+    core/profiler.cpp
     core/asset_registry.cpp
     core/component.cpp
     core/entity.cpp

@@ -1,3 +1,4 @@
+#include "core/profiler.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -170,6 +171,7 @@ public:
         }
 
         if (!swapchain_) return;
+        Profiler::get().lap("render.paczki (renderFrame)");
 
         VkDevice device = vulkanContext_->device();
 
@@ -183,6 +185,7 @@ public:
         } else {
             vkWaitForFences(device, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX);
         }
+        Profiler::get().lap("render.czekanie na GPU");
 
         uint32_t imageIndex = 0;
         try {
@@ -196,8 +199,10 @@ public:
             vkResetFences(device, 1, &inFlightFences_[currentFrame_]);
         }
 
+        Profiler::get().lap("render.acquire");
         updateVisibleDepthRange(scene, view);
         updateUniformBuffer(view);
+        Profiler::get().lap("render.przygotowanie");
 
         VkCommandBuffer cmd = commandBuffers_[currentFrame_];
         vkResetCommandBuffer(cmd, 0);
@@ -393,6 +398,7 @@ public:
             return it != textureNameToIndex_.end() ? it->second : 0;
         };
 
+        Profiler::get().lap("render.cienie (nagrywanie)");
         // === GBUFFER PASS ===
         // Transition GBuffer from SHADER_READ to COLOR_ATTACHMENT
         VkImageMemoryBarrier gbToColorBarriers[4] = {};
@@ -470,6 +476,8 @@ public:
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_);
 
         const auto& opaquePackets = scene.getOpaquePackets();
+        Profiler::get().count("paczki nieprzezroczyste", static_cast<double>(opaquePackets.size()));
+        Profiler::get().count("paczki cieni", static_cast<double>(scene.getShadowPackets().size()));
 
         for (const auto& packet : opaquePackets) {
             if (packet.vertexBuffer == VK_NULL_HANDLE) continue;
@@ -557,6 +565,7 @@ public:
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                              0, 0, nullptr, 0, nullptr, 4, gbToReadBarriers);
 
+        Profiler::get().lap("render.gbuffer (nagrywanie)");
         // === SWAPCHAIN RENDERING ===
         // Transition swapchain color image
         VkImageMemoryBarrier colorBarrier{};
@@ -833,6 +842,7 @@ public:
                              0, 0, nullptr, 0, nullptr, 1, &presentBarrier);
 
         vkEndCommandBuffer(cmd);
+        Profiler::get().lap("render.deferred+przezr.+GUI (nagrywanie)");
 
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -871,8 +881,10 @@ public:
         }
         VkSemaphore presentWaitSemaphore = (synchronizationMode_ == SynchronizationMode::Timeline)
             ? presentReadySemaphores_[imageIndex] : renderFinishedSemaphores_[imageIndex];
+        Profiler::get().lap("render.submit");
         if (!swapchain_->present(imageIndex, presentWaitSemaphore))
             recreateSwapChain();
+        Profiler::get().lap("render.present");
         currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
     }
 

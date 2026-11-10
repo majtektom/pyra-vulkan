@@ -551,6 +551,8 @@ public:
     void debugKillUnit(int id) { killUnit(id, -1); }
 
 private:
+    std::vector<std::pair<int64_t, int>> sepKeys_;
+    float separateTimer_ = 0.0f;   // odliczanie do kolejnego rozpychania jednostek   // separateUnits: (komórka siatki, jednostka), posortowane
     // ----------------------------------------------------------------------------------
     // Tworzenie świata                                                      [world_create.cpp]
     // ----------------------------------------------------------------------------------

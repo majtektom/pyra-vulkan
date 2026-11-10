@@ -8,6 +8,8 @@
  */
 #include "world_internal.h"
 
+#include "core/profiler.h"
+
 namespace settlers {
 
 // Surowiec, do którego pracownik nie mógł dojść, jest pomijany przez 90 s (zwalniamy rezerwację).
@@ -107,25 +109,59 @@ void World::update(float dt) {
     dt = std::min(dt, 0.1f);
     gameTime += dt;
 
-    refreshFactionResources();
-    updateFactions(dt);
-    for (size_t i = 0; i < units.size(); ++i) {
-        if (units[i].alive) updateUnit(static_cast<int>(i), dt);
+    // Pomiar sekcji (ENGINE_PROFILE=1) - przy przyspieszeniu xN sumują się wszystkie kroki z klatki.
+    {
+        PROFILE_SCOPE("świat.frakcje i prace");
+        refreshFactionResources();
+        updateFactions(dt);
     }
-    separateUnits(dt);
-    updateBuildings(dt);
-    updateFlags(dt);
-    updateProjectiles(dt);
-    updateEffects(dt);
-    updateNodes(dt);
-    if (aiEnabled && winner < 0) updateAI(kEnemy, dt);
-    if (aiControlsPlayer && winner < 0) updateAI(kPlayer, dt);
-    if (territoryDirty_) rebuildTerritory();
-    if (regionsDirty_) {
-        nav_.computeRegions(true);
-        regionsDirty_ = false;
+    {
+        PROFILE_SCOPE("świat.jednostki");
+        for (size_t i = 0; i < units.size(); ++i) {
+            if (units[i].alive) updateUnit(static_cast<int>(i), dt);
+        }
     }
-    syncVisuals(dt);
+    {
+        // Rozpychanie najwyżej 20 razy na sekundę czasu gry: każde wywołanie rozsuwa o połowę nakładania
+        // (niezależnie od dt), więc częściej nic nie daje, a przy przyspieszeniu x24 kosztowało 24 razy na klatkę.
+        PROFILE_SCOPE("świat.rozpychanie");
+        separateTimer_ += dt;
+        if (separateTimer_ >= 0.05f) {
+            separateUnits(separateTimer_);
+            separateTimer_ = 0.0f;
+        }
+    }
+    {
+        PROFILE_SCOPE("świat.budynki");
+        updateBuildings(dt);
+    }
+    {
+        PROFILE_SCOPE("świat.transport");
+        updateFlags(dt);
+    }
+    {
+        PROFILE_SCOPE("świat.pociski/efekty/drzewa");
+        updateProjectiles(dt);
+        updateEffects(dt);
+        updateNodes(dt);
+    }
+    {
+        PROFILE_SCOPE("świat.AI");
+        if (aiEnabled && winner < 0) updateAI(kEnemy, dt);
+        if (aiControlsPlayer && winner < 0) updateAI(kPlayer, dt);
+    }
+    {
+        PROFILE_SCOPE("świat.terytorium/regiony");
+        if (territoryDirty_) rebuildTerritory();
+        if (regionsDirty_) {
+            nav_.computeRegions(true);
+            regionsDirty_ = false;
+        }
+    }
+    {
+        PROFILE_SCOPE("świat.modele (sync)");
+        syncVisuals(dt);
+    }
     checkVictory();
 
     while (!messages.empty() && gameTime - messages.front().time > 9.0f) messages.pop_front();

@@ -584,6 +584,7 @@ private:
         int delta = 0;
     };
     std::vector<LimitButton> limitButtons_;
+    float slowAt_ = 0.0f;   // SETTLERS_SLOWAT: czas gry, od którego autoplay biegnie x1
     int selectedFlag_ = -1;
 
     // --- Budowa dróg ---

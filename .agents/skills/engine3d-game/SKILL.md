@@ -142,6 +142,18 @@ Procedura: build bez ostrzeżeń → test UI kilka razy (mapy losowe; kroki klik
 gdy ktoś rusza prawdziwą myszą) → autoplay → zrzut ekranu (`spectacle -a -b -n -o plik.png` przy grze w tle)
 i obejrzenie go. Wyniki raportuj uczciwie (także niestabilne/nieodtworzone błędy).
 
+## 9a. Wydajność - najpierw zmierz
+
+- `ENGINE_PROFILE=1`: co 3 s `[profil]` z czasem sekcji klatki (update gry, sekcje symulacji, nagrywanie cieni i
+  G-Buffera, czekanie na GPU, liczba paczek). Własne sekcje: `PROFILE_SCOPE("nazwa")` (blok) albo
+  `Profiler::get().lap("nazwa")` (od poprzedniego punktu) - `core/profiler.h`.
+- Walidacja Vulkana (`ENGINE_VALIDATION=1`) kosztuje kilka µs na KAŻDE polecenie - nie mierz z nią wydajności
+  (w Release jest domyślnie wyłączona; przy 1000 rysowań zjadała ~90% klatki, a GPU czekało na CPU).
+- Typowe pułapki symulacji: porównywanie każdej jednostki z każdą (n^2) - siatka przestrzenna; operacje,
+  które nie zależą od dt (np. rozsuwanie), wykonywane w każdym kroku przyspieszonego czasu - ogranicz częstotliwość.
+- Wielowątkowość dopiero, gdy profil pokazuje, że jedna sekcja dominuje i da się ją podzielić (silnik ma
+  `JobSystem::parallelFor`, ekstrakcja paczek renderowania już z niego korzysta).
+
 ## 10. Styl kodu dla tego repo
 
 - Komentarze i teksty w grze po polsku, pisane dla osoby uczącej się: nad każdą funkcją 1-3 zdania "co i po co".
