@@ -114,7 +114,8 @@ void SettlersApp::drawTopBar(Engine& e) {
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%02d:%02d", t / 60, t % 60);
     static const char* diffNames[] = {"Łatwy", "Normalny", "Trudny"};
-    std::string right = std::string("Poziom: ") + diffNames[static_cast<int>(w.difficulty)] + "   Czas: " + buf;
+    std::string right = std::string(freePlay_ ? "Wolna gra   " : "") + "Poziom: " + diffNames[static_cast<int>(w.difficulty)] +
+                        "   Czas: " + buf;
     if (gameSpeed_ != 1) right += " (x" + std::to_string(gameSpeed_) + ")";
     right += "   FPS: " + std::to_string(static_cast<int>(e.getCurrentFPS())) + "   I: gospodarka   F1: pomoc";
     if (spectator_) {

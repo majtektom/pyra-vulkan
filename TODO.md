@@ -123,8 +123,6 @@ VK_LAYER_VALIDATE_SYNC=1 VK_LAYER_DUPLICATE_MESSAGE_LIMIT=1000 ./bin/09_vegetati
 
 Rozgrywka (największy efekt):
 
-
-Zapis i wczytanie gry. Plik ustawień w JSON już jest, a świat da się zapisać jako ziarno mapy plus listy budynków, jednostek i surowców.
 Mgła wojny i zwiad: teren wroga jest niewidoczny, dopóki nie podejdą tam twoje jednostki. Można ją zrobić jako teksturę widoczności nakładaną w shaderze terenu i na minimapie.
 Silnik (przyda się też innym przykładom):
 

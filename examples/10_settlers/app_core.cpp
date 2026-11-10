@@ -65,6 +65,7 @@ bool SettlersApp::initialize() {
         if (what == "settings") openSubWindow(settingsWindow_, menuWindow_);
         if (what == "controls") openSubWindow(controlsWindow_, menuWindow_);
         if (what == "demo") startNewGame(true);
+        if (what == "load") loadGame(std::getenv("SETTLERS_LOAD") ? std::getenv("SETTLERS_LOAD") : kSavePath);
         if (what == "game" || what == "economy" || what == "help") startNewGame();
         if (what == "economy") showEconomy_ = true;   // okno gospodarki w trakcie partii
         if (what == "help") showHelp_ = true;
@@ -149,6 +150,8 @@ void SettlersApp::setupInput() {
     map.bindKey(kActDebugDump, SDL_SCANCODE_F9);
     map.bindKey(kActRoad, SDL_SCANCODE_T);
     map.bindKey(kActEconomy, SDL_SCANCODE_I);
+    map.bindKey(kActSaveGame, SDL_SCANCODE_F5);
+    map.bindKey(kActLoadGame, SDL_SCANCODE_F8);
     static const SDL_Scancode numKeys[] = {SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, SDL_SCANCODE_5,
                                             SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8, SDL_SCANCODE_9};
     for (int i = 0; i < kHotkeyBuildings; ++i) {
@@ -186,7 +189,7 @@ void SettlersApp::setupSkyAndWater() {
 
 // Tworzy nową partię: usuwa starą scenę, tworzy nową z kamerą i słońcem,
 // generuje świat (World::create) i ustawia kamerę nad zamkiem gracza.
-void SettlersApp::newWorld(uint32_t seed, Difficulty diff) {
+bool SettlersApp::newWorld(uint32_t seed, Difficulty diff, const nlohmann::json* save, std::string* error) {
     clearSelection();
     placing_ = false;
     roadMode_ = false;
@@ -213,7 +216,12 @@ void SettlersApp::newWorld(uint32_t seed, Difficulty diff) {
     sun_ = scene_->createDirectionalLight("sun", normalize(Vec3{-0.4f, -1.0f, -0.3f}), {1.0f, 0.96f, 0.88f}, 2.2f);
 
     world_ = std::make_unique<World>(engine_, materials_);
-    world_->create(scene_, seed, diff);
+    freePlay_ = false;
+    if (save) {
+        if (!world_->loadState(scene_, *save, error)) return false;
+    } else {
+        world_->create(scene_, seed, diff);
+    }
     // Decyzje AI do logu ("[ai] ... buduje Tartak - ..."): w autoplayu albo z SETTLERS_AILOG=1.
     world_->aiLog = std::getenv("SETTLERS_AUTOPLAY") || std::getenv("SETTLERS_AILOG");
 
@@ -248,6 +256,7 @@ void SettlersApp::newWorld(uint32_t seed, Difficulty diff) {
     cam_.update(0.0f, *camera_);
 
     sceneManager()->setActiveScene("game");
+    return true;
 }
 
 // spectator = true: pokaz "AI kontra AI" - komputer gra za obie strony, gracz tylko ogląda.
@@ -315,7 +324,7 @@ void SettlersApp::showMenu() {
     menuWindow_->setVisible(true);
     gui_->setActive(menuWindow_->name());
     gui_->enableCursor(true);
-    if (world_ && gameStarted_ && world_->winner >= 0) {
+    if (world_ && gameStarted_ && !simulationRunning()) {
         gameStarted_ = false;
     }
 }
@@ -355,7 +364,20 @@ void SettlersApp::showGameOver() {
     ss << "Czas: " << minutes << " min   Pokonani wrogowie: " << world_->factions[kPlayer].enemiesKilled
        << "   Straty: " << world_->factions[kPlayer].unitsLost;
     gameOverStats_->setText(ss.str());
+    btnGameOverContinue_->setText(won ? "Graj dalej" : "Oglądaj mapę");
     gameStarted_ = false;
+}
+
+void SettlersApp::continueAfterGameOver() {
+    if (!world_) return;
+    if (world_->winner != kPlayer) {   // porażka: zamek stracony - tylko oglądanie mapy
+        gameOverWindow_->setVisible(false);
+        return;
+    }
+    freePlay_ = true;
+    gameStarted_ = true;
+    enterGame();
+    world_->pushMessage("Wolna gra: wróg pokonany - rozbudowuj osadę dalej (zapis F5 działa)", {0.6f, 1.0f, 0.6f, 1.0f});
 }
 
 // GŁÓWNA FUNKCJA KLATKI - wywoływana przez silnik przed renderowaniem sceny.
@@ -406,7 +428,7 @@ void SettlersApp::update(float dt, Engine& e) {
     gui_->renderGui();
 }
 
-// Klawisze działające w każdym trybie: F1 pomoc, M muzyka, F3 tryb debug, F9 zrzut stanu.
+// Klawisze działające w każdym trybie: F1 pomoc, M muzyka, F3 tryb debug, F9 zrzut stanu, F5/F8 zapis/wczytanie.
 void SettlersApp::handleGlobalKeys(Engine& e) {
     if (e.actionPressed(kActHelp)) {
         showHelp_ = !showHelp_;
@@ -423,6 +445,14 @@ void SettlersApp::handleGlobalKeys(Engine& e) {
         world_->pushMessage(names[debugMode_], {0.7f, 0.9f, 1.0f, 1.0f});
     }
     if (e.actionPressed(kActDebugDump)) dumpDebug();
+    if (e.actionPressed(kActSaveGame) && !spectator_) saveGame();
+    if (e.actionPressed(kActLoadGame)) {
+        if (saveExists()) {
+            loadGame();
+        } else if (world_) {
+            world_->pushMessage("Brak zapisu gry - zapisz klawiszem F5", {1.0f, 0.7f, 0.4f, 1.0f});
+        }
+    }
 }
 
 // Co dzieje się w danym trybie:
@@ -451,9 +481,9 @@ void SettlersApp::updateMode(float dt, Engine& e, const InputSnapshot& in) {
         handleGameInput(e, in);
         if (e.actionPressed(kActSlower)) changeGameSpeed(-1);
         if (e.actionPressed(kActFaster)) changeGameSpeed(+1);
-        for (int i = 0; i < gameSpeed_ && world_->winner < 0; ++i) world_->update(dt);
+        for (int i = 0; i < gameSpeed_ && simulationRunning(); ++i) world_->update(dt);
         if (autoplaySeconds_ > 0.0f) updateAutoplay();
-        if (world_->winner >= 0) {
+        if (world_->winner >= 0 && !freePlay_) {
             showGameOver();
         } else if (e.actionPressed(kActEsc) && !wasPlacing) {
             showPause();

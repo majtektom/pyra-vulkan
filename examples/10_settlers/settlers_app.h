@@ -22,6 +22,7 @@
  *   app_buildbar.cpp - dolny pasek budowy: ikony budynków (pixel-art), karta informacji, kliknięcia
  *   app_audio.cpp  - efekty dźwiękowe i muzyka zależna od sytuacji w grze
  *   app_debug.cpp  - tryb debug (F3): ścieżki, stany, siatka kolizji; zrzut stanu (F9)
+ *   app_save.cpp   - zapis / wczytanie gry: plik, kamera, przyciski i klawisze (F5 / F8)
  *   app_tests.cpp  - testy automatyczne (SETTLERS_UITEST) i rozgrywka AI z logami (SETTLERS_AUTOPLAY)
  *
  * PRZEPŁYW JEDNEJ KLATKI (SettlersApp::update)
@@ -91,6 +92,7 @@ inline constexpr float kHudDepth = 0.93f;          // głębokość napisów HUD
 inline constexpr float kTopBarH = 34.0f;           // wysokość górnego paska surowców (px)
 inline constexpr const char* kSoundDir = "assets/sound/settlers/";
 inline constexpr const char* kSettingsPath = "save/settlers_settings.json";
+inline constexpr const char* kSavePath = "save/settlers_save.json";   // zapis gry (F5 / F8)
 
 // Nazwy akcji wejścia. Klawisze przypisuje SettlersApp::setupInput, a sprawdza się je
 // przez engine.actionDown/actionPressed - dzięki temu kod gry nie zna kodów klawiszy.
@@ -116,6 +118,8 @@ inline constexpr const char* kActSlower = "time.slower";
 inline constexpr const char* kActFaster = "time.faster";
 inline constexpr const char* kActRoad = "build.road";
 inline constexpr const char* kActEconomy = "ui.economy";
+inline constexpr const char* kActSaveGame = "game.save";
+inline constexpr const char* kActLoadGame = "game.load";
 
 // Budynki w panelu budowy. Pierwsze 9 ma klawisze 1..9, pozostałe stawia się z paska.
 inline constexpr BuildingType kBuildMenu[] = {
@@ -182,6 +186,7 @@ inline const ControlLine kControls[] = {
     {"F1", "pomoc na ekranie gry"},
     {"M", "muzyka wł. / wył."},
     {"[  /  ]", "wolniej / szybciej (x1, x2, x4, x8, x16, x24)"},
+    {"F5 / F8", "zapis gry / wczytanie zapisu"},
     {"F3 / F9", "tryb debug / zrzut stanu do konsoli"},
 };
 
@@ -275,7 +280,17 @@ private:
     // Tworzy niebo (skydome) i wodę (ocean) - efekty renderera wspólne dla wszystkich partii.
     void setupSkyAndWater();
     // Tworzy od nowa scenę gry: kamerę, słońce, świat (teren, bazy, surowce) i podgląd budynku.
-    void newWorld(uint32_t seed, Difficulty diff);
+    // Nowy świat z ziarna albo (save != nullptr) odtworzony z zapisu; false = zapisu nie dało się odtworzyć.
+    bool newWorld(uint32_t seed, Difficulty diff, const nlohmann::json* save = nullptr, std::string* error = nullptr);
+    // app_save.cpp - zapis i wczytanie gry (F5 / F8, przyciski w menu i pauzie)
+    bool saveGame(const std::string& path = kSavePath);
+    // Okno końca gry: po zwycięstwie - wolna gra (dalsza rozbudowa osady), po porażce - zamyka okno (oglądanie mapy).
+    void continueAfterGameOver();
+    // Czy symulacja biegnie: gra trwa albo wolna gra po zwycięstwie.
+    [[nodiscard]] bool simulationRunning() const { return world_ && (world_->winner < 0 || freePlay_); }
+    void freePlayTest();
+    bool loadGame(const std::string& path = kSavePath);
+    [[nodiscard]] bool saveExists(const std::string& path = kSavePath) const;
     // Rozpoczyna partię z poziomem trudności z menu. spectator = pokaz "AI kontra AI".
     void startNewGame(bool spectator = false);
 
@@ -524,6 +539,7 @@ private:
     void storageJamTest();
     void autoRecruitTest();
     void aiPlannerTest();
+    void saveLoadTest();
     void showcaseBuildings();
     bool constructionStressTest();
     // Log stanu partii w trybie SETTLERS_AUTOPLAY i zakończenie po zadanym czasie.
@@ -585,6 +601,10 @@ private:
     };
     std::vector<LimitButton> limitButtons_;
     float slowAt_ = 0.0f;   // SETTLERS_SLOWAT: czas gry, od którego autoplay biegnie x1
+    bool autoplaySaved_ = false;   // SETTLERS_SAVEAT: zapis już wykonany
+    // Wolna gra po zwycięstwie ("Graj dalej"): symulacja biegnie dalej, okno końca gry się nie pokazuje.
+    bool freePlay_ = false;
+    GuiButton* btnGameOverContinue_ = nullptr;
     int selectedFlag_ = -1;
 
     // --- Budowa dróg ---

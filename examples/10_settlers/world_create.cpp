@@ -1,7 +1,8 @@
 /**
  * world_create.cpp - tworzenie nowego świata.
  *
- * Kolejność (World::create):
+ * Kolejność (World::create = createLand + createStartingBases + finishCreate; wczytanie zapisu - world_save.cpp -
+ * zastępuje createStartingBases odtworzeniem obiektów z pliku):
  *   1. heightmapa z szumu (value noise / fBm) z płaskowyżami pod bazy i lądowym korytarzem między nimi,
  *   2. teren 3D z warstwami tekstur (trawa, piasek, skały, śnieg) mieszanymi maskami,
  *   3. siatka nawigacji: woda, strome zbocza i krawędź mapy są nieprzechodnie,
@@ -19,6 +20,20 @@ using Noise = ValueNoise;
 // Tworzy nową partię: teren, nawigację, surowce, zamki z jednostkami startowymi
 // i (zależnie od poziomu trudności) gotowe budynki przeciwnika.
 bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
+    createLand(scene, seed, diff);
+    createStartingBases(diff);
+    finishCreate();
+
+    pushMessage("Witaj, władco! Rozbuduj osadę i zniszcz zamek wroga.", {1.0f, 0.95f, 0.6f, 1.0f});
+    pushMessage("Zacznij od Drwala z Tartakiem (deski) i Kamieniarza; żywność: Rybak, Myśliwy, Farma+Młyn+Piekarnia.",
+                {0.85f, 0.95f, 1.0f, 1.0f});
+    pushMessage("Połącz warsztaty drogą (T) z zamkiem - towary liczą się dopiero w magazynie.", {0.85f, 0.95f, 1.0f, 1.0f});
+    return true;
+}
+
+// Ląd i surowce - wszystko, co wynika z samego ziarna mapy (nowa gra i wczytanie zapisu): heightmapa, teren 3D,
+// nawigacja, lasy i skały. Generator losowy jest ustawiany ziarnem, więc wynik jest zawsze taki sam.
+void World::createLand(Scene* scene, uint32_t seed, Difficulty diff) {
     scene_ = scene;
     seed_ = seed;
     difficulty = diff;
@@ -51,7 +66,11 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
         territoryEntity_[f]->getComponent<MeshComponent>()->castShadows = false;
     }
 
-    // Startowe zasoby i zamki
+    nodesGenerated_ = nodes.size();
+}
+
+// Zamki, startowi osadnicy i żołnierze oraz (zależnie od poziomu) gotowe budynki przeciwnika.
+void World::createStartingBases(Difficulty diff) {
     // Startowe zasoby leżą w zamku (zamek jest pierwszym magazynem).
     factions = {};
     using C = CarryType;
@@ -93,17 +112,15 @@ bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
         factions[kEnemy].aiThinkTimer = 5.0f;
     }
 
+}
+
+// Wspólne zakończenie (nowa gra i wczytanie): terytorium, minimapa, obszary nawigacji, surowce na koncie.
+void World::finishCreate() {
     rebuildTerritory();
     buildMinimap();
     nav_.computeRegions(true);
     regionsDirty_ = false;
-
-    pushMessage("Witaj, władco! Rozbuduj osadę i zniszcz zamek wroga.", {1.0f, 0.95f, 0.6f, 1.0f});
     refreshFactionResources();
-    pushMessage("Zacznij od Drwala z Tartakiem (deski) i Kamieniarza; żywność: Rybak, Myśliwy, Farma+Młyn+Piekarnia.",
-                {0.85f, 0.95f, 1.0f, 1.0f});
-    pushMessage("Połącz warsztaty drogą (T) z zamkiem - towary liczą się dopiero w magazynie.", {0.85f, 0.95f, 1.0f, 1.0f});
-    return true;
 }
 
 // Heightmapa 256x256 z szumu fBm: wzgórza + grzbiety górskie + pierścień gór na krawędzi.
@@ -296,6 +313,7 @@ int World::addNode(NodeKind kind, const Vec3& pos, int variant, float scale) {
     node.pos = pos;
     node.pos.y = heightAt(pos.x, pos.z);
     node.baseScale = scale;
+    node.variant = variant;
     if (kind == NodeKind::Tree) {
         node.amount = node.maxAmount = 3;
         node.radius = 2.0f * scale;

@@ -66,6 +66,9 @@ Podział: `World` (`settlers_world.h`, pliki `world_*.cpp`) = symulacja, bez wej
 `SettlersApp` (`settlers_app.h`, pliki `app_*.cpp`) = prezentacja, wejście, HUD, dźwięk, debug, testy.
 Panel budowy to `GuiToolbar` z silnika (`app_buildbar.cpp` dostarcza tylko ikony i treść kart).
 Zasada: elementy przydatne innym grom (GUI, ustawienia, szum, matematyka) trafiają do `engine/`, a nie do przykładu.
+Zapis gry (`world_save.cpp`, `app_save.cpp`): nowe pole stanu w Building/Unit/Flag/Road/FactionState = dopisać je
+w odpowiednim `fields(...)` - test `saveLoadTest` (zapis -> wczytanie -> zapis identyczny) wykryje pominięcie
+tylko dla pól już na liście. Obiekty odwołują się indeksami - przy wczytaniu zachowujemy kolejność i martwe pozycje.
 Mapa plików i opis każdego modułu: komentarz na górze `main.cpp`, `settlers_world.h`, `settlers_app.h`.
 Wszystkie liczby balansu: `settlers_defs.h/.cpp` (budynki, `productionDef` - co produkuje i zużywa warsztat,
 jednostki, nazwy/kolory towarów). Nowy warsztat = wpis w obu tabelach + model (`settlers_assets.cpp`) + ikona
@@ -88,6 +91,8 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_HOVERBAR=<n>` | kursor nad n-tym przyciskiem paska budowy (0-8, -1 droga) - do zrzutów karty informacji |
 | `SETTLERS_CAMERA=<odl>` | odległość kamery (do zrzutów ekranu) |
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
+| `SETTLERS_SAVEAT=<s>` | z autoplay: zapis w tej chwili gry do `save/settlers_autoplay_save.json` |
+| `SETTLERS_OPEN=load` (+ `SETTLERS_LOAD=<plik>`) | start od wczytania zapisu (domyślnie `save/settlers_save.json`) |
 | `SETTLERS_STRESS=<n>` | każda strona dostaje n osadników więcej (wydajność; FPS w logu autoplay) |
 | `SETTLERS_SELECT=barracks` | z `OPEN=game`: gotowe koszary obok zamku, zaznaczone (zrzut okna koszar) |
 

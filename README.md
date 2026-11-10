@@ -98,6 +98,7 @@ towarem, a warsztat z pełną flagą czeka, aż ktoś zużyje jego wyroby. Surow
 w magazynie; zamek i Magazyn mieszczą po 200 towarów, więc Magazyny warto stawiać blisko produkcji. Okno Gospodarka
 pokazuje towary w magazynach, na flagach i w drodze, zapełnienie magazynów, tragarzy i wstrzymane warsztaty.
 Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa ten, kto zniszczy wrogi zamek.
+Po zwycięstwie przycisk **Graj dalej** przełącza w wolną grę - osadę można rozbudowywać bez końca (zapis też działa).
 AI nie ma listy budowy: co kilka sekund czyta te same statystyki co gracz (braki towarów, przestoje, zapasy,
 ludność) i stawia to, czego brakuje, pilnując proporcji warsztatów (1 tartak obsługuje 4 drwali, 1 leśniczy
 wystarcza na 3 drwali, 1 młyn na 3 farmy); wyczerpanych kamieniarzy burzy, a gdy brakuje miejsca lub surowców,
@@ -115,6 +116,11 @@ oraz **Sterowanie** z pełną listą klawiszy.
 Kod przykładu jest podzielony na symulację (`World`, pliki `world_*.cpp`) i aplikację (`SettlersApp`, pliki `app_*.cpp`).
 Mapa plików i kolejność czytania: komentarz na początku `examples/10_settlers/main.cpp`; opisy klas
 w `settlers_world.h` i `settlers_app.h`.
+
+**Zapis gry**: F5 albo przycisk w menu pauzy, **wczytanie**: F8 albo przycisk w menu głównym / pauzy
+(plik `save/settlers_save.json`). Zapis to ziarno mapy (z niego odtwarza się teren, lasy i skały) oraz listy budynków,
+jednostek, flag, dróg, zleceń transportu, stan obu stron i zmiany w surowcach mapy - po wczytaniu gra toczy się
+dokładnie tak, jak by toczyła się bez zapisu (zapisany jest też stan generatora losowego).
 
 Prędkość czasu: klawisze **[** i **]** (x1, x2, x4, x8, x16, x24) albo przycisk w menu pauzy. W menu głównym
 **Pokaz: AI kontra AI** — komputer gra za obie strony, a gracz ogląda (domyślnie x4).

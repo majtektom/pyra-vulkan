@@ -5,6 +5,8 @@
  *                      (tak jak prawdziwy gracz) i sprawdza efekty; wynik w logu "[uitest]".
  * SETTLERS_AUTOPLAY  - AI gra za obie strony, stan partii jest logowany co 30 s gry.
  */
+#include <filesystem>
+#include <nlohmann/json.hpp>
 #include "settlers_app.h"
 
 namespace settlers {
@@ -676,6 +678,15 @@ void SettlersApp::autoRecruitTest() {
         }
     }
     w.debugSetStock(kPlayer, Resources{{CarryType::Weapons, 40}, {CarryType::Bread, 40}, {CarryType::Fish, 40}, {CarryType::Planks, 60}});
+    // Mapy są losowe - gdy domów nie dało się postawić, robimy miejsce w limicie ludności (bezczynni osadnicy odchodzą).
+    w.update(0.1f);
+    for (size_t i = 0; i < w.units.size() && fs.popCap - fs.population < 8; ++i) {
+        const Unit& u = w.units[i];
+        if (u.alive && u.faction == kPlayer && u.type == UnitType::Settler && u.state == UnitState::Idle) {
+            w.debugKillUnit(static_cast<int>(i));
+            --fs.population;
+        }
+    }
 
     // 1. Okna
     selectedBuilding_ = bar;
@@ -713,6 +724,74 @@ void SettlersApp::autoRecruitTest() {
     uiCheck("auto 100% mieczników: przybywa tylko mieczników", countType(UnitType::Swordsman) >= s1 + 2 && countType(UnitType::Archer) <= a1 + 1);
     w.buildings[bar].autoTrain = false;
     selectedBuilding_ = -1;
+}
+
+// Zapis i wczytanie gry: zapis -> wczytanie -> ponowny zapis musi dać identyczny stan świata (te same budynki,
+// jednostki, flagi, drogi, zlecenia, frakcje, surowce i stan generatora losowego), a potem gra toczy się dalej.
+void SettlersApp::saveLoadTest() {
+    const std::string path = "save/settlers_uitest_save.json";
+    const Mode prevMode = mode_;
+    mode_ = Mode::Game;   // zapis działa tylko w trakcie partii
+    for (int i = 0; i < 50; ++i) world_->update(0.1f);   // świat "w ruchu" (tragarze w drodze, budowy)
+    nlohmann::json before;
+    world_->saveState(before);
+    int unitsBefore = 0, buildingsBefore = 0;
+    for (const auto& u : world_->units) unitsBefore += u.alive ? 1 : 0;
+    for (const auto& b : world_->buildings) buildingsBefore += b.alive ? 1 : 0;
+    const bool saved = saveGame(path);
+    const bool loaded = saved && loadGame(path);
+    uiCheck("zapis i wczytanie gry z pliku", saved && loaded);
+    if (!loaded) {
+        mode_ = prevMode;
+        return;
+    }
+    nlohmann::json after;
+    world_->saveState(after);
+    std::string diff;
+    for (const char* key : {"seed", "gameTime", "rng", "buildings", "units", "flags", "roads", "orders", "factions", "nodes"}) {
+        if (before[key] != after[key]) diff += std::string(diff.empty() ? "" : ", ") + key;
+    }
+    LOG_INFO("[uitest] zapis/wczytanie: budynki {}, jednostki {}, plik {} KB, różnice: {}", buildingsBefore, unitsBefore,
+             std::filesystem::exists(path) ? std::filesystem::file_size(path) / 1024 : 0, diff.empty() ? "brak" : diff);
+    uiCheck("po wczytaniu stan świata jest identyczny z zapisanym", diff.empty());
+    // Gra toczy się dalej: symulacja bez błędów, ludzie dalej żyją i pracują.
+    const float t0 = world_->gameTime;
+    for (int i = 0; i < 600; ++i) world_->update(0.1f);
+    int unitsAfter = 0;
+    for (const auto& u : world_->units) unitsAfter += u.alive ? 1 : 0;
+    LOG_INFO("[uitest] po wczytaniu 60 s gry: jednostek {} (było {})", unitsAfter, unitsBefore);
+    uiCheck("po wczytaniu gra toczy się dalej", world_->gameTime > t0 + 59.0f && unitsAfter > unitsBefore / 2);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    mode_ = prevMode;
+}
+
+// Wolna gra po zwycięstwie (zgłoszenie gracza: po pokonaniu wroga chce dalej rozbudowywać osadę):
+// zamek wroga pada -> okno zwycięstwa -> "Graj dalej" -> symulacja biegnie, można budować, okno nie wraca.
+void SettlersApp::freePlayTest() {
+    World& w = *world_;
+    w.factions[kEnemy].defeated = true;
+    w.update(0.1f);
+    uiCheck("pokonanie wroga = zwycięstwo gracza", w.winner == kPlayer);
+    showGameOver();
+    const bool overShown = mode_ == Mode::GameOver && gameOverWindow_->isVisible();
+    continueAfterGameOver();
+    const float t0 = w.gameTime;
+    for (int i = 0; i < 20 && simulationRunning(); ++i) w.update(0.1f);
+    // Budowa w wolnej grze: plac budowy Domu obok zamku.
+    const Vec3 home = w.buildings[w.factions[kPlayer].castle].pos;
+    int house = -1;
+    for (float r = 40.0f; r < 230.0f && house < 0; r += 6.0f) {
+        for (int k = 0; k < 48 && house < 0; ++k) {
+            const float a = static_cast<float>(k) * 2.0f * PI / 48.0f;
+            const Vec3 p = w.snapToGrid(add(home, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+            if (w.canPlace(BuildingType::House, p, kPlayer)) house = w.placeBuilding(BuildingType::House, p, kPlayer, false);
+        }
+    }
+    LOG_INFO("[uitest] wolna gra: okno zwycięstwa {}, tryb gry {}, czas +{:.1f} s, plac Domu {}", overShown ? "tak" : "nie",
+             mode_ == Mode::Game ? "Game" : "inny", w.gameTime - t0, house >= 0 ? "jest" : "brak");
+    uiCheck("po zwycięstwie 'Graj dalej' wraca do gry i symulacja biegnie",
+            overShown && freePlay_ && mode_ == Mode::Game && gameStarted_ && w.gameTime > t0 + 1.5f && house >= 0);
 }
 
 // Planista AI (zgłoszenie gracza: AI budowało pełno kamieniarzy i drwali według sztywnej listy):
@@ -1003,12 +1082,14 @@ void SettlersApp::runUiTestStep() {
         storageJamTest();
         autoRecruitTest();
         aiPlannerTest();
+        saveLoadTest();
+        freePlayTest();
         showPause();
         uiOrigW_ = static_cast<int>(renderer_->width());
         uiOrigH_ = static_cast<int>(renderer_->height());
     } else if (f == 98) {
-        // Pauza -> "Ustawienia"
-        pushMouseMotion(static_cast<float>(pauseWindow_->x() + 140), static_cast<float>(pauseWindow_->y() + 138));
+        // Pauza -> "Ustawienia" (przycisk na y=220 okna pauzy + pasek tytułu)
+        pushMouseMotion(static_cast<float>(pauseWindow_->x() + 140), static_cast<float>(pauseWindow_->y() + 238));
     } else if (f == 100) {
         pushMouseButton(SDL_BUTTON_LEFT, true);
     } else if (f == 102) {
@@ -1066,7 +1147,7 @@ void SettlersApp::runUiTestStep() {
     } else if (f == 175) {
         uiCheck("ESC wraca z ustawień do pauzy", subWindow_ == nullptr && pauseWindow_->isVisible() && mode_ == Mode::Pause);
         // "Sterowanie" (wiersze okna pauzy przesunęły się po zmianie rozdzielczości - liczymy od okna)
-        pushMouseMotion(static_cast<float>(pauseWindow_->x() + 140), static_cast<float>(pauseWindow_->y() + 188));
+        pushMouseMotion(static_cast<float>(pauseWindow_->x() + 140), static_cast<float>(pauseWindow_->y() + 288));
     } else if (f == 177) {
         pushMouseButton(SDL_BUTTON_LEFT, true);
     } else if (f == 179) {
@@ -1194,6 +1275,11 @@ void SettlersApp::runUiTestStep() {
 // SETTLERS_AUTOPLAY: co 30 s gry wypisuje stan obu stron, a po zadanym czasie (lub końcu partii) zamyka program.
 void SettlersApp::updateAutoplay() {
     const World& w = *world_;
+    // SETTLERS_SAVEAT=<s>: zapis stanu w tej chwili gry (osobny plik - nie nadpisuje zapisu gracza).
+    if (const char* sa = std::getenv("SETTLERS_SAVEAT"); sa && !autoplaySaved_ && w.gameTime >= static_cast<float>(std::atof(sa))) {
+        autoplaySaved_ = true;
+        saveGame("save/settlers_autoplay_save.json");
+    }
     if (slowAt_ > 0.0f && w.gameTime >= slowAt_ && gameSpeed_ != 1) {
         gameSpeed_ = 1;
         LOG_INFO("[autoplay] t={}s: zwolnienie do x1 (pomiar wydajności)", static_cast<int>(w.gameTime));

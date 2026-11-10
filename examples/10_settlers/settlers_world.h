@@ -29,6 +29,7 @@
  *   world_combat.cpp    - walka i rozkazy wojskowe
  *   world_ai.cpp        - komputerowy przeciwnik
  *   world_roads.cpp     - drogi, flagi, tragarze i magazyny (transport towarów)
+ *   world_save.cpp      - zapis i wczytanie stanu gry (JSON: ziarno mapy + listy obiektów)
  *
  * GOSPODARKA (world_roads.cpp)
  * ----------------------------
@@ -41,6 +42,7 @@
  * Gdy flaga przed warsztatem jest pełna (brak drogi lub tragarzy), warsztat wstrzymuje produkcję.
  */
 
+#include <nlohmann/json_fwd.hpp>
 #include <array>
 #include <deque>
 #include <memory>
@@ -292,6 +294,7 @@ struct ResourceNode {
     float blockedUntil = -1.0f;  // surowiec chwilowo nieosiągalny (pracownik nie mógł dojść)
     float shake = 0.0f;          // drganie drzewa przy ścinaniu
     float growth = 1.0f;         // < 1: sadzonka posadzona przez leśniczego (rośnie, nie można jej ściąć)
+    int variant = 0;             // wariant modelu (do odtworzenia sadzonki po wczytaniu zapisu)
 };
 
 // Strzała lecąca po łuku od strzelca do celu.
@@ -373,6 +376,12 @@ public:
 
     // Tworzy nowy świat (teren, surowce, bazy) w podanej scenie.            [world_create.cpp]
     bool create(engine3d::Scene* scene, uint32_t seed, Difficulty difficulty);
+    // Zapis i wczytanie stanu gry (JSON).                                   [world_save.cpp]
+    // Zapis: ziarno mapy + listy budynków, jednostek, flag, dróg, zleceń, stan frakcji i zmiany w surowcach.
+    // Wczytanie: ląd i surowce z ziarna, potem odtworzenie obiektów (te same indeksy - odwołania się zgadzają).
+    void saveState(nlohmann::json& out) const;
+    bool loadState(engine3d::Scene* scene, const nlohmann::json& in, std::string* error = nullptr);
+    [[nodiscard]] uint32_t seed() const { return seed_; }
     // Jeden krok symulacji o dt sekund.                                     [world_update.cpp]
     void update(float dt);
 
@@ -551,8 +560,12 @@ public:
     void debugKillUnit(int id) { killUnit(id, -1); }
 
 private:
-    std::vector<std::pair<int64_t, int>> sepKeys_;
-    float separateTimer_ = 0.0f;   // odliczanie do kolejnego rozpychania jednostek   // separateUnits: (komórka siatki, jednostka), posortowane
+    std::vector<std::pair<int64_t, int>> sepKeys_;   // separateUnits: (komórka siatki, jednostka), posortowane
+    float separateTimer_ = 0.0f;   // odliczanie do kolejnego rozpychania jednostek
+    size_t nodesGenerated_ = 0;    // ile surowców wygenerowano z ziarna (dalsze to sadzonki leśniczych)
+    void createLand(engine3d::Scene* scene, uint32_t seed, Difficulty difficulty);
+    void createStartingBases(Difficulty difficulty);
+    void finishCreate();
     // ----------------------------------------------------------------------------------
     // Tworzenie świata                                                      [world_create.cpp]
     // ----------------------------------------------------------------------------------

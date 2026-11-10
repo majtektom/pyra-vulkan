@@ -32,7 +32,7 @@ void SettlersApp::setupGui() {
     setupBuildBar();
 
     // Menu główne
-    menuWindow_ = gui_->addWindow("Osadnicy", 0, 0, 340, 420);
+    menuWindow_ = gui_->addWindow("Osadnicy", 0, 0, 340, 470);
     auto* title = new GuiStaticText(menuWindow_, "title", 10, 14);
     title->setText("Nowa rozgrywka");
     auto* diffLabel = new GuiStaticText(menuWindow_, "diff_label", 10, 52);
@@ -45,20 +45,29 @@ void SettlersApp::setupGui() {
     makeButton(menuWindow_, "start", 10, 110, 220, 36, "Rozpocznij grę", [this]() { startNewGame(); });
     makeButton(menuWindow_, "demo", 10, 160, 220, 36, "Pokaz: AI kontra AI", [this]() { startNewGame(true); });
     makeButton(menuWindow_, "continue", 10, 210, 220, 36, "Kontynuuj", [this]() {
-        if (gameStarted_ && world_->winner < 0) enterGame();
+        if (gameStarted_ && simulationRunning()) enterGame();
     });
-    makeButton(menuWindow_, "settings", 10, 260, 220, 36, "Ustawienia", [this]() { openSubWindow(settingsWindow_, menuWindow_); });
-    makeButton(menuWindow_, "controls", 10, 310, 220, 36, "Sterowanie", [this]() { openSubWindow(controlsWindow_, menuWindow_); });
-    makeButton(menuWindow_, "exit", 10, 360, 220, 36, "Wyjście", []() { pushQuitEvent(); });
+    makeButton(menuWindow_, "load", 10, 260, 220, 36, "Wczytaj grę (F8)", [this]() {
+        if (saveExists()) loadGame(); else if (world_) world_->pushMessage("Brak zapisu gry", {1.0f, 0.7f, 0.4f, 1.0f});
+    });
+    makeButton(menuWindow_, "settings", 10, 310, 220, 36, "Ustawienia", [this]() { openSubWindow(settingsWindow_, menuWindow_); });
+    makeButton(menuWindow_, "controls", 10, 360, 220, 36, "Sterowanie", [this]() { openSubWindow(controlsWindow_, menuWindow_); });
+    makeButton(menuWindow_, "exit", 10, 410, 220, 36, "Wyjście", []() { pushQuitEvent(); });
 
     // Pauza
-    pauseWindow_ = gui_->addWindow("Pauza", 0, 0, 300, 320);
+    pauseWindow_ = gui_->addWindow("Pauza", 0, 0, 300, 420);
     makeButton(pauseWindow_, "resume", 10, 20, 260, 36, "Wróć do gry", [this]() { enterGame(); });
     btnSpeed_ = makeButton(pauseWindow_, "speed", 10, 70, 260, 36, "", [this]() { cycleGameSpeed(); });
-    makeButton(pauseWindow_, "settings", 10, 120, 260, 36, "Ustawienia", [this]() { openSubWindow(settingsWindow_, pauseWindow_); });
-    makeButton(pauseWindow_, "controls", 10, 170, 260, 36, "Sterowanie", [this]() { openSubWindow(controlsWindow_, pauseWindow_); });
-    makeButton(pauseWindow_, "menu", 10, 220, 260, 36, "Menu główne", [this]() { showMenu(); });
-    makeButton(pauseWindow_, "quit", 10, 270, 260, 36, "Wyjście z gry", []() { pushQuitEvent(); });
+    makeButton(pauseWindow_, "save", 10, 120, 260, 36, "Zapisz grę (F5)", [this]() {
+        if (!spectator_ && saveGame()) enterGame();
+    });
+    makeButton(pauseWindow_, "load", 10, 170, 260, 36, "Wczytaj grę (F8)", [this]() {
+        if (saveExists()) loadGame(); else world_->pushMessage("Brak zapisu gry", {1.0f, 0.7f, 0.4f, 1.0f});
+    });
+    makeButton(pauseWindow_, "settings", 10, 220, 260, 36, "Ustawienia", [this]() { openSubWindow(settingsWindow_, pauseWindow_); });
+    makeButton(pauseWindow_, "controls", 10, 270, 260, 36, "Sterowanie", [this]() { openSubWindow(controlsWindow_, pauseWindow_); });
+    makeButton(pauseWindow_, "menu", 10, 320, 260, 36, "Menu główne", [this]() { showMenu(); });
+    makeButton(pauseWindow_, "quit", 10, 370, 260, 36, "Wyjście z gry", []() { pushQuitEvent(); });
     updateSpeedButton();
 
     setupSettingsWindow();
@@ -68,8 +77,9 @@ void SettlersApp::setupGui() {
     gameOverWindow_ = gui_->addWindow("Koniec gry", 0, 0, 380, 200);
     gameOverText_ = new GuiStaticText(gameOverWindow_, "result", 14, 30);
     gameOverStats_ = new GuiStaticText(gameOverWindow_, "stats", 14, 64);
-    makeButton(gameOverWindow_, "again", 14, 100, 160, 36, "Nowa gra", [this]() { showMenu(); });
-    makeButton(gameOverWindow_, "quit", 196, 100, 160, 36, "Wyjście", []() { pushQuitEvent(); });
+    btnGameOverContinue_ = makeButton(gameOverWindow_, "continue", 14, 100, 112, 36, "Graj dalej", [this]() { continueAfterGameOver(); });
+    makeButton(gameOverWindow_, "again", 134, 100, 112, 36, "Nowa gra", [this]() { showMenu(); });
+    makeButton(gameOverWindow_, "quit", 254, 100, 112, 36, "Wyjście", []() { pushQuitEvent(); });
 
     // Panel budowy
     // Panel budowy to dolny pasek rysowany jako HUD (app_buildbar.cpp) - bez okna GUI.
@@ -341,8 +351,8 @@ void SettlersApp::layoutGui() {
     const int h = static_cast<int>(renderer_->height());
     lastW_ = w;
     lastH_ = h;
-    menuWindow_->setPosition(w / 2 - 170, h / 2 - 175);
-    pauseWindow_->setPosition(w / 2 - 150, h / 2 - 160);
+    menuWindow_->setPosition(w / 2 - 170, std::max(40, h / 2 - 210));
+    pauseWindow_->setPosition(w / 2 - 150, std::max(40, h / 2 - 210));
     settingsWindow_->setPosition(w / 2 - settingsWindow_->width() / 2, std::max(40, h / 2 - settingsWindow_->height() / 2));
     controlsWindow_->setPosition(w / 2 - controlsWindow_->width() / 2, std::max(40, h / 2 - controlsWindow_->height() / 2));
     gameOverWindow_->setPosition(w / 2 - 190, h / 2 - 100);

@@ -60,6 +60,14 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: wolna gra po zwycięstwie - przycisk "Graj dalej" w oknie końca gry (po porażce: "Oglądaj mapę"),
+   symulacja i budowa działają dalej, "Wolna gra" w górnym pasku, stan zapisywany w pliku zapisu; test `freePlayTest`
+ - Osadnicy: zapis i wczytanie gry (F5 / F8, przyciski w menu głównym i pauzie, `save/settlers_save.json`) -
+   `world_save.cpp`: ziarno mapy + pełne listy budynków, jednostek, flag, dróg i zleceń (z martwymi pozycjami -
+   indeksy odwołań się zgadzają), stan frakcji, zmiany w surowcach (ścięte drzewa, sadzonki), stan generatora
+   losowego; jedna lista pól na strukturę dla zapisu i odczytu (`fields(Archive&, T&)`); `World::create` podzielone
+   na `createLand` / `createStartingBases` / `finishCreate`; zapis przez plik tymczasowy; test `saveLoadTest`
+   (zapis -> wczytanie -> zapis daje identyczny stan); `SETTLERS_SAVEAT`, `SETTLERS_LOAD` + `SETTLERS_OPEN=load`
  - Osadnicy: wydajność symulacji - rozpychanie jednostek przez siatkę przestrzenną zamiast porównywania każdej
    z każdą i najwyżej 20 razy na sekundę czasu gry (500 jednostek przy x24: 11,8 ms -> 3,8 ms na klatkę);
    sekcje świata w profilerze; `SETTLERS_NOVSYNC`, `SETTLERS_SLOWAT`; FPS w logu autoplay

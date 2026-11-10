@@ -13,6 +13,7 @@ add_executable(10_settlers_example
     world_combat.cpp
     world_ai.cpp
     world_roads.cpp
+    world_save.cpp
     # Aplikacja (klasa SettlersApp)
     app_core.cpp
     app_menus.cpp
@@ -22,5 +23,6 @@ add_executable(10_settlers_example
     app_audio.cpp
     app_debug.cpp
     app_tests.cpp
+    app_save.cpp
 )
 target_link_libraries(10_settlers_example PRIVATE engine3d)
