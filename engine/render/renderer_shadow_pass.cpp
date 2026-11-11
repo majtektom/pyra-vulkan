@@ -1,197 +1,41 @@
 #include "render/renderer_impl.h"
 
+#include <filesystem>
+
 namespace engine3d {
 
 // Mapy cieni: 4 kaskady słońca (warstwy 0-3) i atlas 2x2 świateł lokalnych (warstwa 4).
 void Renderer::RendererImpl::recordShadowPass(VkCommandBuffer cmd, const RenderScene& scene) {
     // Tablica map cieni (5 warstw): z odczytu w shaderze (poprzednia klatka) na cel rysowania głębokości.
-    const vk::ImageBarrier toDepth{.image = shadowMapImage_,
-                                   .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                   .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                   .srcStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .srcAccess = VK_ACCESS_2_NONE,
-                                   .dstStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                   .dstAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                   .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                   .layerCount = kShadowLayerCount};
-    vk::imageBarrier(cmd, toDepth);
+    vk::imageBarrier(cmd, {.image = shadowMapImage_,
+                           .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .srcAccess = VK_ACCESS_2_NONE,
+                           .dstStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                           .dstAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                           .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                           .layerCount = kShadowLayerCount});
 
-    // Rysuje obiekty rzucające cień do bieżącego widoku cienia (macierz lvp).
-    // cullCenter/cullRadius > 0: tylko obiekty w zasięgu światła lokalnego.
-    // Kolejność rysowania cieni: raz na klatkę sortujemy paczki po rodzaju potoku (teren teselowany,
-    // zwykłe, animowane) i siatce - wtedy w każdej z 8 warstw (4 kaskady + 4 światła) kolejne paczki
-    // mają ten sam potok i bufory, a DrawBindCache pomija powtórne bindowanie. Głębokość tu nie jest
-    // sortowana: shader cienia jest prawie pusty, więc kolejność front-to-back niewiele daje.
-    // Przy okazji liczymy raz na klatkę środek i połowę rozmiaru granic (AABB) każdej paczki - test
-    // "czy paczka trafia w mapę cieni" robimy potem dla 4 kaskad i świateł lokalnych bez ich przeliczania.
-    {
-        scene.gatherShadowPackets(shadowPacketPtrs_);
-        shadowOrder_.clear();
-        shadowOrder_.reserve(shadowPacketPtrs_.size());
-        for (const RenderPacket* p : shadowPacketPtrs_) {
-            ShadowDraw d;
-            d.packet = p;
-            d.kind = (p->heightmapEnabled() && terrainShadowPipeline_ && tessellationEnabled_ && p->indexBuffer != VK_NULL_HANDLE)
-                         ? 0 : (p->boneDescriptorSet != VK_NULL_HANDLE ? 2 : 1);
-            if (p->hasBounds) {
-                d.center = multiply(add(p->boundsMin, p->boundsMax), 0.5f);
-                d.extent = multiply(subtract(p->boundsMax, p->boundsMin), 0.5f);
-            }
-            shadowOrder_.push_back(d);
-        }
-        std::sort(shadowOrder_.begin(), shadowOrder_.end(), [](const ShadowDraw& a, const ShadowDraw& b) {
-            if (a.kind != b.kind) return a.kind < b.kind;
-            if (a.packet->vertexBuffer != b.packet->vertexBuffer) return a.packet->vertexBuffer < b.packet->vertexBuffer;
-            return a.packet->indexBuffer < b.packet->indexBuffer;
-        });
-    }
-
-    auto drawShadowCasters = [&](const Matrix4& lvp, const Vec3& cullCenter, float cullRadius, bool sun) {
-        DrawBindCache bound;   // nowa warstwa = nowe vkCmdBeginRendering - zaczynamy od pustej pamięci
-        // Rzut ortogonalny (kaskady słońca): w = 1 dla każdego punktu, więc granice pudełka w przestrzeni
-        // światła liczy się wprost ze środka i połowy rozmiaru: |M| * extent (zamiast 8 narożników).
-        const auto& m = lvp.values;
-        const bool ortho = m[3] == 0.0f && m[7] == 0.0f && m[11] == 0.0f;
-        const float cullR2 = (cullRadius + 30.0f) * (cullRadius + 30.0f);
-        for (const ShadowDraw& draw : shadowOrder_) {
-            const RenderPacket& packet = *draw.packet;
-            // Światło lokalne: najpierw tani test odległości (pozycja z macierzy świata; zapas 30 j. na rozmiar).
-            if (cullRadius > 0.0f) {
-                const Vec3 p{packet.transform.values[12], packet.transform.values[13], packet.transform.values[14]};
-                const Vec3 d = subtract(p, cullCenter);
-                if (dot(d, d) > cullR2) continue;
-            }
-            // Obiekt w całości poza obszarem mapy cieni (x/y poza [-1, 1] w przestrzeni światła) - pomijamy.
-            // Głębokości nie sprawdzamy: obiekt przed płaszczyzną światła i tak rzuca cień (depthClamp).
-            if (packet.hasBounds && ortho) {
-                const Vec3& c = draw.center;
-                const Vec3& e = draw.extent;
-                const float x = m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12];
-                const float y = m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13];
-                const float ex = std::abs(m[0]) * e.x + std::abs(m[4]) * e.y + std::abs(m[8]) * e.z;
-                const float ey = std::abs(m[1]) * e.x + std::abs(m[5]) * e.y + std::abs(m[9]) * e.z;
-                const float w = m[15];
-                if (x - ex > w || x + ex < -w || y - ey > w || y + ey < -w) continue;
-            } else if (packet.hasBounds) {
-                // Perspektywa (reflektor, światło punktowe): 8 narożników, każdy z własnym w.
-                int outL = 0, outR = 0, outB = 0, outT = 0;
-                for (int c = 0; c < 8; ++c) {
-                    const Vec3 corner{(c & 1) ? packet.boundsMax.x : packet.boundsMin.x,
-                                      (c & 2) ? packet.boundsMax.y : packet.boundsMin.y,
-                                      (c & 4) ? packet.boundsMax.z : packet.boundsMin.z};
-                    const float x = m[0] * corner.x + m[4] * corner.y + m[8] * corner.z + m[12];
-                    const float y = m[1] * corner.x + m[5] * corner.y + m[9] * corner.z + m[13];
-                    const float w = m[3] * corner.x + m[7] * corner.y + m[11] * corner.z + m[15];
-                    if (w <= 0.0f) continue;   // za "okiem" światła lokalnego - nie oceniamy
-                    outL += (x < -w) ? 1 : 0;
-                    outR += (x > w) ? 1 : 0;
-                    outB += (y < -w) ? 1 : 0;
-                    outT += (y > w) ? 1 : 0;
-                }
-                if (outL == 8 || outR == 8 || outB == 8 || outT == 8) continue;
-            }
-            // Teren teselowany: cień z tej samej geometrii co na ekranie (teselacja + mapa wysokości).
-            if (draw.kind == 0) {
-                bound.bindGlobalSet(cmd, terrainShadowPipelineLayout_, descriptorSets_[currentFrame_]);
-                bound.bindPipeline(cmd, sun ? terrainShadowSunPipeline_ : terrainShadowPipeline_);
-                bound.bindVertexBuffer(cmd, 0, packet.vertexBuffer);
-                bound.bindIndexBuffer(cmd, packet.indexBuffer);
-                TerrainShadowPushConstants tp{};
-                tp.model = packet.transform;
-                tp.lightViewProj = lvp;
-                tp.heightmapTextureSet = packet.terrain->heightmapTextureIndex;
-                tp.scaleY = packet.terrain->scaleY;
-                tp.tessellationFactor = packet.tessellationFactor;
-                tp.layerWorldSize = packet.terrain->layerWorldSize;
-                vkCmdPushConstants(cmd, terrainShadowPipelineLayout_,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
-                                       VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                   0, sizeof(tp), &tp);
-                vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
-                continue;
-            }
-            bool isSkinned = (packet.boneDescriptorSet != VK_NULL_HANDLE);
-
-            if (isSkinned) {
-                bound.bindGlobalSet(cmd, shadowSkinnedPipelineLayout_, descriptorSets_[currentFrame_]);
-                bound.bindPipeline(cmd, sun && shadowSkinnedSunPipeline_ ? shadowSkinnedSunPipeline_ : shadowSkinnedPipeline_);
-                bound.bindSet1(cmd, shadowSkinnedPipelineLayout_, packet.boneDescriptorSet);
-            } else {
-                bound.bindGlobalSet(cmd, shadowPipelineLayout_, descriptorSets_[currentFrame_]);
-                bound.bindPipeline(cmd, sun && shadowSunPipeline_ ? shadowSunPipeline_ : shadowPipeline_);
-            }
-
-            bound.bindVertexBuffer(cmd, 0, packet.vertexBuffer);
-            if (packet.skinVertexBuffer != VK_NULL_HANDLE) bound.bindVertexBuffer(cmd, 1, packet.skinVertexBuffer);
-            if (packet.indexBuffer != VK_NULL_HANDLE) bound.bindIndexBuffer(cmd, packet.indexBuffer);
-
-            ShadowPushConstants push{};
-            push.model = packet.transform;
-            push.lightViewProj = lvp;
-            push.alphaCutoff = packet.material && packet.material->isTransparent() ? 0.5f : 0.0f;
-            push.baseColorTextureSet = packet.diffuseTextureIndex;
-
-            VkPipelineLayout pushLayout = isSkinned ? shadowSkinnedPipelineLayout_ : shadowPipelineLayout_;
-            vkCmdPushConstants(cmd, pushLayout,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(push), &push);
-
-            if (packet.indexBuffer != VK_NULL_HANDLE)
-                vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
-        }
-    };
-
-    // Rozpoczyna rysowanie do jednej warstwy tablicy cieni (z wyczyszczeniem całej warstwy).
-    auto beginShadowLayer = [&](uint32_t layer) {
-        VkRenderingAttachmentInfo shadowDepthAttachment{};
-        shadowDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        shadowDepthAttachment.imageView = shadowMapLayerViews_[layer];
-        shadowDepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        shadowDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        shadowDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        shadowDepthAttachment.clearValue.depthStencil = {1.0f, 0};
-
-        VkRenderingInfo shadowRenderingInfo{};
-        shadowRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        shadowRenderingInfo.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
-        shadowRenderingInfo.layerCount = 1;
-        shadowRenderingInfo.colorAttachmentCount = 0;
-        shadowRenderingInfo.pDepthAttachment = &shadowDepthAttachment;
-        vkCmdBeginRendering(cmd, &shadowRenderingInfo);
-    };
-
-    // Obszar rysowania: cała warstwa (słońce) albo ćwiartka atlasu (światło lokalne).
-    auto setShadowViewport = [&](int atlasSlot) {
-        float x = 0.0f, y = 0.0f, size = static_cast<float>(kShadowMapSize);
-        if (atlasSlot >= 0) {
-            size *= 0.5f;
-            x = static_cast<float>(atlasSlot % 2) * size;
-            y = static_cast<float>(atlasSlot / 2) * size;
-        }
-        VkViewport viewport{x, y, size, size, 0.0f, 1.0f};
-        VkRect2D scissor{{static_cast<int32_t>(x), static_cast<int32_t>(y)},
-                         {static_cast<uint32_t>(size), static_cast<uint32_t>(size)}};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-    };
+    sortShadowDraws(scene);
 
     // 1. Kaskady słońca - każda w osobnej warstwie.
     for (const ShadowCaster& caster : shadowCasters_) {
         if (caster.atlasSlot >= 0) continue;
         for (uint32_t cascade = 0; cascade < caster.cascadeCount; ++cascade) {
-            beginShadowLayer(caster.layer + cascade);
-            setShadowViewport(-1);
-            drawShadowCasters(storedLights_[caster.lightIndex].lightViewProj[cascade], Vec3{}, 0.0f, true);
+            beginShadowLayer(cmd, caster.layer + cascade);
+            setShadowViewport(cmd, -1);
+            drawShadowCasters(cmd, storedLights_[caster.lightIndex].lightViewProj[cascade], Vec3{}, 0.0f, true);
             vkCmdEndRendering(cmd);
         }
     }
 
     // 2. Światła lokalne - wszystkie w jednej warstwie-atlasie, każde w swojej ćwiartce.
-    beginShadowLayer(kLocalShadowLayer);
+    beginShadowLayer(cmd, kLocalShadowLayer);
     for (const ShadowCaster& caster : shadowCasters_) {
         if (caster.atlasSlot < 0) continue;
         const LightData& l = storedLights_[caster.lightIndex];
-        setShadowViewport(caster.atlasSlot);
-        drawShadowCasters(l.lightViewProj[0], Vec3{l.position[0], l.position[1], l.position[2]}, l.params[2], false);
+        setShadowViewport(cmd, caster.atlasSlot);
+        drawShadowCasters(cmd, l.lightViewProj[0], Vec3{l.position[0], l.position[1], l.position[2]}, l.params[2], false);
     }
     vkCmdEndRendering(cmd);
 
@@ -204,6 +48,177 @@ void Renderer::RendererImpl::recordShadowPass(VkCommandBuffer cmd, const RenderS
                            .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                            .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                            .layerCount = kShadowLayerCount});
+}
+
+// Kolejność rysowania cieni: raz na klatkę sortujemy paczki po rodzaju potoku (teren teselowany, zwykłe,
+// animowane) i siatce - wtedy w każdej z 8 warstw (4 kaskady + 4 światła) kolejne paczki mają ten sam potok
+// i bufory, a DrawBindCache pomija powtórne bindowanie. Głębokość nie jest sortowana: shader cienia jest prawie
+// pusty, więc kolejność od przodu niewiele daje. Przy okazji liczymy raz środek i połowę rozmiaru granic (AABB)
+// każdej paczki - test "czy paczka trafia w mapę cieni" robimy potem dla wszystkich warstw bez przeliczania.
+void Renderer::RendererImpl::sortShadowDraws(const RenderScene& scene) {
+    scene.gatherShadowPackets(shadowPacketPtrs_);
+    shadowOrder_.clear();
+    shadowOrder_.reserve(shadowPacketPtrs_.size());
+    for (const RenderPacket* p : shadowPacketPtrs_) {
+        ShadowDraw d;
+        d.packet = p;
+        if (p->heightmapEnabled() && terrainShadowPipeline_ && tessellationEnabled_ && p->indexBuffer != VK_NULL_HANDLE) {
+            d.kind = ShadowDrawKind::TessellatedTerrain;
+        } else if (p->boneDescriptorSet != VK_NULL_HANDLE) {
+            d.kind = ShadowDrawKind::Skinned;
+        }
+        if (p->hasBounds) {
+            d.center = multiply(add(p->boundsMin, p->boundsMax), 0.5f);
+            d.extent = multiply(subtract(p->boundsMax, p->boundsMin), 0.5f);
+        }
+        shadowOrder_.push_back(d);
+    }
+    std::sort(shadowOrder_.begin(), shadowOrder_.end(), [](const ShadowDraw& a, const ShadowDraw& b) {
+        if (a.kind != b.kind) return a.kind < b.kind;
+        if (a.packet->vertexBuffer != b.packet->vertexBuffer) return a.packet->vertexBuffer < b.packet->vertexBuffer;
+        return a.packet->indexBuffer < b.packet->indexBuffer;
+    });
+}
+
+namespace {
+
+// Czy granice paczki mogą trafić w mapę cieni widoku lightViewProj (x/y w [-1, 1] przestrzeni światła).
+// Głębokości nie sprawdzamy: obiekt przed płaszczyzną światła i tak rzuca cień (depthClamp).
+bool shadowBoundsVisible(const RenderPacket& packet, const Vec3& center, const Vec3& extent, const Matrix4& lightViewProj) {
+    if (!packet.hasBounds) return true;
+    const auto& m = lightViewProj.values;
+    const bool ortho = m[3] == 0.0f && m[7] == 0.0f && m[11] == 0.0f;
+    if (ortho) {
+        // Rzut ortogonalny (kaskady słońca): w = 1 dla każdego punktu, więc granice pudełka w przestrzeni
+        // światła liczy się wprost ze środka i połowy rozmiaru: |M| * extent (zamiast 8 narożników).
+        const float x = m[0] * center.x + m[4] * center.y + m[8] * center.z + m[12];
+        const float y = m[1] * center.x + m[5] * center.y + m[9] * center.z + m[13];
+        const float ex = std::abs(m[0]) * extent.x + std::abs(m[4]) * extent.y + std::abs(m[8]) * extent.z;
+        const float ey = std::abs(m[1]) * extent.x + std::abs(m[5]) * extent.y + std::abs(m[9]) * extent.z;
+        const float w = m[15];
+        return !(x - ex > w || x + ex < -w || y - ey > w || y + ey < -w);
+    }
+    // Perspektywa (reflektor, światło punktowe): 8 narożników, każdy z własnym w. Niewidoczne, gdy wszystkie
+    // narożniki leżą po tej samej stronie jednej krawędzi kadru.
+    int outL = 0, outR = 0, outB = 0, outT = 0;
+    for (int c = 0; c < 8; ++c) {
+        const Vec3 corner{(c & 1) ? packet.boundsMax.x : packet.boundsMin.x,
+                          (c & 2) ? packet.boundsMax.y : packet.boundsMin.y,
+                          (c & 4) ? packet.boundsMax.z : packet.boundsMin.z};
+        const float x = m[0] * corner.x + m[4] * corner.y + m[8] * corner.z + m[12];
+        const float y = m[1] * corner.x + m[5] * corner.y + m[9] * corner.z + m[13];
+        const float w = m[3] * corner.x + m[7] * corner.y + m[11] * corner.z + m[15];
+        if (w <= 0.0f) continue;   // za "okiem" światła lokalnego - nie oceniamy
+        outL += (x < -w) ? 1 : 0;
+        outR += (x > w) ? 1 : 0;
+        outB += (y < -w) ? 1 : 0;
+        outT += (y > w) ? 1 : 0;
+    }
+    return !(outL == 8 || outR == 8 || outB == 8 || outT == 8);
+}
+
+} // namespace
+
+// Rysuje obiekty rzucające cień do bieżącej warstwy (widok światła lightViewProj).
+// cullRadius > 0 (światło lokalne): tylko obiekty w jego zasięgu.
+void Renderer::RendererImpl::drawShadowCasters(VkCommandBuffer cmd, const Matrix4& lightViewProj, const Vec3& cullCenter,
+                                               float cullRadius, bool sun) {
+    DrawBindCache bound;   // nowa warstwa = nowe vkCmdBeginRendering - zaczynamy od pustej pamięci
+    const float cullR2 = (cullRadius + 30.0f) * (cullRadius + 30.0f);
+    for (const ShadowDraw& draw : shadowOrder_) {
+        const RenderPacket& packet = *draw.packet;
+        // Światło lokalne: najpierw tani test odległości (pozycja z macierzy świata; zapas 30 j. na rozmiar).
+        if (cullRadius > 0.0f) {
+            const Vec3 p{packet.transform.values[12], packet.transform.values[13], packet.transform.values[14]};
+            const Vec3 d = subtract(p, cullCenter);
+            if (dot(d, d) > cullR2) continue;
+        }
+        if (!shadowBoundsVisible(packet, draw.center, draw.extent, lightViewProj)) continue;
+        drawShadowCaster(cmd, bound, draw, lightViewProj, sun);
+    }
+}
+
+void Renderer::RendererImpl::drawShadowCaster(VkCommandBuffer cmd, DrawBindCache& bound, const ShadowDraw& draw,
+                                              const Matrix4& lightViewProj, bool sun) {
+    const RenderPacket& packet = *draw.packet;
+    VkDescriptorSet globalSet = descriptorSets_[currentFrame_];
+
+    // Teren teselowany: cień z tej samej geometrii co na ekranie (teselacja + mapa wysokości).
+    if (draw.kind == ShadowDrawKind::TessellatedTerrain) {
+        bound.bindGlobalSet(cmd, terrainShadowPipelineLayout_, globalSet);
+        bound.bindPipeline(cmd, sun ? terrainShadowSunPipeline_ : terrainShadowPipeline_);
+        bound.bindVertexBuffer(cmd, 0, packet.vertexBuffer);
+        bound.bindIndexBuffer(cmd, packet.indexBuffer);
+        TerrainShadowPushConstants push{};
+        push.model = packet.transform;
+        push.lightViewProj = lightViewProj;
+        push.heightmapTextureSet = packet.terrain->heightmapTextureIndex;
+        push.scaleY = packet.terrain->scaleY;
+        push.tessellationFactor = packet.tessellationFactor;
+        push.layerWorldSize = packet.terrain->layerWorldSize;
+        vkCmdPushConstants(cmd, terrainShadowPipelineLayout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                               VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(push), &push);
+        vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+        return;
+    }
+
+    // Zwykłe i animowane siatki (animowane mają set 1 z macierzami kości i drugi bufor wierzchołków).
+    const bool skinned = draw.kind == ShadowDrawKind::Skinned;
+    const VkPipelineLayout layout = skinned ? shadowSkinnedPipelineLayout_ : shadowPipelineLayout_;
+    VkPipeline pipeline = skinned ? shadowSkinnedPipeline_ : shadowPipeline_;
+    VkPipeline sunPipeline = skinned ? shadowSkinnedSunPipeline_ : shadowSunPipeline_;
+    bound.bindGlobalSet(cmd, layout, globalSet);
+    bound.bindPipeline(cmd, sun && sunPipeline ? sunPipeline : pipeline);
+    if (skinned) bound.bindSet1(cmd, layout, packet.boneDescriptorSet);
+
+    bound.bindVertexBuffer(cmd, 0, packet.vertexBuffer);
+    if (packet.skinVertexBuffer != VK_NULL_HANDLE) bound.bindVertexBuffer(cmd, 1, packet.skinVertexBuffer);
+    if (packet.indexBuffer == VK_NULL_HANDLE) return;
+    bound.bindIndexBuffer(cmd, packet.indexBuffer);
+
+    ShadowPushConstants push{};
+    push.model = packet.transform;
+    push.lightViewProj = lightViewProj;
+    // Przezroczyste materiały (liście): piksele z małą alfą nie rzucają cienia.
+    push.alphaCutoff = packet.material && packet.material->isTransparent() ? 0.5f : 0.0f;
+    push.baseColorTextureSet = packet.diffuseTextureIndex;
+    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+    vkCmdDrawIndexed(cmd, packet.indexCount, 1, 0, 0, 0);
+}
+
+// Rozpoczyna rysowanie do jednej warstwy tablicy cieni (z wyczyszczeniem całej warstwy).
+void Renderer::RendererImpl::beginShadowLayer(VkCommandBuffer cmd, uint32_t layer) {
+    VkRenderingAttachmentInfo depth{};
+    depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depth.imageView = shadowMapLayerViews_[layer];
+    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.clearValue.depthStencil = {1.0f, 0};
+
+    VkRenderingInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    info.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+    info.layerCount = 1;
+    info.pDepthAttachment = &depth;
+    vkCmdBeginRendering(cmd, &info);
+}
+
+// Obszar rysowania: cała warstwa (słońce, atlasSlot < 0) albo ćwiartka atlasu (światło lokalne).
+void Renderer::RendererImpl::setShadowViewport(VkCommandBuffer cmd, int atlasSlot) {
+    float x = 0.0f, y = 0.0f, size = static_cast<float>(kShadowMapSize);
+    if (atlasSlot >= 0) {
+        size *= 0.5f;
+        x = static_cast<float>(atlasSlot % 2) * size;
+        y = static_cast<float>(atlasSlot / 2) * size;
+    }
+    const VkViewport viewport{x, y, size, size, 0.0f, 1.0f};
+    const VkRect2D scissor{{static_cast<int32_t>(x), static_cast<int32_t>(y)},
+                           {static_cast<uint32_t>(size), static_cast<uint32_t>(size)}};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
 /**
@@ -370,7 +385,7 @@ void Renderer::RendererImpl::createShadowResources() {
     for (uint32_t i = 0; i < kShadowLayerCount; i++) {
         shadowMapLayerViews_[i] = vk::createImageView(device, shadowMapImage_, VK_FORMAT_D32_SFLOAT,
                                                        VK_IMAGE_ASPECT_DEPTH_BIT, 1, 1, VK_IMAGE_VIEW_TYPE_2D);
-        // Manually set the base array layer for each view
+        // Każdy widok pokazuje jedną warstwę tablicy map cieni
         vkDestroyImageView(device, shadowMapLayerViews_[i], nullptr);
         
         VkImageViewCreateInfo viewInfo{};
@@ -438,366 +453,84 @@ void Renderer::RendererImpl::transitionShadowMapLayout(VkImageLayout newLayout) 
     shadowMapLayout_ = newLayout;
 }
 
+// Wspólne ustawienia potoków map cieni: tylko głębokość (D32, bez celów koloru) i przesunięcie głębokości
+// przeciw "shadow acne". Każdy potok ma dwa warianty: światła lokalne i słońce.
+// Słońce (rzut ortograficzny) dostaje depthClamp - obiekty przed bliską płaszczyzną kaskady (np. wzgórze daleko
+// w stronę słońca) są dociskane do niej, zamiast znikać z mapy cieni. W rzucie perspektywicznym (światła lokalne)
+// depthClamp wyłącza obcinanie geometrii za "okiem" światła i psuje mapę - stąd osobny wariant.
+void Renderer::RendererImpl::buildShadowPipelinePair(vk::GraphicsPipelineBuilder& builder, VkPipelineLayout layout,
+                                                     VkPipeline& localPipeline, VkPipeline& sunPipeline,
+                                                     const std::string& name) {
+    VkDevice device = vulkanContext_->device();
+    builder.depthBias(1.25f, 1.75f).depthFormat(VK_FORMAT_D32_SFLOAT);
+    localPipeline = builder.depthClamp(false).build(device, layout, name);
+    sunPipeline = builder.depthClamp(vulkanContext_->isDepthClampSupported()).build(device, layout, name + "_sun");
+}
+
 /**
  * Potok map cieni dla terenu teselowanego (shader terrain_shadow): ta sama teselacja i wysokość z mapy
- * co teren na ekranie, więc cień powstaje z widocznej geometrii. Dwa warianty: słońce (depthClamp)
- * i światła lokalne. Tworzony tylko, gdy GPU obsługuje teselację.
+ * co teren na ekranie, więc cień powstaje z widocznej geometrii. Tworzony tylko, gdy GPU obsługuje teselację.
  */
 void Renderer::RendererImpl::createTerrainShadowPipeline() {
     if (!vulkanContext_->isTessellationSupported()) return;
     VkDevice device = vulkanContext_->device();
     const std::string dir = "bin/assets/shaders/terrain_shadow/terrain_shadow.";
-    std::vector<char> codes[4];
-    try {
-        codes[0] = vk::readFile(dir + "vert.spv");
-        codes[1] = vk::readFile(dir + "tesc.spv");
-        codes[2] = vk::readFile(dir + "tese.spv");
-        codes[3] = vk::readFile(dir + "frag.spv");
-    } catch (...) {
-        LOG_WARN("Brak shaderów terrain_shadow - cienie terenu z siatki CPU");
-        return;
+    for (const char* ext : {"vert.spv", "tesc.spv", "tese.spv", "frag.spv"}) {
+        if (!std::filesystem::exists(dir + ext)) {
+            LOG_WARN("Brak shaderów terrain_shadow - cienie terenu z siatki CPU");
+            return;
+        }
     }
-    const VkShaderStageFlagBits stageBits[4] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
-                                                VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
-    const char* entries[4] = {"vertexMain", "hullMain", "domainMain", "fragmentMain"};
-    VkShaderModule modules[4];
-    VkPipelineShaderStageCreateInfo stages[4]{};
-    for (int i = 0; i < 4; ++i) {
-        modules[i] = vk::createShaderModule(device, codes[i]);
-        stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[i].stage = stageBits[i];
-        stages[i].module = modules[i];
-        stages[i].pName = entries[i];
-    }
+    const vk::ShaderModule vert(device, dir + "vert.spv");
+    const vk::ShaderModule hull(device, dir + "tesc.spv");
+    const vk::ShaderModule domain(device, dir + "tese.spv");
+    const vk::ShaderModule frag(device, dir + "frag.spv");
 
-    auto bindingDesc = Vertex::bindingDescription();
-    auto attrDescs = vk::filterVertexAttributes(codes[0], Vertex::attributeDescriptions());
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDesc;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDescs.size());
-    vertexInput.pVertexAttributeDescriptions = attrDescs.data();
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
-    VkPipelineTessellationStateCreateInfo tess{};
-    tess.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
-    tess.patchControlPoints = 3;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    // Domain shader HLSL z "triangle_cw" odwraca kolejność względem siatki - jak w potoku terenu
-    // na ekranie (ten sam frontFace/cull), żeby rzucały cień te same ściany co widać.
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;   // teren to "skorupa" - cień rzucają obie strony
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 1.25f;
-    rasterizer.depthBiasSlopeFactor = 1.75f;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = 2;
-    dynamicState.pDynamicStates = dynStates;
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
-                           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushRange.offset = 0;
-    pushRange.size = sizeof(TerrainShadowPushConstants);
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout_;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-    vkCreatePipelineLayout(device, &layoutInfo, nullptr, &terrainShadowPipelineLayout_);
-
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 0;
-    renderingInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.pNext = &renderingInfo;
-    pipelineInfo.stageCount = 4;
-    pipelineInfo.pStages = stages;
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pTessellationState = &tess;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = terrainShadowPipelineLayout_;
-
-    rasterizer.depthClampEnable = VK_FALSE;
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &terrainShadowPipeline_);
-    rasterizer.depthClampEnable = vulkanContext_->isDepthClampSupported() ? VK_TRUE : VK_FALSE;
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &terrainShadowSunPipeline_);
-    for (auto m : modules) vkDestroyShaderModule(device, m, nullptr);
+    terrainShadowPipelineLayout_ = vk::createPipelineLayout(
+        device, {descriptorSetLayout_}, sizeof(TerrainShadowPushConstants),
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+            VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        "terrain_shadow");
+    vk::GraphicsPipelineBuilder builder;
+    builder.shader(VK_SHADER_STAGE_VERTEX_BIT, vert, "vertexMain")
+        .shader(VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, hull, "hullMain")
+        .shader(VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, domain, "domainMain")
+        .shader(VK_SHADER_STAGE_FRAGMENT_BIT, frag, "fragmentMain")
+        .vertexInput(Vertex::bindingDescription(), vk::filterVertexAttributes(vert.code(), Vertex::attributeDescriptions()))
+        .patches(3)
+        .cull(VK_CULL_MODE_NONE);   // teren to "skorupa" - cień rzucają obie strony
+    buildShadowPipelinePair(builder, terrainShadowPipelineLayout_, terrainShadowPipeline_, terrainShadowSunPipeline_,
+                            "terrain_shadow");
 }
 
 void Renderer::RendererImpl::createShadowPipeline() {
     VkDevice device = vulkanContext_->device();
+    const vk::ShaderModule vert(device, "bin/assets/shaders/shadow_depth/shadow_depth.vert.spv");
+    const vk::ShaderModule frag(device, "bin/assets/shaders/shadow_depth/shadow_depth.frag.spv");
 
-    auto vertCode = vk::readFile("bin/assets/shaders/shadow_depth/shadow_depth.vert.spv");
-    auto fragCode = vk::readFile("bin/assets/shaders/shadow_depth/shadow_depth.frag.spv");
-    VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
-    VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertModule;
-    vertStage.pName = "vertexMain";
-
-    VkPipelineShaderStageCreateInfo fragStage{};
-    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragStage.module = fragModule;
-    fragStage.pName = "fragmentMain";
-
-    VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
-
-    auto bindingDesc = Vertex::bindingDescription();
-    // Tylko atrybuty czytane przez vertex shader (np. cienie: pozycja + UV).
-    auto attrDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
-
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDesc;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDescs.size());
-    vertexInput.pVertexAttributeDescriptions = attrDescs.data();
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 1.25f;
-    rasterizer.depthBiasSlopeFactor = 1.75f;
-    rasterizer.depthClampEnable = VK_FALSE;   // wariant ze spłaszczaniem (słońce) tworzony niżej
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = 2;
-    dynamicState.pDynamicStates = dynStates;
-
-    constexpr uint32_t kShadowPushSize = sizeof(ShadowPushConstants);
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushRange.offset = 0;
-    pushRange.size = kShadowPushSize;
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout_;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-    vkCreatePipelineLayout(device, &layoutInfo, nullptr, &shadowPipelineLayout_);
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = stages;
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = shadowPipelineLayout_;
-
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 0;
-    renderingInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
-    pipelineInfo.pNext = &renderingInfo;
-
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowPipeline_);
-    // Wariant dla słońca (rzut ortograficzny): depthClamp - obiekty przed bliską płaszczyzną kaskady
-    // (np. wzgórze daleko w stronę słońca) są dociskane do niej, zamiast znikać z mapy cieni.
-    // Tylko dla słońca: w rzucie perspektywicznym (światła lokalne) depthClamp wyłącza obcinanie
-    // geometrii za "okiem" światła i psuje mapę.
-    rasterizer.depthClampEnable = vulkanContext_->isDepthClampSupported() ? VK_TRUE : VK_FALSE;
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSunPipeline_);
-    vkDestroyShaderModule(device, vertModule, nullptr);
-    vkDestroyShaderModule(device, fragModule, nullptr);
+    shadowPipelineLayout_ = vk::createPipelineLayout(device, {descriptorSetLayout_}, sizeof(ShadowPushConstants),
+                                                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, "shadow");
+    vk::GraphicsPipelineBuilder builder;
+    // Tylko atrybuty czytane przez vertex shader (cienie: pozycja + UV dla alpha-testu).
+    builder.shaders(vert, frag)
+        .vertexInput(Vertex::bindingDescription(), vk::filterVertexAttributes(vert.code(), Vertex::attributeDescriptions()));
+    buildShadowPipelinePair(builder, shadowPipelineLayout_, shadowPipeline_, shadowSunPipeline_, "shadow");
 }
 
 void Renderer::RendererImpl::createShadowSkinnedPipeline() {
     VkDevice device = vulkanContext_->device();
+    const vk::ShaderModule vert(device, "bin/assets/shaders/shadow_depth_skinned/shadow_depth_skinned.vert.spv");
+    const vk::ShaderModule frag(device, "bin/assets/shaders/shadow_depth_skinned/shadow_depth_skinned.frag.spv");
 
-    auto vertCode = vk::readFile("bin/assets/shaders/shadow_depth_skinned/shadow_depth_skinned.vert.spv");
-    auto fragCode = vk::readFile("bin/assets/shaders/shadow_depth_skinned/shadow_depth_skinned.frag.spv");
-    VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
-    VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertModule;
-    vertStage.pName = "vertexMain";
-
-    VkPipelineShaderStageCreateInfo fragStage{};
-    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragStage.module = fragModule;
-    fragStage.pName = "fragmentMain";
-
-    VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
-
-    auto bindingDesc = Vertex::bindingDescription();
-    auto attrDescs = Vertex::attributeDescriptions();
-
-    VkVertexInputBindingDescription skinBinding{};
-    skinBinding.binding = 1;
-    skinBinding.stride = sizeof(uint32_t) * 4 + sizeof(float) * 4;
-    skinBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-    VkVertexInputAttributeDescription skinAttrs[2]{};
-    skinAttrs[0].binding = 1;
-    skinAttrs[0].location = 4;
-    skinAttrs[0].format = VK_FORMAT_R32G32B32A32_UINT;
-    skinAttrs[0].offset = 0;
-    skinAttrs[1].binding = 1;
-    skinAttrs[1].location = 5;
-    skinAttrs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    skinAttrs[1].offset = sizeof(uint32_t) * 4;
-
-    std::vector<VkVertexInputBindingDescription> bindings = {bindingDesc, skinBinding};
-    std::vector<VkVertexInputAttributeDescription> allAttrs(attrDescs.begin(), attrDescs.end());
-    allAttrs.push_back(skinAttrs[0]);
-    allAttrs.push_back(skinAttrs[1]);
-    allAttrs = vk::filterVertexAttributes(vertCode, allAttrs);
-
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size());
-    vertexInput.pVertexBindingDescriptions = bindings.data();
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(allAttrs.size());
-    vertexInput.pVertexAttributeDescriptions = allAttrs.data();
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 1.25f;
-    rasterizer.depthBiasSlopeFactor = 1.75f;
-    rasterizer.depthClampEnable = VK_FALSE;   // wariant ze spłaszczaniem (słońce) tworzony niżej
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = 2;
-    dynamicState.pDynamicStates = dynStates;
-
-    constexpr uint32_t kShadowPushSize = sizeof(ShadowPushConstants);
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushRange.offset = 0;
-    pushRange.size = kShadowPushSize;
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    VkDescriptorSetLayout setLayouts[2] = {descriptorSetLayout_, boneDescriptorSetLayout_};
-    layoutInfo.setLayoutCount = 2;
-    layoutInfo.pSetLayouts = setLayouts;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-    vkCreatePipelineLayout(device, &layoutInfo, nullptr, &shadowSkinnedPipelineLayout_);
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = stages;
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = shadowSkinnedPipelineLayout_;
-
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 0;
-    renderingInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
-    pipelineInfo.pNext = &renderingInfo;
-
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSkinnedPipeline_);
-    rasterizer.depthClampEnable = vulkanContext_->isDepthClampSupported() ? VK_TRUE : VK_FALSE;   // wariant słońca
-    vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowSkinnedSunPipeline_);
-    vkDestroyShaderModule(device, vertModule, nullptr);
-    vkDestroyShaderModule(device, fragModule, nullptr);
+    shadowSkinnedPipelineLayout_ = vk::createPipelineLayout(
+        device, {descriptorSetLayout_, boneDescriptorSetLayout_}, sizeof(ShadowPushConstants),
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, "shadow_skinned");
+    vk::GraphicsPipelineBuilder builder;
+    builder.shaders(vert, frag)
+        .vertexInput(Vertex::bindingDescription(), vk::filterVertexAttributes(vert.code(), Vertex::attributeDescriptions()))
+        .vertexInput(SkinVertex::bindingDescription(), vk::filterVertexAttributes(vert.code(), SkinVertex::attributeDescriptions()));
+    buildShadowPipelinePair(builder, shadowSkinnedPipelineLayout_, shadowSkinnedPipeline_, shadowSkinnedSunPipeline_,
+                            "shadow_skinned");
 }
 
 } // namespace engine3d

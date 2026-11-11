@@ -18,7 +18,7 @@ ShaderHotReload::ShaderHotReload(const std::string& shaderDir, const std::string
     // Dzięki temu funkcja read() nie zawiesi działania wątku głównego gry, jeśli nie ma nowych powiadomień.
     inotifyFd_ = inotify_init1(IN_NONBLOCK);
     if (inotifyFd_ < 0) {
-        LOG_ERROR("[ShaderHotReload] inotify_init failed");
+        LOG_ERROR("[ShaderHotReload] inotify_init się nie powiódł - brak śledzenia zmian shaderów");
         return;
     }
     scanDirectory();
@@ -34,14 +34,14 @@ void ShaderHotReload::scanDirectory() {
     watchFd_ = inotify_add_watch(inotifyFd_, shaderDir_.c_str(),
                                   IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY);
     if (watchFd_ < 0) {
-        LOG_ERROR("[ShaderHotReload] Failed to add watch for base shader dir: {}", shaderDir_);
+        LOG_ERROR("[ShaderHotReload] nie można śledzić katalogu shaderów: {}", shaderDir_);
         return;
     }
 
     // Otwieramy katalog bazowy shaderów, aby dodać obserwowanie istniejących podkatalogów.
     DIR* dir = opendir(shaderDir_.c_str());
     if (!dir) {
-        LOG_ERROR("[ShaderHotReload] Failed to open shader dir for scanning: {}", shaderDir_);
+        LOG_ERROR("[ShaderHotReload] nie można otworzyć katalogu shaderów: {}", shaderDir_);
         return;
     }
     struct dirent* entry;
@@ -56,7 +56,7 @@ void ShaderHotReload::scanDirectory() {
         if (wd >= 0) {
             wdToName_[wd] = entry->d_name;
         } else {
-            LOG_WARN("[ShaderHotReload] Failed to add watch for subdir: {}", subdir);
+            LOG_WARN("[ShaderHotReload] nie można śledzić podkatalogu: {}", subdir);
         }
     }
     closedir(dir);
@@ -136,13 +136,13 @@ void ShaderHotReload::recompile(const std::string& shaderName) {
 
     // Kompilujemy shader wierzchołków (vertexMain):
     if (!compile("vert", "vertexMain", outVert)) {
-        LOG_ERROR("[ShaderHotReload] vertex compile failed for {}", shaderName);
+        LOG_ERROR("[ShaderHotReload] błąd kompilacji vertex shadera: {}", shaderName);
         return;
     }
     
     // Kompilujemy shader pikseli/fragmentów (fragmentMain):
     if (!compile("frag", "fragmentMain", outFrag)) {
-        LOG_ERROR("[ShaderHotReload] fragment compile failed for {}", shaderName);
+        LOG_ERROR("[ShaderHotReload] błąd kompilacji fragment shadera: {}", shaderName);
         return;
     }
 
@@ -157,16 +157,16 @@ void ShaderHotReload::recompile(const std::string& shaderName) {
     }
     if (hasTess) {
         if (!compile("hull", "hullMain", outTesc)) {
-            LOG_ERROR("[ShaderHotReload] hull compile failed for {}", shaderName);
+            LOG_ERROR("[ShaderHotReload] błąd kompilacji hull shadera: {}", shaderName);
             return;
         }
         if (!compile("domain", "domainMain", outTese)) {
-            LOG_ERROR("[ShaderHotReload] domain compile failed for {}", shaderName);
+            LOG_ERROR("[ShaderHotReload] błąd kompilacji domain shadera: {}", shaderName);
             return;
         }
     }
     
-    LOG_INFO("[ShaderHotReload] recompiled: {}", shaderName);
+    LOG_INFO("[ShaderHotReload] przekompilowano: {}", shaderName);
 }
 
 } // namespace engine3d

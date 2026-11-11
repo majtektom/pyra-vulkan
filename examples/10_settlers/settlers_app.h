@@ -452,6 +452,18 @@ private:
     void drawMinimap();
     // Panel informacji o zaznaczonej jednostce/budynku (dół ekranu).
     void drawSelectionPanel();
+    // Linia tekstu panelu z kolorem (stan budynku, podpowiedź).
+    struct PanelText {
+        std::string text;
+        Color color{0.9f, 0.9f, 0.88f, 1.0f};
+    };
+    void drawFlagPanel(float px, float py);
+    void drawBuildingPanel(float px, float py);
+    void drawUnitPanel(float px, float py);
+    void drawGroupPanel(float px, float py);
+    void describeBuildingState(const Building& b, PanelText& status, PanelText& hint) const;
+    void describeBuildingRepair(const Building& b, PanelText& status) const;
+    void describeBuildingGoods(const Building& b, PanelText& status, PanelText& hint) const;
     // Pomoc F1: sterowanie i zasady gry.
     void drawHelp();
 

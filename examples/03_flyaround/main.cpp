@@ -1,516 +1,424 @@
-#include "core/logger.h"
+/**
+ * 03_flyaround - swobodny lot kamerą po scenie z modelami w różnych formatach.
+ *
+ * Pokazuje kolejno: niebo (skybox), proste siatki z kodu (podłoga, kostki), modele 3DS, model MD2
+ * z animacją klatkową na CPU, model glTF z materiałami PBR i model glTF z animacją szkieletową na GPU.
+ * Sterowanie: WASD + mysz, spacja / lewy Ctrl - góra / dół, L - światło i cienie, Esc - wyjście.
+ *
+ * Każdy krok budowy sceny to osobna funkcja wołana z main() - można je czytać po kolei.
+ */
 #include <SDL3/SDL.h>
 
-#include <chrono>
-#include <cstdio>
-#include <fstream>
+#include <filesystem>
 #include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+
+#include "camera/camera_component.h"
+#include "camera/fly_camera.h"
 #include "core/engine.h"
 #include "core/entity.h"
-#include "render/renderer.h"
+#include "core/logger.h"
 #include "core/mesh_component.h"
-#include "core/light_component.h"
-#include "camera/camera_component.h"
+#include "object/gltf/model_gltf.h"
 #include "object/model_3ds.h"
 #include "object/model_md2.h"
-#include "object/gltf/model_gltf.h"
 #include "object/skybox_renderer.h"
-#include "scene/scene.h"
 #include "render/material_system.h"
-#include "render/vulkan_util.h"
+#include "render/renderer.h"
+#include "scene/scene.h"
 
 using namespace engine3d;
 
 namespace {
 
-// Nazwy akcji wejściowych powiązanych z klawiszami (Input Action System)
-constexpr const char* kActionMoveForward = "move.forward";
-constexpr const char* kActionMoveBackward = "move.backward";
-constexpr const char* kActionMoveLeft = "move.left";
-constexpr const char* kActionMoveRight = "move.right";
-constexpr const char* kActionMoveUp = "move.up";
-constexpr const char* kActionMoveDown = "move.down";
+// Akcja przełączania światła (ruch kamery: akcje FlyCamera - W/S/A/D, spacja, lewy Ctrl).
 constexpr const char* kActionToggleLighting = "render.toggle_lighting";
 
-/**
- * @brief Mapuje klawisze fizyczne na abstrakcyjne akcje wejściowe.
- */
-void configureFlyaroundBindings(Engine& engine) {
+// Wspólne dane kroków budowy sceny.
+struct SceneContext {
+    Engine& engine;
+    Renderer* renderer;
+    MaterialManager* materials;
+    MeshManager* meshes;
+    Scene* scene;
+};
+
+// Mapuje klawisze fizyczne na abstrakcyjne akcje wejściowe.
+void configureBindings(Engine& engine) {
     auto& map = engine.inputActions();
     map.clearAll();
-    map.bindKey(kActionMoveForward, SDL_SCANCODE_W);
-    map.bindKey(kActionMoveBackward, SDL_SCANCODE_S);
-    map.bindKey(kActionMoveLeft, SDL_SCANCODE_A);
-    map.bindKey(kActionMoveRight, SDL_SCANCODE_D);
-    map.bindKey(kActionMoveUp, SDL_SCANCODE_SPACE);
-    map.bindKey(kActionMoveDown, SDL_SCANCODE_LCTRL);
+    FlyCamera::bindDefaultKeys(map);
     map.bindKey(kActionToggleLighting, SDL_SCANCODE_L);
+}
+
+// Encja z siatką i materiałem.
+Entity* addMeshEntity(Scene* scene, const std::string& name, const std::string& meshName, MaterialHandle material,
+                      const Vec3& position, const Vec3& scale, const Vec3& rotation = {0.0f, 0.0f, 0.0f}) {
+    Entity* e = scene->createEntity(name);
+    e->addComponent<MeshComponent>(meshName)->materialHandle = material;
+    e->transform().position = position;
+    e->transform().rotation = rotation;
+    e->transform().scale = scale;
+    return e;
+}
+
+// Materiał z jedną teksturą.
+MaterialHandle addTexturedMaterial(SceneContext& ctx, const std::string& name, TextureHandle texture) {
+    Material m;
+    m.name = name;
+    m.textureHandle = texture;
+    return ctx.materials->add(m);
+}
+
+// --- KROK 1: światło, cienie i niebo ----------------------------------------------------------------------
+
+void setupLightingAndSky(SceneContext& ctx) {
+    ctx.renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    ctx.engine.setLightingEnabled(true);
+    ctx.engine.setShadowsEnabled(true);
+    ctx.engine.setAmbientStrength(0.35f);
+    ctx.engine.setAmbientColor(0.45f, 0.48f, 0.55f);
+
+    // Słońce: kierunek świecenia, kolor (ciepła biel), intensywność.
+    ctx.scene->createDirectionalLight("sun_light", Vec3{2.3f, 2.8f, 2.5f}, Vec3{0.9f, 0.9f, 0.7f}, 3.2f);
+    // Zasięg cieni słońca (obszar pokryty kaskadami).
+    ctx.engine.configureDirectionalShadow(1200.0f);
+
+    // Skybox z 3 tekstur DDS: box_12 - boki 1 i 2, box_34 - boki 3 i 4, box_5 - góra.
+    const std::string dir = "assets/skybox/noc";
+    auto skybox = std::make_shared<SkyboxRenderer>();
+    SkyboxConfig cfg;
+    cfg.enabled = true;
+    cfg.directory = dir;
+    cfg.size = 3500;
+    cfg.verticalOffset = 100;
+    skybox->configure(cfg, "bin/assets/shaders/skybox");
+    skybox->setTextureHandles(ctx.renderer->loadTexture("skybox_fb", dir + "/box_12.dds"),
+                              ctx.renderer->loadTexture("skybox_lr", dir + "/box_34.dds"),
+                              ctx.renderer->loadTexture("skybox_top", dir + "/box_5.dds"));
+    skybox->setEnabled(true);
+    skybox->setExposure(0.5f);
+    ctx.renderer->addFeature(skybox);   // dodanie skyboxa do potoku renderowania
+}
+
+// --- KROK 2: podłoga i kostki zbudowane w kodzie --------------------------------------------------------
+
+void createFloorMesh(MeshManager* meshes) {
+    // Kwadrat 12400 x 12400 z teksturą powtórzoną 1280 razy (UV > 1 = powtarzanie).
+    const float half = 6200.0f;
+    const float repeat = 1280.0f;
+    MeshData floor;
+    floor.vertices = {
+        {{{-half, 0.0f, -half}}, {{0, 0, 1}}, {{1, 1, 1}}, {{0, 0}}},
+        {{{ half, 0.0f, -half}}, {{0, 0, 1}}, {{1, 1, 1}}, {{repeat, 0}}},
+        {{{ half, 0.0f,  half}}, {{0, 0, 1}}, {{1, 1, 1}}, {{repeat, repeat}}},
+        {{{-half, 0.0f,  half}}, {{0, 0, 1}}, {{1, 1, 1}}, {{0, repeat}}},
+    };
+    floor.indices = {0, 3, 2, 2, 1, 0};
+    meshes->loadMesh("floor", floor);
+}
+
+void createCubeMesh(MeshManager* meshes) {
+    MeshData cube;
+    const float s = 0.75f;   // pół boku
+    // Ściana: 4 wierzchołki (a, b, c, d - w kolejności obwodu) z jedną normalną i 2 trójkąty.
+    auto face = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 n) {
+        const auto base = static_cast<uint32_t>(cube.vertices.size());
+        const Vec3 corners[4] = {a, b, c, d};
+        const float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        for (int i = 0; i < 4; ++i) {
+            cube.vertices.push_back({{corners[i].x, corners[i].y, corners[i].z}, {n.x, n.y, n.z}, {1, 1, 1},
+                                     {uv[i][0], uv[i][1]}});
+        }
+        cube.indices.insert(cube.indices.end(), {base, base + 1, base + 2, base + 2, base + 3, base});
+    };
+    face({-s, -s,  s}, { s, -s,  s}, { s,  s,  s}, {-s,  s,  s}, { 0,  0,  1});
+    face({ s, -s, -s}, {-s, -s, -s}, {-s,  s, -s}, { s,  s, -s}, { 0,  0, -1});
+    face({-s, -s, -s}, {-s, -s,  s}, {-s,  s,  s}, {-s,  s, -s}, {-1,  0,  0});
+    face({ s, -s,  s}, { s, -s, -s}, { s,  s, -s}, { s,  s,  s}, { 1,  0,  0});
+    face({-s,  s,  s}, { s,  s,  s}, { s,  s, -s}, {-s,  s, -s}, { 0,  1,  0});
+    face({-s, -s, -s}, { s, -s, -s}, { s, -s,  s}, {-s, -s,  s}, { 0, -1,  0});
+    meshes->loadMesh("cube", cube);
+}
+
+// Zwraca uchwyt tekstury metalu - przyda się jako zapasowa tekstura modelu glTF.
+TextureHandle createFloorAndCubes(SceneContext& ctx) {
+    createFloorMesh(ctx.meshes);
+    createCubeMesh(ctx.meshes);
+
+    const TextureHandle metalTexture = ctx.renderer->loadTexture("metal", "assets/textures/metal.bmp");
+    const MaterialHandle wood = addTexturedMaterial(ctx, "drewno", ctx.renderer->loadTexture("drewno", "assets/textures/drewno.dds"));
+    const MaterialHandle sheet = addTexturedMaterial(ctx, "cegla", ctx.renderer->loadTexture("cegla", "assets/textures/blacha.dds"));
+    const MaterialHandle metal = addTexturedMaterial(ctx, "metal", metalTexture);
+    const MaterialHandle grass = addTexturedMaterial(ctx, "trawa", ctx.renderer->loadTexture("trawa", "assets/textures/trawa.dds"));
+    const MaterialHandle sand = addTexturedMaterial(ctx, "podloga", ctx.renderer->loadTexture("podloga", "assets/textures/piasek.bmp"));
+
+    const Vec3 scale{2.0f, 2.0f, 2.0f};
+    addMeshEntity(ctx.scene, "floor", "floor", sand, {0, 0, 0}, scale);
+    addMeshEntity(ctx.scene, "cube_drewno", "cube", wood, {0, 1, 0}, scale);
+    addMeshEntity(ctx.scene, "cube_cegla", "cube", sheet, {-5, 1, -5}, scale);
+    addMeshEntity(ctx.scene, "cube_metal", "cube", metal, {5, 1, 5}, scale);
+    addMeshEntity(ctx.scene, "cube_trawa", "cube", grass, {-5, 1, 5}, scale);
+    addMeshEntity(ctx.scene, "cube_drewno2", "cube", wood, {5, 1, -5}, scale);
+    return metalTexture;
+}
+
+// --- KROK 3: modele 3DS ----------------------------------------------------------------------------------
+
+// Ścieżka tekstury zapasowej: podana wprost albo sama nazwa pliku z katalogu assets/textures/.
+std::string resolveFallbackTexture(const std::string& fallback) {
+    if (fallback.empty() || std::filesystem::exists(fallback)) return fallback;
+    if (fallback.find('/') == std::string::npos && std::filesystem::exists("assets/textures/" + fallback)) {
+        return "assets/textures/" + fallback;
+    }
+    return {};
+}
+
+// Model 3DS: każdy obiekt w pliku to osobna encja; materiały z pliku (tekstura z pliku albo zapasowa).
+void add3dsModel(SceneContext& ctx, const std::string& path, const std::string& prefix, const Vec3& position,
+                 bool disableAlpha = false, const std::string& fallbackTexture = "") {
+    Model3ds model;
+    if (!model.load(path)) {
+        LOG_ERROR("{}: nie udało się wczytać {}", prefix, path);
+        return;
+    }
+    LOG_INFO("Wczytano {}: {} siatek, {} materiałów", prefix, model.objectList.size(), model.materialList.size());
+
+    std::vector<MaterialHandle> materials(model.materialList.size());
+    for (size_t i = 0; i < model.materialList.size(); ++i) {
+        const auto& src = *model.materialList[i];
+        std::string name = prefix + "_mat" + std::to_string(i) + (src.name.empty() ? "" : "_" + src.name);
+
+        std::string texturePath = std::filesystem::exists(src.texturePath) ? src.texturePath : std::string{};
+        if (texturePath.empty()) {
+            texturePath = resolveFallbackTexture(fallbackTexture);
+            if (!texturePath.empty()) name += "_fb";
+        }
+
+        Material material = Convert3dsMaterialToEngineMaterial(src);
+        material.name = name;
+        material.textureHandle = texturePath.empty()
+            ? TextureHandle{}
+            : ctx.renderer->loadTexture(name, texturePath, false, disableAlpha);
+        materials[i] = ctx.materials->add(material);
+    }
+
+    for (size_t i = 0; i < model.objectList.size(); ++i) {
+        const auto& object = *model.objectList[i];
+        const std::string meshName = prefix + "_" + (object.strName.empty() ? std::to_string(i) : object.strName);
+        ctx.meshes->loadMesh(meshName, object.mesh);
+
+        MaterialHandle material{};
+        if (!materials.empty()) {
+            const int index = object.materialIndex;
+            material = materials[(index >= 0 && index < static_cast<int>(materials.size())) ? index : 0];
+        }
+        addMeshEntity(ctx.scene, meshName, meshName, material, position, {0.3f, 0.3f, 0.3f});
+    }
+}
+
+void add3dsModels(SceneContext& ctx) {
+    add3dsModel(ctx, "assets/models/3ds/bronie/M4.3DS", "m4", {-20.0f, 10.0f, 0.0f}, true, "assets/models/3ds/bronie/m4.dds");
+    add3dsModel(ctx, "assets/models/3ds/drzewko5.3DS", "DRZEWKO", {20.0f, 0.0f, 10.0f});
+    add3dsModel(ctx, "assets/models/3ds/trawa/grass.3ds", "grass", {15.0f, 0.0f, 0.0f});
+    add3dsModel(ctx, "assets/models/3ds/D1.3DS", "D1", {-5.0f, 0.0f, 10.0f});
+    add3dsModel(ctx, "assets/models/3ds/drzewko.3DS", "Drzewko", {-10.0f, 0.0f, 10.0f});
+}
+
+// --- KROK 4: model MD2 (animacja klatkowa) ---------------------------------------------------------------
+
+// MD2 (format z Quake 2) nie ma kości - animacja to płynne przejście (interpolacja liniowa) pozycji
+// wierzchołków między kolejnymi klatkami kluczowymi, liczone na CPU co klatkę (updateGoblin).
+struct Md2Character {
+    Md2ModelData model;
+    Md2AnimationState animation;
+};
+
+void addGoblins(SceneContext& ctx, Md2Character& goblin) {
+    goblin.model = loadMd2Model("assets/models/md2/goblin/goblin.md2");
+    if (goblin.model.frames.empty()) {
+        LOG_ERROR("nie udało się wczytać modelu goblina (MD2)");
+        return;
+    }
+    ctx.meshes->loadMesh("goblin_md2", goblin.model.triangles);
+    LOG_INFO("Wczytano MD2: {} wierzchołków, {} trójkątów, {} klatek", goblin.model.frames[0].vertices.size(),
+             goblin.model.tris.size(), goblin.model.frames.size());
+
+    goblin.animation.startFrame = 0;
+    goblin.animation.endFrame = static_cast<int>(goblin.model.frames.size()) - 1;
+    goblin.animation.interpol = 0.0f;
+    goblin.animation.speed = 10.0f;
+
+    // Tekstura koloru i mapa normalnych (Dot3) - dwa gobliny: z wypukłościami i bez, dla porównania.
+    const TextureHandle color = ctx.renderer->loadTexture("goblin_tex", "assets/models/md2/goblin/goblin.bmp");
+    const TextureHandle normals = ctx.renderer->loadTexture("goblin_dot3", "assets/models/md2/goblin/goblinDOT3.bmp");
+
+    Material bump;
+    bump.name = "goblin_bump";
+    bump.textureHandle = color;
+    bump.normalMapHandle = normals;
+    bump.bumpIntensity = 1.0f;
+    bump.cullMode = CullMode::Disabled;
+
+    Material flat = bump;
+    flat.name = "goblin_flat";
+    flat.normalMapHandle = {};
+    flat.bumpIntensity = 0.0f;
+
+    // Model MD2 jest "położony" (oś Z w górę) - obrót o -90 stopni wokół X stawia go pionowo.
+    const Vec3 scale{0.4f, 0.4f, 0.4f};
+    const Vec3 upright{-90.0f, 0.0f, 0.0f};
+    addMeshEntity(ctx.scene, "goblin_bump", "goblin_md2", ctx.materials->add(bump), {-50.0f, 7.0f, -5.0f}, scale, upright);
+    addMeshEntity(ctx.scene, "goblin_flat", "goblin_md2", ctx.materials->add(flat), {-50.0f, 7.0f, -20.0f}, scale, upright);
+}
+
+// Nowa klatka animacji MD2 liczona na CPU i wysłana do bufora siatki.
+void updateGoblin(MeshManager* meshes, Md2Character& goblin, float dt) {
+    if (goblin.model.frames.empty()) return;
+    MeshData frame;
+    animateMd2(goblin.model, goblin.animation, dt, frame);
+    meshes->updateMesh("goblin_md2", frame);
+}
+
+// --- KROK 5: model glTF z materiałami PBR ----------------------------------------------------------------
+
+void addToyCar(SceneContext& ctx, TextureHandle fallbackTexture) {
+    GltfModel toyCar = loadGltfModel("assets/models/gLTF/toycar/bin/ToyCar.glb");
+    LOG_INFO("Wczytano ToyCar.glb: {} siatek", toyCar.primitives.size());
+
+    for (size_t i = 0; i < toyCar.primitives.size(); ++i) {
+        const auto& prim = toyCar.primitives[i];
+        const std::string name = "toycar_" + std::to_string(i);
+        ctx.meshes->loadMesh(name, prim.mesh);
+
+        // PBR: oprócz koloru mapa normalnych, ORM (occlusion, roughness, metallic) i świecenie (emissive).
+        auto load = [&](const std::string& path, const char* suffix) {
+            return path.empty() ? TextureHandle{} : ctx.renderer->loadTexture(name + suffix, path);
+        };
+        Material mat;
+        mat.name = name;
+        mat.textureHandle = prim.texturePath.empty() ? fallbackTexture : load(prim.texturePath, "_tex");
+        mat.normalMapHandle = load(prim.normalMapPath, "_n");
+        if (mat.normalMapHandle.isValid()) mat.bumpIntensity = 1.0f;
+        mat.metallicRoughnessTextureHandle = load(prim.ormPath, "_orm");
+        mat.occlusionTextureHandle = load(prim.occlusionPath, "_occ");
+        mat.emissiveTextureHandle = load(prim.emissivePath, "_em");
+        mat.cullMode = CullMode::Disabled;
+        mat.roughnessFactor = 0.5f;
+
+        addMeshEntity(ctx.scene, name, name, ctx.materials->add(mat), {-190.0f, 30.0f, 20.0f}, {0.2f, 0.2f, 0.2f});
+    }
+}
+
+// --- KROK 6: glTF z animacją szkieletową -----------------------------------------------------------------
+
+// Zamiast przesuwać wierzchołki na CPU (jak w MD2), do shadera trafiają macierze kości. Wierzchołki mają
+// indeksy kości (joints) i wagi (weights) i są przekształcane na GPU w vertex shaderze.
+// GltfSkinnedModel ładuje siatki, materiały i bufory wag/indeksów kości (dane wspólne), a GltfSkinnedInstance
+// trzyma macierze kości jednej instancji i tworzy jej encje.
+bool addSkinnedRobot(SceneContext& ctx, GltfSkinnedModel& model, GltfSkinnedInstance& instance) {
+    if (!model.load(ctx.renderer, ctx.meshes, ctx.materials, ctx.engine.getAssetRegistry(), "assets/models/gLTF/BrainStem.glb") ||
+        !instance.initialize(ctx.renderer, model)) {
+        return false;
+    }
+    const auto& data = model.getModel();
+    LOG_INFO("Wczytano BrainStem: {} siatek, {} animacji, {} szkieletów", data.primitives.size(),
+             data.animations.size(), data.skins.size());
+
+    Entity* root = instance.instantiate(ctx.scene, "brain");
+    root->transform().position = {-40.0f, 0.0f, 20.0f};
+    root->transform().scale = {10.0f, 10.0f, 10.0f};
+    return true;
+}
+
+// --- KROK 7: kamera i sterowanie -------------------------------------------------------------------------
+
+void setupCamera(SceneContext& ctx) {
+    auto* camera = ctx.scene->createEntity("main_camera")->addComponent<CameraComponent>();
+    camera->getOwner()->transform().position = {-60.0f, 15.0f, -62.0f};
+    camera->target = {0.5f, 0.0f, 0.5f};
+    camera->fieldOfViewDegrees = 50.0f;
+    camera->nearPlane = 1.5f;
+    camera->farPlane = 16000.0f;
+    ctx.scene->setActiveCamera(camera);
+    ctx.engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
+}
+
+void toggleLighting(Engine& e) {
+    if (!e.actionPressed(kActionToggleLighting)) return;
+    const bool enabled = !e.isLightingEnabled();
+    e.setLightingEnabled(enabled);
+    e.setShadowsEnabled(enabled);
+}
+
+// Napisy HUD: FPS, stan oświetlenia, pozycja i kierunek kamery.
+void drawHud(Engine& e) {
+    const std::array<float, 4> yellow{1.0f, 1.0f, 0.2f, 1.0f};
+    const std::array<float, 4> green{0.2f, 1.0f, 0.3f, 1.0f};
+    const std::array<float, 4> red{1.0f, 0.3f, 0.3f, 1.0f};
+    const std::array<float, 4> lightBlue{0.7f, 0.7f, 1.0f, 1.0f};
+
+    e.setTextLabel("FPS: " + std::to_string(static_cast<int>(e.getCurrentFPS())), "times",
+                   e.getRenderer()->width() - 190.0f, 35.0f, 1.0f, yellow);
+    const bool lit = e.isLightingEnabled();
+    e.setTextLabel(std::string("Oświetlenie [L]: ") + (lit ? "WŁĄCZONE" : "WYŁĄCZONE"), "times", 10.0f, 90.0f, 0.7f,
+                   lit ? green : red);
+
+    Scene* scene = e.getSceneManager()->activeScene();
+    CameraComponent* camera = scene ? scene->activeCamera() : nullptr;
+    if (!camera) return;
+    const Vec3 p = camera->getOwner()->transform().position;
+    const Vec3 dir = normalize(subtract(camera->target, p));
+    std::ostringstream pos, look;
+    pos << "pos: " << std::fixed << std::setprecision(0) << p.x << " " << p.y << " " << p.z;
+    look << "dir: " << std::fixed << std::setprecision(2) << dir.x << " " << dir.y << " " << dir.z;
+    e.setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f, lightBlue);
+    e.setTextLabel(look.str(), "times", 10.0f, 60.0f, 0.7f, lightBlue);
 }
 
 } // namespace
 
 int main() {
     Engine engine;
+    if (!engine.initialize("engine3d: flyaround", 1024, 768)) return 1;
+    Scene* scene = engine.getSceneManager()->activeScene();
+    if (!scene) return 1;
 
-    // Inicjalizacja okna o wymiarach 1024x768 pikseli
-    if (!engine.initialize("engine3d: flyaround", 1024, 768)) {
-        return 1;
-    }
-
-    configureFlyaroundBindings(engine);
-
-    // Pobranie najważniejszych menedżerów silnika
-    auto* renderer = engine.getRenderer();
-    auto* mats = engine.getMaterialManager();
-    std::unordered_map<std::string, MaterialHandle> materialHandles;
-
-    // Lambda pomocnicza do bezpiecznego pobierania identyfikatora materiału
-    auto requireMaterialHandle = [&](const std::string& materialName) -> MaterialHandle {
-        const auto found = materialHandles.find(materialName);
-        if (found != materialHandles.end()) {
-            return found->second;
-        }
-        const auto handle = mats->handle(materialName);
-        if (handle.has_value()) {
-            return *handle;
-        }
-        LOG_ERROR("Brak MaterialHandle dla materialu: {}", materialName);
-        return {};
-    };
-
-    // Konfiguracja sceny, oświetlenia i cieni
-    renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    engine.setLightingEnabled(true);
-    engine.setShadowsEnabled(true);
-    engine.setAmbientStrength(0.35f);
-    engine.setAmbientColor(0.45f, 0.48f, 0.55f);
-
-    auto* activeScene = engine.getSceneManager()->activeScene();
-    if (!activeScene) {
-        return 1;
-    }
-
-    // Tworzenie światła kierunkowego (np. Słońce)
-    activeScene->createDirectionalLight(
-        "sun_light",
-        Vec3{2.3f, 2.8f, 2.5f},  // Kierunek świecenia
-        Vec3{0.9f, 0.9f, 0.7f},  // Kolor (ciepła biel)
-        3.2f);                   // Intensywność
-
-    // Konfiguracja rzutowania cieni (rozmiar kaskady/obszaru widoczności cieni)
-    engine.configureDirectionalShadow(1200.0f);
-
-    // KROK 1: ŁADOWANIE SKYBOXA (Nieba otaczającego scenę)
-    // Ładujemy 3 tekstury w formacie DDS (box_12 to bok 1 i 2, box_34 to 3 i 4, box_5 to góra)
-    const std::string skyboxDir = "assets/skybox/noc";
-    const auto skyboxFbHandle = renderer->loadTexture("skybox_fb", skyboxDir + "/box_12.dds");
-    const auto skyboxLrHandle = renderer->loadTexture("skybox_lr", skyboxDir + "/box_34.dds");
-    const auto skyboxTopHandle = renderer->loadTexture("skybox_top", skyboxDir + "/box_5.dds");
-
-    auto skybox = std::make_shared<SkyboxRenderer>();
-    SkyboxConfig skyboxCfg;
-    skyboxCfg.enabled = true;
-    skyboxCfg.directory = skyboxDir;
-    skyboxCfg.size = 3500;
-    skyboxCfg.verticalOffset = 100;
-    skybox->configure(skyboxCfg, "bin/assets/shaders/skybox");
-    skybox->setTextureHandles(skyboxFbHandle, skyboxLrHandle, skyboxTopHandle);
-    skybox->setEnabled(true);
-    skybox->setExposure(0.5f);
-    renderer->addFeature(skybox); // Dodanie skyboxa do potoku renderowania
-
+    configureBindings(engine);
     engine.loadFont("times", "assets/fonts/times.ttf", 48);
 
-    // KROK 2: WCZYTYWANIE TEKSTUR ŚRODOWISKOWYCH
-    const auto drewnoHandle = renderer->loadTexture("drewno", "assets/textures/drewno.dds");
-    const auto ceglaHandle = renderer->loadTexture("cegla", "assets/textures/blacha.dds");
-    const auto metalHandle = renderer->loadTexture("metal", "assets/textures/metal.bmp");
-    const auto trawaHandle = renderer->loadTexture("trawa", "assets/textures/trawa.dds");
-    const auto podlogaHandle = renderer->loadTexture("podloga", "assets/textures/piasek.bmp");
+    SceneContext ctx{engine, engine.getRenderer(), engine.getMaterialManager(), engine.getMeshManager(), scene};
+    setupLightingAndSky(ctx);
+    const TextureHandle metal = createFloorAndCubes(ctx);
+    add3dsModels(ctx);
 
-    // Rejestrowanie materiałów powiązanych z teksturami
-    auto addMat = [&](const std::string& name, TextureHandle tex) {
-        Material m;
-        m.name = name;
-        m.textureHandle = tex;
-        materialHandles[name] = mats->add(m);
-    };
-    addMat("drewno", drewnoHandle);
-    addMat("cegla", ceglaHandle);
-    addMat("metal", metalHandle);
-    addMat("trawa", trawaHandle);
-    addMat("podloga", podlogaHandle);
+    Md2Character goblin;
+    addGoblins(ctx, goblin);
+    addToyCar(ctx, metal);
 
-    // KROK 3: UTWORZENIE PŁASZCZYZNY PODŁOGI (Floor Mesh)
-    {
-        MeshData floor;
-        floor.vertices = {
-            {{{-6200.0f, 0.0f, -6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,0}}},
-            {{{ 6200.0f, 0.0f, -6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{1280,0}}},
-            {{{ 6200.0f, 0.0f,  6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{1280,1280}}},
-            {{{-6200.0f, 0.0f,  6200.0f}}, {{0,0,1}}, {{1,1,1}}, {{0,1280}}},
-        };
-        floor.indices = {0, 3, 2, 2, 1, 0};
-        engine.getMeshManager()->loadMesh("floor", floor);
-    }
+    // Model i instancja animowanego robota są zadeklarowane po silniku, więc zostaną zniszczone przed nim
+    // (po engine.run(), który kończy się czekaniem na GPU).
+    GltfSkinnedModel robotModel;
+    GltfSkinnedInstance robot;
+    const bool robotLoaded = addSkinnedRobot(ctx, robotModel, robot);
 
-    // KROK 4: UTWORZENIE SIATKI KOSTKI (Cube Mesh)
-    {
-        MeshData cube;
-        const float s = 0.75f;
-        auto vert = [&](float x, float y, float z, float nx, float ny, float nz, float u, float v) {
-            cube.vertices.push_back({{x, y, z}, {nx, ny, nz}, {1,1,1}, {u, v}});
-        };
-        auto face = [&](float x1, float y1, float z1, float x2, float y2, float z2,
-                        float x3, float y3, float z3, float x4, float y4, float z4,
-                        float nx, float ny, float nz) {
-            auto b = static_cast<uint32_t>(cube.vertices.size());
-            vert(x1,y1,z1, nx,ny,nz, 0,0); vert(x2,y2,z2, nx,ny,nz, 1,0);
-            vert(x3,y3,z3, nx,ny,nz, 1,1); vert(x4,y4,z4, nx,ny,nz, 0,1);
-            cube.indices.insert(cube.indices.end(), {b+0,b+1,b+2, b+2,b+3,b+0});
-        };
-        // Rysowanie 6 ścian kostki z normalnymi powierzchni
-        face(-s,-s, s,  s,-s, s,  s, s, s, -s, s, s,  0,0,1);
-        face( s,-s,-s, -s,-s,-s, -s, s,-s,  s, s,-s, 0,0,-1);
-        face(-s,-s,-s, -s,-s, s, -s, s, s, -s, s,-s, -1,0,0);
-        face( s,-s, s,  s,-s,-s,  s, s,-s,  s, s, s,  1,0,0);
-        face(-s, s, s,  s, s, s,  s, s,-s, -s, s,-s,  0,1,0);
-        face(-s,-s,-s,  s,-s,-s,  s,-s, s, -s,-s, s,  0,-1,0);
-        engine.getMeshManager()->loadMesh("cube", cube);
-    }
+    setupCamera(ctx);
 
-    // Tworzenie obiektów w świecie przy użyciu kostki i podłogi
-    auto addObj = [&](const std::string& name, const std::string& meshName,
-                      const std::string& matName, const Vec3& pos) {
-        auto* e = activeScene->createEntity(name);
-        auto* mc = e->addComponent<MeshComponent>(meshName);
-        mc->materialHandle = requireMaterialHandle(matName);
-        e->transform().position = pos;
-        e->transform().scale = {2.0f, 2.0f, 2.0f};
+    // Logika co klatkę.
+    engine.onUpdate = [&](float dt, Engine& e) {
+        if (e.keyPressed(SDL_SCANCODE_ESCAPE)) e.requestQuit();
+
+        // Robot: macierze kości dla bieżącego czasu animacji liczone na CPU, zapisane do bufora na GPU.
+        if (robotLoaded) robot.update(dt);
+        updateGoblin(e.getMeshManager(), goblin, dt);
+        toggleLighting(e);
+        FlyCamera::update(e, dt, 15.0f);
+        drawHud(e);
     };
 
-    addObj("floor", "floor", "podloga", {0,0,0});
-    addObj("cube_drewno", "cube", "drewno", {0,1,0});
-    addObj("cube_cegla", "cube", "cegla", {-5,1,-5});
-    addObj("cube_metal", "cube", "metal", {5,1,5});
-    addObj("cube_trawa", "cube", "trawa", {-5,1,5});
-    addObj("cube_drewno2", "cube", "drewno", {5,1,-5});
-
-    // KROK 5: WCZYTYWANIE TRADYCYJNYCH MODELI 3DS
-    auto addModel = [&](const std::string& path, const std::string& prefix,
-                        const Vec3& position, bool disableAlpha = false,
-                        const std::string& fallbackTexture = "") {
-        Model3ds model;
-        if (!model.load(path)) {
-            LOG_ERROR("{} load skipped: {}", prefix, path);
-            return;
-        }
-        LOG_INFO("Loaded {}: {} meshes, {} materials", prefix, model.objectList.size(), model.materialList.size());
-
-        std::vector<std::string> finalMatNames(model.materialList.size());
-        for (size_t mi = 0; mi < model.materialList.size(); ++mi) {
-            const auto& mat = *model.materialList[mi];
-            std::string matName = prefix + "_mat" + std::to_string(mi)
-                + (mat.name.empty() ? "" : "_" + mat.name);
-
-            bool texExists = !mat.texturePath.empty();
-            if (texExists) {
-                FILE* test = fopen(mat.texturePath.c_str(), "rb");
-                if (test) {
-                    fclose(test);
-                } else {
-                    texExists = false;
-                }
-            }
-
-            std::string texName = matName;
-            std::string texPathToLoad = mat.texturePath;
-            TextureHandle texHandle{};
-            if (!texExists && !fallbackTexture.empty()) {
-                std::string fbPath = fallbackTexture;
-                FILE* test = fopen(fbPath.c_str(), "rb");
-                if (!test && fbPath.find('/') == std::string::npos) {
-                    fbPath = "assets/textures/" + fallbackTexture;
-                    test = fopen(fbPath.c_str(), "rb");
-                }
-                if (test) {
-                    fclose(test);
-                    matName += "_fb";
-                    texExists = true;
-                    texPathToLoad = fbPath;
-                }
-            }
-
-            if (texExists) {
-                texHandle = renderer->loadTexture(matName, texPathToLoad, false, disableAlpha);
-            }
-
-            Material modelMat = Convert3dsMaterialToEngineMaterial(mat);
-            modelMat.name = matName;
-            modelMat.textureHandle = texExists ? texHandle : TextureHandle{};
-            // if (disableAlpha) {
-            //     modelMat.blendMode = BlendMode::Disabled;
-            //     modelMat.depthWrite = true;
-            // }
-            materialHandles[matName] = mats->add(modelMat);
-
-            finalMatNames[mi] = matName;
-        }
-
-        // Dodanie wszystkich pod-siatek (sub-meshes) obiektu 3DS jako niezależnych encji
-        for (size_t i = 0; i < model.objectList.size(); ++i) {
-            const auto& obj = *model.objectList[i];
-            std::string meshName = prefix + "_" + (obj.strName.empty()
-                ? std::to_string(i) : obj.strName);
-
-            engine.getMeshManager()->loadMesh(meshName, obj.mesh);
-
-            std::string matName;
-            if (!finalMatNames.empty()) {
-                int mi = obj.materialIndex;
-                if (mi < 0 || mi >= static_cast<int>(finalMatNames.size())) {
-                    mi = 0;
-                }
-                matName = finalMatNames[mi];
-            }
-
-            auto* e = activeScene->createEntity(meshName);
-            auto* mc = e->addComponent<MeshComponent>(meshName);
-            mc->materialHandle = requireMaterialHandle(matName);
-            e->transform().position = position;
-            e->transform().scale = {0.3f, 0.3f, 0.3f};
-        }
-    };
-
-    addModel("assets/models/3ds/bronie/M4.3DS", "m4", {-20.0f, 10.0f, 0.0f}, true, "assets/models/3ds/bronie/m4.dds");
-    addModel("assets/models/3ds/drzewko5.3DS", "DRZEWKO", {20.0f, 0.0f, 10.0f});
-    addModel("assets/models/3ds/trawa/grass.3ds", "grass", {15.0f, 0.0f, 0.0f});
-    addModel("assets/models/3ds/D1.3DS", "D1", {-5.0f, 0.0f, 10.0f});
-    addModel("assets/models/3ds/drzewko.3DS", "Drzewko", {-10.0f, 0.0f, 10.0f});
-
-    // KROK 6: WCZYTYWANIE MODELU MD2 (Klasyczna animacja klatkowa z Quake 2)
-    // Model MD2 nie posiada kości – animacja polega na płynnej, liniowej interpolacji (Morph Target)
-    // pozycji wierzchołków bezpośrednio między kolejnymi klatkami kluczowymi.
-    auto md2Model = std::make_shared<Md2ModelData>();
-    auto md2State = std::make_shared<Md2AnimationState>();
-    {
-        *md2Model = loadMd2Model("assets/models/md2/goblin/goblin.md2");
-        engine.getMeshManager()->loadMesh("goblin_md2", md2Model->triangles);
-        std::cout << "Loaded MD2: " << md2Model->frames[0].vertices.size() << " verts, "
-                  << md2Model->tris.size() << " tris, " << md2Model->frames.size() << " frames" << std::endl;
-
-        md2State->startFrame = 0;
-        md2State->endFrame = (int)md2Model->frames.size() - 1;
-        md2State->interpol = 0.0f;
-        md2State->speed = 10.0f;
-
-        // Wczytanie tekstury dyfuzyjnej i mapy normalnych w przestrzeni stycznej (Dot3 Normal Map)
-        const auto goblinTexHandle = renderer->loadTexture("goblin_tex", "assets/models/md2/goblin/goblin.bmp");
-        const auto goblinDot3Handle = renderer->loadTexture("goblin_dot3", "assets/models/md2/goblin/goblinDOT3.bmp");
-
-        // Materiał z mapowaniem normalnych (Bump Mapping)
-        Material matGoblinBump;
-        matGoblinBump.name = "goblin_bump";
-        matGoblinBump.textureHandle = goblinTexHandle;
-        matGoblinBump.normalMapHandle = goblinDot3Handle;
-        matGoblinBump.bumpIntensity = 1.0f;
-        matGoblinBump.cullMode = CullMode::Disabled;
-        materialHandles[matGoblinBump.name] = mats->add(matGoblinBump);
-
-        // Materiał płaski bez mapowania normalnych
-        Material matGoblinFlat;
-        matGoblinFlat.name = "goblin_flat";
-        matGoblinFlat.textureHandle = goblinTexHandle;
-        matGoblinFlat.bumpIntensity = 0.0f;
-        matGoblinFlat.cullMode = CullMode::Disabled;
-        materialHandles[matGoblinFlat.name] = mats->add(matGoblinFlat);
-
-        // Goblin 1 (z cieniowaniem wybojów / bump mappingiem)
-        {
-            auto* e = activeScene->createEntity("goblin_bump");
-            auto* mc = e->addComponent<MeshComponent>("goblin_md2");
-            mc->materialHandle = requireMaterialHandle("goblin_bump");
-            e->transform().position = {-50.0f, 7.0f, -5.0f};
-            e->transform().rotation = {-90.0f, 0.0f, 0.0f};
-            e->transform().scale = {0.4f, 0.4f, 0.4f};
-        }
-        // Goblin 2 (standardowa płaska tekstura)
-        {
-            auto* e = activeScene->createEntity("goblin_flat");
-            auto* mc = e->addComponent<MeshComponent>("goblin_md2");
-            mc->materialHandle = requireMaterialHandle("goblin_flat");
-            e->transform().position = {-50.0f, 7.0f, -20.0f};
-            e->transform().rotation = {-90.0f, 0.0f, 0.0f};
-            e->transform().scale = {0.4f, 0.4f, 0.4f};
-        }
-    }
-
-    // KROK 7: WCZYTYWANIE MODELU GLTF/GLB (ToyCar.glb - Fizycznie Bazowany Rendering PBR)
-    {
-        auto toyCar = loadGltfModel("assets/models/gLTF/toycar/bin/ToyCar.glb");
-        std::cout << "Loaded ToyCar GLB: " << toyCar.primitives.size() << " primitives\n";
-
-        for (size_t i = 0; i < toyCar.primitives.size(); ++i) {
-            auto& prim = toyCar.primitives[i];
-            std::string name = "toycar_" + std::to_string(i);
-            engine.getMeshManager()->loadMesh(name, prim.mesh);
-
-            TextureHandle texHandle = metalHandle;
-            if (!prim.texturePath.empty()) {
-                texHandle = renderer->loadTexture(name + "_tex", prim.texturePath);
-            }
-
-            // PBR korzysta z dodatkowych tekstur PBR (Normal Map, ORM: Occlusion, Roughness, Metallic, oraz Emissive)
-            TextureHandle nmHandle{}, ormHandle{}, occHandle{}, emHandle{};
-            if (!prim.normalMapPath.empty()) { nmHandle = renderer->loadTexture(name + "_n", prim.normalMapPath); }
-            if (!prim.ormPath.empty())        { ormHandle = renderer->loadTexture(name + "_orm", prim.ormPath); }
-            if (!prim.occlusionPath.empty())  { occHandle = renderer->loadTexture(name + "_occ", prim.occlusionPath); }
-            if (!prim.emissivePath.empty())   { emHandle = renderer->loadTexture(name + "_em", prim.emissivePath); }
-
-            Material mat;
-            mat.name = name;
-            mat.textureHandle = texHandle;
-            mat.cullMode = CullMode::Disabled;
-            if (nmHandle.isValid()) { mat.normalMapHandle = nmHandle; mat.bumpIntensity = 1.0f; }
-            if (ormHandle.isValid()) mat.metallicRoughnessTextureHandle = ormHandle;
-            if (occHandle.isValid()) mat.occlusionTextureHandle = occHandle;
-            if (emHandle.isValid()) mat.emissiveTextureHandle = emHandle;
-            mat.roughnessFactor = 0.5f;
-            materialHandles[mat.name] = mats->add(mat);
-
-            auto* e = activeScene->createEntity(name);
-            auto* mc = e->addComponent<MeshComponent>(name);
-            mc->materialHandle = requireMaterialHandle(name);
-            e->transform().position = {-190.0f, 30.0f, 20.0f};
-            e->transform().rotation = {0.0f, 0.0f, 0.0f};
-            e->transform().scale = {0.2f, 0.2f, 0.2f};
-        }
-    }
-
-    // KROK 8: ZAAWANSOWANE ŁADOWANIE GLTF Z ANIMACJĄ SZKIELETOWĄ (Skeletal Animation & Skinning)
-    // Zamiast interpolować położenia wierzchołków CPU (jak w MD2), do shadera przekazujemy
-    // macierze kości (Joint Matrices). Wierzchołki posiadają indeksy (Joints) i wagi (Weights)
-    // i są przekształcane bezpośrednio na GPU w shaderze wierzchołków.
-    // GltfSkinnedModel ładuje siatki, materiały i bufory wag/indeksów kości (dane współdzielone),
-    // a GltfSkinnedInstance trzyma macierze kości danej instancji i tworzy jej encje.
-    // Bufor kości instancji ma kilka slotów, więc zapis nie koliduje z klatkami w locie GPU.
-    // Oba obiekty są zadeklarowane po silniku, więc zostaną zniszczone przed nim
-    // (po engine.run(), który kończy się waitIdle).
-    GltfSkinnedModel brainModel;
-    GltfSkinnedInstance brainInstance;
-    if (brainModel.load(renderer, engine.getMeshManager(), mats, engine.getAssetRegistry(),
-                        "assets/models/gLTF/BrainStem.glb") &&
-        brainInstance.initialize(renderer, brainModel)) {
-        const auto& model = brainModel.getModel();
-        std::cout << "Loaded BrainStem: " << model.primitives.size() << " prims, "
-                  << model.animations.size() << " anims, " << model.skins.size() << " skins\n";
-
-        Entity* brainRoot = brainInstance.instantiate(activeScene, "brain");
-        brainRoot->transform().position = {-40.0f, 0.0f, 20.0f};
-        brainRoot->transform().scale = {10.0f, 10.0f, 10.0f};
-    }
-
-    // Ustawienie głównej kamery i jej parametrów
-    auto* camera = activeScene->createEntity("main_camera")->addComponent<CameraComponent>();
-    camera->getOwner()->transform().position = {-60.0f, 15.0f, -62.0f};
-    camera->target = {0.5f, 0.0f, 0.5f};
-    camera->fieldOfViewDegrees = 50.0f;
-    camera->nearPlane = 1.5f;
-    camera->farPlane = 16000.0f;
-    activeScene->setActiveCamera(camera);
-
-    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
-
-    // KROK 9: PĘTLA LOGIKI I STEROWANIA (Update loop callback)
-    engine.onUpdate = [&, md2Model, md2State](float dt, Engine& e) {
-        const auto& snap = e.input();
-        static bool escWasDown = false;
-        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
-        if (escDown && !escWasDown) {
-            SDL_Event event{};
-            event.type = SDL_EVENT_QUIT;
-            SDL_PushEvent(&event);
-        }
-        escWasDown = escDown;
-
-        // Aktualizacja klatki animacji morphingowej MD2 na CPU i przesłanie nowej siatki do bufora GPU
-        MeshData animMesh;
-        animateMd2(*md2Model, *md2State, dt, animMesh);
-        engine.getMeshManager()->updateMesh("goblin_md2", animMesh);
-
-        // Pobranie danych wejściowych i aktualizacja kamery FPP (Flyaround/Free camera)
-        auto* cc = e.getCameraController();
-        auto* scene = e.getSceneManager()->activeScene();
-        auto* cam = scene ? scene->activeCamera() : nullptr;
-        if (cc && cam) {
-            cc->moveSpeed = 15.0f;
-
-            float ts = cc->mouseSensitivity;
-            cc->rotateYaw(-static_cast<float>(snap.mouseDeltaX) * ts);
-            cc->rotatePitch(-static_cast<float>(snap.mouseDeltaY) * ts);
-
-            float vel = cc->moveSpeed * dt;
-            if (e.actionDown(kActionMoveForward)) cc->moveForward(vel);
-            if (e.actionDown(kActionMoveBackward)) cc->moveForward(-vel);
-            if (e.actionDown(kActionMoveLeft)) cc->moveRight(-vel);
-            if (e.actionDown(kActionMoveRight)) cc->moveRight(vel);
-            if (e.actionDown(kActionMoveUp)) cc->moveUp(vel);
-            if (e.actionDown(kActionMoveDown)) cc->moveUp(-vel);
-
-            // Włączanie/wyłączanie światła i cieni klawiszem 'L'
-            if (e.actionPressed(kActionToggleLighting)) {
-                bool cur = e.isLightingEnabled();
-                e.setLightingEnabled(!cur);
-                e.setShadowsEnabled(!cur);
-            }
-
-            cc->update(dt, *cam);
-        }
-
-        // Rysowanie napisów ekranowych HUD (statystyki klatki, pozycja, oświetlenie)
-        std::ostringstream oss;
-        oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
-        e.setTextLabel(oss.str(), "times",
-                                       e.getRenderer()->width() - 190.0f, 35.0f, 1.0f,
-                                       {1.0f, 1.0f, 0.2f, 1.0f});
-
-        {
-            std::ostringstream lightTxt;
-            lightTxt << "Oswietlenie [L]: " << (e.isLightingEnabled() ? "WLACZONE" : "WYLACZONE");
-            e.setTextLabel(lightTxt.str(), "times", 10.0f, 90.0f, 0.7f,
-                           e.isLightingEnabled() ? std::array<float,4>{0.2f, 1.0f, 0.3f, 1.0f}
-                                                 : std::array<float,4>{1.0f, 0.3f, 0.3f, 1.0f});
-        }
-
-        if (cam) {
-            std::ostringstream pos;
-            pos << "pos: " << std::fixed << std::setprecision(0)
-                << cam->getOwner()->transform().position.x << " " << cam->getOwner()->transform().position.y << " " << cam->getOwner()->transform().position.z;
-            e.setTextLabel(pos.str(), "times", 10.0f, 30.0f, 0.7f,
-                                          {0.7f, 0.7f, 1.0f, 1.0f});
-
-            Vec3 dir = normalize(subtract(cam->target, cam->getOwner()->transform().position));
-            std::ostringstream look;
-            look << "dir: " << std::fixed << std::setprecision(2)
-                 << dir.x << " " << dir.y << " " << dir.z;
-            e.setTextLabel(look.str(), "times", 10.0f, 60.0f, 0.7f,
-                                          {0.7f, 0.7f, 1.0f, 1.0f});
-        }
-    };
-
-    // KROK 10: AKTUALIZACJA ANIMACJI SZKIELETOWEJ GLTF (GPU Skinning updates)
-    // Instancja wylicza macierze kości na CPU dla bieżącego czasu animacji
-    // i zapisuje je do wolnego slotu bufora uniform na GPU.
-    engine.onUpdate = [origUpdate = std::move(engine.onUpdate), &brainInstance](float dt, Engine& e) mutable {
-        brainInstance.update(dt);
-        if (origUpdate) origUpdate(dt, e);
-    };
-
-    // Uruchomienie głównej pętli gry
     engine.run();
     return 0;
 }

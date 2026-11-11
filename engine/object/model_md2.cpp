@@ -54,7 +54,7 @@ void computeNormals(std::vector<Vec3>& normals, const std::vector<Vec3>& verts,
 
 Md2ModelData loadMd2Model(const std::string& path) {
     FILE* f = fopen(path.c_str(), "rb");
-    if (!f) throw std::runtime_error("Cannot open MD2: " + path);
+    if (!f) throw std::runtime_error("nie można otworzyć MD2: " + path);
 
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
@@ -65,9 +65,9 @@ Md2ModelData loadMd2Model(const std::string& path) {
     fclose(f);
 
     int ident = readInt(buf, 0);
-    if (ident != kMd2Ident) throw std::runtime_error("Not an MD2: " + path);
+    if (ident != kMd2Ident) throw std::runtime_error("to nie jest plik MD2: " + path);
     int version = readInt(buf, 4);
-    if (version != kMd2Version) throw std::runtime_error("Bad MD2 version: " + path);
+    if (version != kMd2Version) throw std::runtime_error("zła wersja pliku MD2: " + path);
 
     int frameSize    = readInt(buf, 16);
     int numVertices  = readInt(buf, 24);

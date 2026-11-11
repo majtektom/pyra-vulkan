@@ -124,7 +124,7 @@ const BuildingDef& buildingDef(BuildingType type) {
 const ProductionDef& productionDef(BuildingType type) {
     using C = CarryType;
     using K = WorkKind;
-    // Czasy dobrane pomiarem (autoplay: "wydajność") tak, by zgadzały się proporcje AI (world_ai.cpp, kAiRatios):
+    // Czasy dobrane pomiarem (autoplay: "wydajność") tak, by zgadzały się proporcje AI (ai_planner.cpp, kAiRatios):
     // tartak = 4 drwali, młyn = 3 farmy, piekarnia = młyn, huta = kopalnia rudy, kuźnia = huta.
     //                      zachowanie     wyjście      wejścia                     czas  [ilość wyrobu, domyślnie 2]
     static const std::array<ProductionDef, kBuildingTypeCount> defs = {{

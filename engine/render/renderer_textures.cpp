@@ -3,21 +3,51 @@
 namespace engine3d {
 
 TextureHandle Renderer::RendererImpl::loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat, bool disableAlpha) {
+    TextureUploadData uploadData = TextureAssetLoader::load(path);
+    return uploadTexture(name, uploadData, mirroredRepeat, disableAlpha);
+}
+
+TextureHandle Renderer::RendererImpl::loadTextureFromMemory(const std::string& name, const std::vector<float>& data, uint32_t width, uint32_t height, bool mirroredRepeat) {
+    // Dane 0..255 (mapa wysokości, maski) -> 16-bit UNORM z zaokrągleniem. Wcześniej było 8 bit z obcięciem:
+    // teren przesuwany na GPU leżał w "schodkach" do 1 jednostki mapy niżej niż siatka CPU, która rzuca cienie
+    // - siatka cieni wystawała ponad widoczny teren i rzucała pasy cieni wzdłuż schodków.
+    TextureUploadData uploadData{};
+    uploadData.width = width;
+    uploadData.height = height;
+    uploadData.mipLevels = 1;   // pełny łańcuch mipmap wygeneruje uploadTexture
+    uploadData.format = VK_FORMAT_R16_UNORM;
+    uploadData.pixelBytes.resize(static_cast<size_t>(width) * height * 2);
+    for (uint32_t i = 0; i < width * height; ++i) {
+        const float val = std::clamp(data[i], 0.0f, 255.0f);
+        const auto v = static_cast<uint16_t>(std::lround(val / 255.0f * 65535.0f));
+        uploadData.pixelBytes[i * 2] = static_cast<uint8_t>(v & 0xFF);
+        uploadData.pixelBytes[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
+    }
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {width, height, 1};
+    uploadData.copyRegions.push_back(region);
+    return uploadTexture(name, uploadData, mirroredRepeat, false);
+}
+
+// Wspólna część wczytywania tekstur (z pliku i z pamięci): obraz GPU, wgranie pikseli przez bufor pośredni,
+// mipmapy (gotowe z pliku DDS albo generowane blitami), widok, sampler i miejsce w tablicy bindless.
+TextureHandle Renderer::RendererImpl::uploadTexture(const std::string& name, TextureUploadData& uploadData,
+                                                    bool mirroredRepeat, bool disableAlpha) {
     VkDevice device = vulkanContext_->device();
-    
-    // Clean up existing texture with the same name to prevent memory leak on reload
+    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
+
+    // Przeładowanie pod tą samą nazwą: stara tekstura może być używana przez klatki w locie - niszczymy ją
+    // dopiero po nich (retireTexture), zamiast zatrzymywać GPU (vkDeviceWaitIdle) przy każdym przeładowaniu.
     auto oldIt = textures_.find(name);
     if (oldIt != textures_.end()) {
-        // Stara tekstura może być używana przez klatki w locie - niszczymy ją dopiero po nich (retireTexture),
-        // zamiast zatrzymywać GPU (vkDeviceWaitIdle) przy każdym przeładowaniu.
         retireTexture(oldIt->second.image, oldIt->second.imageMemory, oldIt->second.imageView, oldIt->second.sampler);
         textures_.erase(oldIt);
     }
 
-    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
-    TextureUploadData uploadData = TextureAssetLoader::load(path);
-
-    bool needsMipmapGen = (uploadData.mipLevels <= 1);
+    // Plik bez gotowych mipmap (PNG, BMP, dane z pamięci) - pełny łańcuch liczymy na GPU.
+    const bool needsMipmapGen = (uploadData.mipLevels <= 1);
     if (needsMipmapGen) {
         uint32_t maxDim = std::max(uploadData.width, uploadData.height);
         uploadData.mipLevels = 1;
@@ -87,7 +117,7 @@ TextureHandle Renderer::RendererImpl::loadTexture(const std::string& name, const
         viewInfo.components.a = VK_COMPONENT_SWIZZLE_ONE;
 
         if (vkCreateImageView(device, &viewInfo, nullptr, &tex.imageView) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create image view with component swizzle");
+            throw std::runtime_error("nie udało się utworzyć widoku obrazu (bez kanału alfa)");
         }
     } else {
         tex.imageView = vk::createImageView(device, tex.image, uploadData.format,
@@ -100,110 +130,7 @@ TextureHandle Renderer::RendererImpl::loadTexture(const std::string& name, const
     textures_[name] = tex;
     
     registerTextureInBindless(name, tex.imageView, tex.sampler);
-    LOG_INFO("Loaded texture: {} at index {}", name, textureNameToIndex_[name]);
-
-    if (assetRegistry_) {
-        return assetRegistry_->registerTexture(name);
-    }
-    return {};
-}
-
-TextureHandle Renderer::RendererImpl::loadTextureFromMemory(const std::string& name, const std::vector<float>& data, uint32_t width, uint32_t height, bool mirroredRepeat) {
-    VkDevice device = vulkanContext_->device();
-    
-    // Clean up existing texture with the same name to prevent memory leak on reload
-    auto oldIt = textures_.find(name);
-    if (oldIt != textures_.end()) {
-        // Stara tekstura może być używana przez klatki w locie - niszczymy ją dopiero po nich (retireTexture),
-        // zamiast zatrzymywać GPU (vkDeviceWaitIdle) przy każdym przeładowaniu.
-        retireTexture(oldIt->second.image, oldIt->second.imageMemory, oldIt->second.imageView, oldIt->second.sampler);
-        textures_.erase(oldIt);
-    }
-
-    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
-
-    // Dane 0..255 (mapa wysokości, maski) -> 16-bit UNORM z zaokrągleniem. Wcześniej było 8 bit z obcięciem:
-    // teren przesuwany na GPU leżał w "schodkach" do 1 jednostki mapy niżej niż siatka CPU, która rzuca cienie
-    // - siatka cieni wystawała ponad widoczny teren i rzucała pasy cieni wzdłuż schodków.
-    TextureUploadData uploadData{};
-    uploadData.width = width;
-    uploadData.height = height;
-    uploadData.mipLevels = 1;
-    uploadData.format = VK_FORMAT_R16_UNORM;
-    uploadData.pixelBytes.resize(static_cast<size_t>(width) * height * 2);
-    for (uint32_t i = 0; i < width * height; ++i) {
-        const float val = std::clamp(data[i], 0.0f, 255.0f);
-        const auto v = static_cast<uint16_t>(std::lround(val / 255.0f * 65535.0f));
-        uploadData.pixelBytes[i * 2] = static_cast<uint8_t>(v & 0xFF);
-        uploadData.pixelBytes[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
-    }
-
-    // Compute full mip chain
-    uint32_t maxDim = std::max(width, height);
-    uploadData.mipLevels = 1;
-    while (maxDim > 1) { maxDim /= 2; uploadData.mipLevels++; }
-
-    VkBufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {width, height, 1};
-    uploadData.copyRegions.push_back(region);
-
-    TextureResources tex;
-    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    vk::createImage(device, physicalDevice,
-                    uploadData.width, uploadData.height, uploadData.mipLevels,
-                    uploadData.format, usage,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    tex.image, tex.imageMemory);
-
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              tex.image, uploadData.format,
-                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              uploadData.mipLevels);
-
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingMemory;
-    VkDeviceSize dataSize = uploadData.pixelBytes.size();
-    vk::createBuffer(device, physicalDevice, dataSize,
-                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuffer, stagingMemory);
-
-    void* mappedMemory;
-    vkMapMemory(device, stagingMemory, 0, dataSize, 0, &mappedMemory);
-    std::memcpy(mappedMemory, uploadData.pixelBytes.data(), dataSize);
-    vkUnmapMemory(device, stagingMemory);
-
-    VkCommandBuffer cmd = beginSingleTimeCommands();
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, tex.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                           static_cast<uint32_t>(uploadData.copyRegions.size()),
-                           uploadData.copyRegions.data());
-
-    // Łańcuch mipmap (zmniejszanie o połowę kolejnymi blitami).
-    vk::generateMipmaps(cmd, tex.image, width, height, uploadData.mipLevels);
-
-    endSingleTimeCommands(cmd);
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingMemory, nullptr);
-
-    tex.imageView = vk::createImageView(device, tex.image, uploadData.format,
-                                        VK_IMAGE_ASPECT_COLOR_BIT, uploadData.mipLevels);
-    tex.sampler = vk::createSampler(device, vulkanContext_->physicalDevice(), uploadData.mipLevels,
-                    textureFilter_, mirroredRepeat ? AddressMode::MirroredRepeat : AddressMode::Repeat);
-    tex.mipLevels = uploadData.mipLevels;
-    tex.addressMode = mirroredRepeat ? AddressMode::MirroredRepeat : AddressMode::Repeat;
-    textures_[name] = tex;
-    
-    registerTextureInBindless(name, tex.imageView, tex.sampler);
-    LOG_INFO("Loaded memory texture: {} at index {} (mipLevels={})", name, textureNameToIndex_[name], uploadData.mipLevels);
+    LOG_INFO("Wczytano teksturę: {} (indeks {}, poziomów mip: {})", name, textureNameToIndex_[name], uploadData.mipLevels);
 
     if (assetRegistry_) {
         return assetRegistry_->registerTexture(name);
@@ -443,154 +370,47 @@ bool Renderer::RendererImpl::getTextureInfo(TextureHandle handle, VkImageView& v
     return getTextureInfo(*name, v, s);
 }
 
-void Renderer::RendererImpl::createDefaultTexture() {
+// Tekstura 1x1 w jednym kolorze (domyślne: biała, płaska normalna, ORM, czarna). Piksel trafia do obrazu
+// z CPU (hostImageCopy, Vulkan 1.4) - bez bufora pośredniego i bez bufora poleceń.
+Renderer::RendererImpl::SolidTexture Renderer::RendererImpl::createSolidTexture(const uint8_t rgba[4], VkSampler sampler) {
     VkDevice device = vulkanContext_->device();
-    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
-    uint32_t whitePixel = 0xFFFFFFFF;
-    VkDeviceSize imageSize = 4;
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    vk::createBuffer(device, physicalDevice, imageSize,
-                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuffer, stagingBufferMemory);
-    void* mappedMemory;
-    vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &mappedMemory);
-    std::memcpy(mappedMemory, &whitePixel, imageSize);
-    vkUnmapMemory(device, stagingBufferMemory);
-
-    vk::createImage(device, physicalDevice, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    defaultImage_, defaultImageMemory_);
-
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(),
-                              vulkanContext_->graphicsQueue(),
-                              defaultImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-
-    VkCommandBuffer cmdBuffer = beginSingleTimeCommands();
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1,1,1};
-    vkCmdCopyBufferToImage(cmdBuffer, stagingBuffer, defaultImage_,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    endSingleTimeCommands(cmdBuffer);
-
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultImage_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
-    defaultImageView_ = vk::createImageView(device, defaultImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                        VK_IMAGE_ASPECT_COLOR_BIT, 1);
-    defaultSampler_ = vk::createSampler(device, vulkanContext_->physicalDevice(), 1, textureFilter_, AddressMode::Repeat);
+    SolidTexture t;
+    vk::createImage(device, vulkanContext_->physicalDevice(), 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, t.image, t.memory);
+    vk::hostTransitionToCopyLayout(device, t.image);
+    vk::hostCopyToImage(device, t.image, rgba, 1, 1);
+    t.view = vk::createImageView(device, t.image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    t.sampler = sampler;
+    return t;
 }
 
-void Renderer::RendererImpl::createDefaultNormalTexture() {
+void Renderer::RendererImpl::destroySolidTexture(SolidTexture& t) {
     VkDevice device = vulkanContext_->device();
-    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
-    unsigned char flatNormal[4] = {128, 128, 255, 255};
-    VkBuffer stagingBuffer; VkDeviceMemory stagingBufferMemory;
-    vk::createBuffer(device, physicalDevice, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuffer, stagingBufferMemory);
-    void* m; vkMapMemory(device, stagingBufferMemory, 0, 4, 0, &m);
-    std::memcpy(m, flatNormal, 4); vkUnmapMemory(device, stagingBufferMemory);
-    vk::createImage(device, physicalDevice, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, defaultNormalImage_, defaultNormalImageMemory_);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultNormalImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-    VkCommandBuffer cmd = beginSingleTimeCommands();
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1, 1, 1};
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, defaultNormalImage_,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    endSingleTimeCommands(cmd);
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultNormalImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
-    defaultNormalImageView_ = vk::createImageView(device, defaultNormalImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                                                   VK_IMAGE_ASPECT_COLOR_BIT, 1);
-    defaultNormalSampler_ = vk::createClampSampler(device);
+    if (t.sampler) vkDestroySampler(device, t.sampler, nullptr);
+    if (t.view) vkDestroyImageView(device, t.view, nullptr);
+    if (t.image) vkDestroyImage(device, t.image, nullptr);
+    if (t.memory) vkFreeMemory(device, t.memory, nullptr);
+    t = {};
 }
 
-void Renderer::RendererImpl::createDefaultOrmTexture() {
+void Renderer::RendererImpl::createDefaultTextures() {
     VkDevice device = vulkanContext_->device();
-    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
-    // R=occlusion(1.0), G=roughness(1.0), B=metallic(0.0), A=1.0
-    unsigned char ormPixel[4] = {255, 255, 0, 255};
-    VkBuffer stagingBuffer; VkDeviceMemory stagingBufferMemory;
-    vk::createBuffer(device, physicalDevice, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuffer, stagingBufferMemory);
-    void* m; vkMapMemory(device, stagingBufferMemory, 0, 4, 0, &m);
-    std::memcpy(m, ormPixel, 4); vkUnmapMemory(device, stagingBufferMemory);
-    vk::createImage(device, physicalDevice, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, defaultOrmImage_, defaultOrmImageMemory_);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultOrmImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-    VkCommandBuffer cmd = beginSingleTimeCommands();
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1, 1, 1};
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, defaultOrmImage_,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    endSingleTimeCommands(cmd);
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultOrmImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
-    defaultOrmImageView_ = vk::createImageView(device, defaultOrmImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                                                VK_IMAGE_ASPECT_COLOR_BIT, 1);
-    defaultOrmSampler_ = vk::createClampSampler(device);
-}
+    const uint8_t white[4] = {255, 255, 255, 255};
+    const uint8_t flatNormal[4] = {128, 128, 255, 255};   // normalna (0,0,1) w przestrzeni stycznej
+    const uint8_t orm[4] = {255, 255, 0, 255};            // R=occlusion 1, G=roughness 1, B=metallic 0
+    const uint8_t black[4] = {0, 0, 0, 0};
+    defaultTex_ = createSolidTexture(white, vk::createSampler(device, vulkanContext_->physicalDevice(), 1,
+                                                              textureFilter_, AddressMode::Repeat));
+    defaultNormalTex_ = createSolidTexture(flatNormal, vk::createClampSampler(device));
+    defaultOrmTex_ = createSolidTexture(orm, vk::createClampSampler(device));
+    defaultBlackTex_ = createSolidTexture(black, vk::createClampSampler(device));
 
-void Renderer::RendererImpl::createDefaultBlackTexture() {
-    VkDevice device = vulkanContext_->device();
-    VkPhysicalDevice physicalDevice = vulkanContext_->physicalDevice();
-    unsigned char blackPixel[4] = {0, 0, 0, 0};
-    VkBuffer stagingBuffer; VkDeviceMemory stagingBufferMemory;
-    vk::createBuffer(device, physicalDevice, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuffer, stagingBufferMemory);
-    void* m; vkMapMemory(device, stagingBufferMemory, 0, 4, 0, &m);
-    std::memcpy(m, blackPixel, 4); vkUnmapMemory(device, stagingBufferMemory);
-    vk::createImage(device, physicalDevice, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, defaultBlackImage_, defaultBlackImageMemory_);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultBlackImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-    VkCommandBuffer cmd = beginSingleTimeCommands();
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {1, 1, 1};
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, defaultBlackImage_,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    endSingleTimeCommands(cmd);
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    vk::transitionImageLayout(device, vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(),
-                              defaultBlackImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
-    defaultBlackImageView_ = vk::createImageView(device, defaultBlackImage_, VK_FORMAT_R8G8B8A8_UNORM,
-                                                  VK_IMAGE_ASPECT_COLOR_BIT, 1);
-    defaultBlackSampler_ = vk::createClampSampler(device);
+    const VkImageLayout layout = vk::hostCopyLayout();
+    registerTextureInBindless("default", defaultTex_.view, defaultTex_.sampler, layout);
+    registerTextureInBindless("default_normal", defaultNormalTex_.view, defaultNormalTex_.sampler, layout);
+    registerTextureInBindless("default_orm", defaultOrmTex_.view, defaultOrmTex_.sampler, layout);
+    registerTextureInBindless("default_black", defaultBlackTex_.view, defaultBlackTex_.sampler, layout);
 }
 
 } // namespace engine3d

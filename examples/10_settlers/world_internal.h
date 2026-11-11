@@ -28,10 +28,6 @@ namespace settlers {
 
 using namespace engine3d;
 
-// Odległość w poziomie (płaszczyzna XZ) - krótsza nazwa dla engine3d::distanceXZ.
-// smoothstep, rotateY i angleLerp pochodzą z silnika (core/math.h).
-inline float dist2D(const Vec3& a, const Vec3& b) {
-    return distanceXZ(a, b);
-}
+// distanceXZ, smoothstep, rotateY i angleLerp pochodzą z silnika (core/math.h).
 
 } // namespace settlers

@@ -151,7 +151,7 @@ void SettlersApp::drawWorldBars() {
         if (!u.alive) continue;
         if (u.faction != kPlayer && !w.visibleToPlayer(u.pos)) continue;   // mgła wojny
         const UnitDef& def = unitDef(u.type);
-        const bool show = u.selected || u.hp < def.maxHp || w.gameTime - u.lastDamagedTime < 4.0f;
+        const bool show = u.selected || u.hp < def.maxHp || w.gameTime - u.lastDamagedTime < kHpBarAfterHitSeconds;
         if (!show) continue;
         if (length2(subtract(u.pos, eye)) > maxDist * maxDist) continue;
         float sx, sy;
@@ -164,7 +164,7 @@ void SettlersApp::drawWorldBars() {
         if (!b.alive) continue;
         if (b.faction != kPlayer && !w.visibleToPlayer(b.pos)) continue;   // mgła wojny: stan budynku tylko w zasięgu wzroku
         const BuildingDef& def = buildingDef(b.type);
-        const bool show = b.selected || !b.constructed || b.hp < def.maxHp * 0.999f || w.gameTime - b.lastDamagedTime < 4.0f;
+        const bool show = b.selected || !b.constructed || b.hp < def.maxHp * 0.999f || w.gameTime - b.lastDamagedTime < kHpBarAfterHitSeconds;
         if (!show) continue;
         if (length2(subtract(b.pos, eye)) > maxDist * maxDist * 1.4f) continue;
         const float top = b.constructed ? def.height + 3.0f : def.height * 0.75f + 3.0f;
@@ -206,7 +206,7 @@ void SettlersApp::drawWorldBars() {
             label = "! brak dostaw - praca stoi";
         } else if (b.repairBlocked) {
             label = "! brak desek na naprawę";
-        } else if (w.needsRepairPublic(b) && w.gameTime - b.lastDamagedTime > 8.0f) {
+        } else if (w.needsRepairPublic(b) && w.gameTime - b.lastDamagedTime > kRecoveryDelay) {
             label = "naprawa";
             color = {0.6f, 0.85f, 1.0f, 1.0f};
         } else {
@@ -283,235 +283,251 @@ void SettlersApp::drawMinimap() {
     gui_->addOverlayFrame(cx - vs * 0.5f, cy - vs * 0.35f, vs, vs * 0.7f, 1.0f, {1, 1, 1, 0.9f}, 0.955f);
 }
 
-// Panel na dole ekranu: szczegóły zaznaczonego budynku, jednej jednostki albo podsumowanie grupy.
+// Panel na dole ekranu: szczegóły zaznaczonej flagi, budynku, jednej jednostki albo podsumowanie grupy.
 void SettlersApp::drawSelectionPanel() {
-    const World& w = *world_;
     selPanelW_ = 470;
+    selPanelH_ = 132;
     selPanelX_ = static_cast<int>(screenW_ * 0.5f) - selPanelW_ / 2;
-    const int panelH = 132;
-    selPanelH_ = panelH;
     // Panel stoi nad paskiem budowy (albo przy dolnej krawędzi, gdy paska nie ma - pokaz AI).
     const float bottom = buildBarVisible() ? buildBar_.y() - 14.0f : screenH_ - 12.0f;
-    selPanelY_ = static_cast<int>(bottom) - panelH;
+    selPanelY_ = static_cast<int>(bottom) - selPanelH_;
     if (!hasSelectionPanel()) return;
     const float px = static_cast<float>(selPanelX_), py = static_cast<float>(selPanelY_);
-    gui_->addOverlayRect(px - 3, py - 3, selPanelW_ + 6.0f, panelH + 6.0f, {0.55f, 0.45f, 0.25f, 0.95f}, 0.97f);
-    gui_->addOverlayRect(px, py, static_cast<float>(selPanelW_), static_cast<float>(panelH), {0.1f, 0.085f, 0.06f, 0.92f}, 0.965f);
+    gui_->addOverlayRect(px - 3, py - 3, selPanelW_ + 6.0f, selPanelH_ + 6.0f, {0.55f, 0.45f, 0.25f, 0.95f}, 0.97f);
+    gui_->addOverlayRect(px, py, static_cast<float>(selPanelW_), static_cast<float>(selPanelH_), {0.1f, 0.085f, 0.06f, 0.92f}, 0.965f);
 
-    const Color title{1.0f, 0.92f, 0.65f, 1.0f};
-    const Color body{0.9f, 0.9f, 0.88f, 1.0f};
+    if (selectedFlag_ >= 0) drawFlagPanel(px, py);
+    else if (selectedBuilding_ >= 0) drawBuildingPanel(px, py);
+    else if (selectedUnits_.size() == 1) drawUnitPanel(px, py);
+    else drawGroupPanel(px, py);
+}
 
-    if (selectedFlag_ >= 0) {
-        const Flag& fl = w.flags[selectedFlag_];
-        text(fl.building >= 0 ? std::string("Flaga: ") + buildingDef(w.buildings[fl.building].type).name : "Flaga", px + 14, py + 26,
-             0.7f, title);
-        int counts[kGoodTypeCount + 1] = {};
-        for (CarryType g : fl.goods) counts[static_cast<int>(g)]++;
-        std::string goods = "Towary: " + std::to_string(fl.goods.size()) + "/" + std::to_string(kFlagCapacity);
-        for (int t = 1; t <= kGoodTypeCount; ++t) {
-            if (counts[t] > 0) goods += "   " + std::string(goodName(static_cast<CarryType>(t))) + ": " + std::to_string(counts[t]);
-        }
-        const int reserved = static_cast<int>(fl.goods.size()) - w.flagAvailableGoods(fl);
-        if (reserved > 0) goods += "   (tragarze idą po " + std::to_string(reserved) + ")";
-        text(goods, px + 14, py + 54, 0.52f, body);
-        text("Drogi: " + std::to_string(fl.roads.size()) + "   " +
-                 (fl.connected ? "połączona z magazynem" : "BRAK POŁĄCZENIA Z MAGAZYNEM"),
-             px + 14, py + 80, 0.5f, fl.connected ? body : Color{1.0f, 0.55f, 0.35f, 1.0f});
-        text("T: droga od tej flagi   Del: usuń flagę i jej drogi", px + 14, py + 112, 0.45f, {0.75f, 0.75f, 0.7f, 1.0f});
-        return;
+namespace {
+const Color kPanelTitle{1.0f, 0.92f, 0.65f, 1.0f};
+const Color kPanelBody{0.9f, 0.9f, 0.88f, 1.0f};
+const Color kPanelHint{0.75f, 0.75f, 0.7f, 1.0f};
+const Color kPanelGood{0.8f, 0.95f, 0.8f, 1.0f};
+const Color kPanelInfo{0.8f, 0.9f, 1.0f, 1.0f};
+const Color kPanelWarn{1.0f, 0.75f, 0.4f, 1.0f};
+const Color kPanelBad{1.0f, 0.5f, 0.35f, 1.0f};
+} // namespace
+
+void SettlersApp::drawFlagPanel(float px, float py) {
+    const World& w = *world_;
+    const Flag& fl = w.flags[selectedFlag_];
+    text(fl.building >= 0 ? std::string("Flaga: ") + buildingDef(w.buildings[fl.building].type).name : "Flaga", px + 14, py + 26,
+         0.7f, kPanelTitle);
+    int counts[kGoodTypeCount + 1] = {};
+    for (CarryType g : fl.goods) counts[static_cast<int>(g)]++;
+    std::string goods = "Towary: " + std::to_string(fl.goods.size()) + "/" + std::to_string(kFlagCapacity);
+    for (int t = 1; t <= kGoodTypeCount; ++t) {
+        if (counts[t] > 0) goods += "   " + std::string(goodName(static_cast<CarryType>(t))) + ": " + std::to_string(counts[t]);
     }
+    const int reserved = static_cast<int>(fl.goods.size()) - w.flagAvailableGoods(fl);
+    if (reserved > 0) goods += "   (tragarze idą po " + std::to_string(reserved) + ")";
+    text(goods, px + 14, py + 54, 0.52f, kPanelBody);
+    text("Drogi: " + std::to_string(fl.roads.size()) + "   " + (fl.connected ? "połączona z magazynem" : "BRAK POŁĄCZENIA Z MAGAZYNEM"),
+         px + 14, py + 80, 0.5f, fl.connected ? kPanelBody : Color{1.0f, 0.55f, 0.35f, 1.0f});
+    text("T: droga od tej flagi   Del: usuń flagę i jej drogi", px + 14, py + 112, 0.45f, kPanelHint);
+}
 
-    if (selectedBuilding_ >= 0) {
-        const Building& b = w.buildings[selectedBuilding_];
-        const BuildingDef& def = buildingDef(b.type);
-        text(std::string(def.name) + (b.faction == kPlayer ? "" : " (wróg)"), px + 14, py + 26, 0.7f, title);
-        bar(px + 14, py + 38, 200, 8, b.hp / def.maxHp, hpColor(b.hp / def.maxHp));
-        text(std::to_string(static_cast<int>(b.hp)) + " / " + std::to_string(static_cast<int>(def.maxHp)), px + 224, py + 47,
-             0.45f, body);
-        std::string status;
-        std::string resLine;
-        Color resColor{0.8f, 0.95f, 0.8f, 1.0f};
-        if (!b.constructed) {
-            status = "W budowie: " + std::to_string(static_cast<int>(b.progress * 100.0f)) + "%   Materiały: " +
-                     std::to_string(b.delivered.total()) + "/" + std::to_string(def.cost.total());
-            if (b.faction == kPlayer && def.cost.total() > 0) {
-                if (!w.flagConnected(b.flag)) {
-                    resLine = "Brak drogi do magazynu - tragarze nie dowiozą materiałów (T: droga)";
-                    resColor = {1.0f, 0.5f, 0.35f, 1.0f};
-                } else if (b.delivered.total() < def.cost.total()) {
-                    resLine = "Tragarze donoszą materiały z magazynu";
-                    resColor = {0.8f, 0.9f, 1.0f, 1.0f};
-                }
-            }
-        } else if (def.needsWorker) {
-            status = (b.worker >= 0 && w.units[b.worker].alive) ? "Pracownik: jest" : "Pracownik: brak (czeka na osadnika)";
-            if (b.produced > 0) {
-                status += (b.type == BuildingType::Forester ? "   Posadzono: " : "   Dostarczono: ") + std::to_string(b.produced);
-            }
-            if (b.type == BuildingType::Forester) {
-                resLine = "Rosnące sadzonki w okolicy: " + std::to_string(w.saplingsNear(b.pos, def.workRadius)) +
-                          " (rosną ok. " + std::to_string(static_cast<int>(kTreeGrowSeconds / 60.0f)) + " min)";
-            }
-            if (b.type == BuildingType::Woodcutter || b.type == BuildingType::Quarry) {
-                const bool tree = b.type == BuildingType::Woodcutter;
-                if (b.lacksResources) {
-                    resLine = tree ? "BRAK DRZEW - postaw leśniczego obok albo drwala bliżej lasu"
-                                   : "BRAK SKAŁ - postaw kamieniarza przy skałach albo kopalnię w górach";
-                    resColor = {1.0f, 0.5f, 0.35f, 1.0f};
-                } else if (b.resourcesInRange >= 0) {
-                    resLine = std::string(tree ? "Drzewa" : "Skały") + " w zasięgu pracy: " + std::to_string(b.resourcesInRange);
-                    if (tree) resLine += ", rośnie: " + std::to_string(w.saplingsNear(b.pos, def.workRadius));
-                    if (b.resourcesInRange <= 2) resColor = {1.0f, 0.85f, 0.45f, 1.0f};
-                }
-            }
-        } else if (b.type == BuildingType::Barracks) {
-            status = "Kolejka: " + std::to_string(b.trainQueue.size()) +
-                     (b.autoTrain ? "   Auto: " + std::to_string(b.swordShare) + "% mieczników, " +
-                                        std::to_string(100 - b.swordShare) + "% łuczników"
-                                  : "   Auto: wył.");
-            if (!b.trainQueue.empty() && !b.trainPaid) {
-                resLine = w.flagConnected(b.flag) ? "Czeka, aż tragarze dowiozą koszt szkolenia"
-                                                  : "Brak drogi do magazynu - koszt szkolenia nie dotrze";
-                resColor = {1.0f, 0.75f, 0.4f, 1.0f};
-            }
-            if (!b.trainQueue.empty()) {
-                const float total = unitDef(b.trainQueue.front()).trainTime;
-                status += std::string("   Szkoli: ") + unitDef(b.trainQueue.front()).name + " " +
-                          std::to_string(static_cast<int>(std::min(1.0f, b.trainTimer / total) * 100.0f)) + "%";
-            }
-        } else if (def.popBonus > 0) {
-            status = "Mieszkańcy: +" + std::to_string(def.popBonus);
-        } else if (World::garrisonCapacity(b.type) > 0 && b.constructed) {
-            const int g = w.garrisonOf(selectedBuilding_), cap = World::garrisonCapacity(b.type);
-            status = "Załoga: " + std::to_string(g) + "/" + std::to_string(cap) + (g > 0 ? "   strzela" : "   PUSTA - nie strzela");
-            if (b.faction == kPlayer) {
-                resLine = g > 0 ? "PPM z zaznaczonym wojskiem: dołóż żołnierzy" : "Pusta wieża - wróg może ją zdobyć! Obsadź (PPM z wojskiem)";
-                resColor = g > 0 ? Color{0.8f, 0.9f, 1.0f, 1.0f} : Color{1.0f, 0.55f, 0.35f, 1.0f};
-            } else {
-                resLine = g > 0 ? "Wroga załoga - szturmuj, obrońcy wyjdą do walki" : "Pusta wieża - żołnierz, który do niej wejdzie, zdobędzie ją";
-                resColor = {1.0f, 0.85f, 0.5f, 1.0f};
-            }
-        } else if (def.attackRange > 0.0f) {
-            status = "Zasięg strzału: " + std::to_string(static_cast<int>(def.attackRange));
+// Budynek: nazwa, życie, linia stanu (budowa / praca / kolejka / załoga...) i linia podpowiedzi (co blokuje,
+// co zrobić). Podpowiedź ustawiają kolejne kroki - późniejszy (ważniejszy problem) nadpisuje wcześniejszy.
+void SettlersApp::drawBuildingPanel(float px, float py) {
+    const World& w = *world_;
+    const Building& b = w.buildings[selectedBuilding_];
+    const BuildingDef& def = buildingDef(b.type);
+    text(std::string(def.name) + (b.faction == kPlayer ? "" : " (wróg)"), px + 14, py + 26, 0.7f, kPanelTitle);
+    bar(px + 14, py + 38, 200, 8, b.hp / def.maxHp, hpColor(b.hp / def.maxHp));
+    text(std::to_string(static_cast<int>(b.hp)) + " / " + std::to_string(static_cast<int>(def.maxHp)), px + 224, py + 47, 0.45f,
+         kPanelBody);
+
+    PanelText status;
+    PanelText hint{"", kPanelGood};
+    describeBuildingState(b, status, hint);
+    describeBuildingRepair(b, status);
+    describeBuildingGoods(b, status, hint);
+    if (b.unreachable && b.faction == kPlayer) hint = {"Osadnicy nie mogą tu dojść - udrożnij drogę lub zburz (Del)", kPanelBad};
+
+    text(status.text, px + 14, py + 76, 0.52f, kPanelBody);
+    if (!hint.text.empty()) text(hint.text, px + 14, py + 104, 0.5f, hint.color);
+    else text(def.description, px + 14, py + 104, 0.45f, kPanelHint);
+}
+
+// Stan zależny od rodzaju budynku: budowa, pracownik i surowce, koszary, dom, załoga wieży.
+void SettlersApp::describeBuildingState(const Building& b, PanelText& status, PanelText& hint) const {
+    const World& w = *world_;
+    const BuildingDef& def = buildingDef(b.type);
+    if (!b.constructed) {
+        status.text = "W budowie: " + std::to_string(static_cast<int>(b.progress * 100.0f)) + "%   Materiały: " +
+                      std::to_string(b.delivered.total()) + "/" + std::to_string(def.cost.total());
+        if (b.faction == kPlayer && def.cost.total() > 0) {
+            if (!w.flagConnected(b.flag)) hint = {"Brak drogi do magazynu - tragarze nie dowiozą materiałów (T: droga)", kPanelBad};
+            else if (b.delivered.total() < def.cost.total()) hint = {"Tragarze donoszą materiały z magazynu", kPanelInfo};
         }
-        if (b.constructed && b.hp < def.maxHp * 0.97f) {
-            const int rep = w.repairersOf(selectedBuilding_);
-            if (b.repairBlocked) status += "   Naprawa: brak desek";
-            else if (rep > 0) status += "   Naprawia: " + std::to_string(rep);
-            else if (w.gameTime - b.lastDamagedTime < 8.0f) status += "   Naprawa po walce";
-            else status += "   Czeka na naprawę";
+    } else if (def.needsWorker) {
+        status.text = (b.worker >= 0 && w.units[b.worker].alive) ? "Pracownik: jest" : "Pracownik: brak (czeka na osadnika)";
+        if (b.produced > 0) {
+            status.text += (b.type == BuildingType::Forester ? "   Posadzono: " : "   Dostarczono: ") + std::to_string(b.produced);
         }
-        // Magazyn: zapasy; warsztat: towary na fladze i połączenie z magazynem.
-        if (b.constructed && storageCapacity(b.type) > 0) {
-            resLine = "Zapas " + std::to_string(b.stock.total()) + "/" + std::to_string(storageCapacity(b.type)) + ": " +
-                      stockSummary(b.stock, 5);
-            resColor = b.stock.total() >= storageCapacity(b.type) ? Color{1.0f, 0.55f, 0.35f, 1.0f} : Color{0.8f, 0.95f, 0.8f, 1.0f};
-            if (b.type == BuildingType::Warehouse && !w.buildingLinked(b)) {
-                resLine = "Brak drogi do zamku - połącz Magazyn z siecią dróg ('Połącz drogą' lub T)";
-                resColor = {1.0f, 0.5f, 0.35f, 1.0f};
+        if (b.type == BuildingType::Forester) {
+            hint.text = "Rosnące sadzonki w okolicy: " + std::to_string(w.saplingsNear(b.pos, def.workRadius)) + " (rosną ok. " +
+                        std::to_string(static_cast<int>(kTreeGrowSeconds / 60.0f)) + " min)";
+        }
+        if (b.type == BuildingType::Woodcutter || b.type == BuildingType::Quarry) {
+            const bool tree = b.type == BuildingType::Woodcutter;
+            if (b.lacksResources) {
+                hint = {tree ? "BRAK DRZEW - postaw leśniczego obok albo drwala bliżej lasu"
+                             : "BRAK SKAŁ - postaw kamieniarza przy skałach albo kopalnię w górach",
+                        kPanelBad};
+            } else if (b.resourcesInRange >= 0) {
+                hint.text = std::string(tree ? "Drzewa" : "Skały") + " w zasięgu pracy: " + std::to_string(b.resourcesInRange);
+                if (tree) hint.text += ", rośnie: " + std::to_string(w.saplingsNear(b.pos, def.workRadius));
+                if (b.resourcesInRange <= 2) hint.color = {1.0f, 0.85f, 0.45f, 1.0f};
             }
         }
-        // Warsztat z towarami wejściowymi: co ma u siebie i czego brakuje.
-        if (b.constructed && b.faction == kPlayer) {
-            std::string inputs;
-            for (CarryType in : productionDef(b.type).inputs) {
-                if (in == CarryType::None) continue;
-                const int have = in == CarryType::AnyFood ? b.delivered.food() : b.delivered[in];
-                inputs += (inputs.empty() ? "" : ", ") + std::string(goodName(in)) + " " + std::to_string(have);
-            }
-            if (!inputs.empty()) {
-                resLine = "Dostarczone: " + inputs;
-                resColor = {0.8f, 0.95f, 0.8f, 1.0f};
-                if (b.inputStarved) {
-                    resLine += "  - BRAK w magazynach, praca stoi";
-                    resColor = {1.0f, 0.6f, 0.4f, 1.0f};
-                }
-            }
+    } else if (b.type == BuildingType::Barracks) {
+        status.text = "Kolejka: " + std::to_string(b.trainQueue.size()) +
+                      (b.autoTrain ? "   Auto: " + std::to_string(b.swordShare) + "% mieczników, " +
+                                         std::to_string(100 - b.swordShare) + "% łuczników"
+                                   : "   Auto: wył.");
+        if (!b.trainQueue.empty() && !b.trainPaid) {
+            hint = {w.flagConnected(b.flag) ? "Czeka, aż tragarze dowiozą koszt szkolenia"
+                                            : "Brak drogi do magazynu - koszt szkolenia nie dotrze",
+                    kPanelWarn};
         }
-        if (b.constructed && producesGoods(b.type) && b.flag >= 0) {
-            const Flag& fl = w.flags[b.flag];
-            status += "   Na fladze: " + std::to_string(fl.goods.size()) + "/" + std::to_string(kFlagCapacity);
-            if (!fl.connected) {
-                resLine = "Brak drogi do magazynu - towary nie dotrą (T: droga, albo 'Połącz drogą')";
-                resColor = {1.0f, 0.5f, 0.35f, 1.0f};
-            } else if (b.outputBlocked) {
-                switch (w.flagBlockReason(b.flag)) {
-                case World::FlagBlock::StorageFull:
-                    resLine = "Flaga pełna - magazyny pełne: zbuduj Magazyn albo obniż limity zapasu (I)";
-                    break;
-                case World::FlagBlock::StockLimit:
-                    resLine = "Flaga pełna - zapas osiągnął limit (I); towar idzie prosto do odbiorców";
-                    break;
-                default: resLine = "Flaga pełna - produkcja wstrzymana, czeka na tragarza (I: tragarze)"; break;
-                }
-                resColor = {1.0f, 0.75f, 0.4f, 1.0f};
-            }
+        if (!b.trainQueue.empty()) {
+            const float total = unitDef(b.trainQueue.front()).trainTime;
+            status.text += std::string("   Szkoli: ") + unitDef(b.trainQueue.front()).name + " " +
+                           std::to_string(static_cast<int>(std::min(1.0f, b.trainTimer / total) * 100.0f)) + "%";
         }
-        if (b.unreachable && b.faction == kPlayer) {
-            resLine = "Osadnicy nie mogą tu dojść - udrożnij drogę lub zburz (Del)";
-            resColor = {1.0f, 0.5f, 0.35f, 1.0f};
-        }
-        text(status, px + 14, py + 76, 0.52f, body);
-        if (!resLine.empty()) {
-            text(resLine, px + 14, py + 104, 0.5f, resColor);
+    } else if (def.popBonus > 0) {
+        status.text = "Mieszkańcy: +" + std::to_string(def.popBonus);
+    } else if (World::garrisonCapacity(b.type) > 0) {
+        const int g = w.garrisonOf(selectedBuilding_), cap = World::garrisonCapacity(b.type);
+        status.text = "Załoga: " + std::to_string(g) + "/" + std::to_string(cap) + (g > 0 ? "   strzela" : "   PUSTA - nie strzela");
+        if (b.faction == kPlayer) {
+            hint = g > 0 ? PanelText{"PPM z zaznaczonym wojskiem: dołóż żołnierzy", kPanelInfo}
+                         : PanelText{"Pusta wieża - wróg może ją zdobyć! Obsadź (PPM z wojskiem)", Color{1.0f, 0.55f, 0.35f, 1.0f}};
         } else {
-            text(def.description, px + 14, py + 104, 0.45f, {0.75f, 0.75f, 0.7f, 1.0f});
+            hint = {g > 0 ? "Wroga załoga - szturmuj, obrońcy wyjdą do walki" : "Pusta wieża - żołnierz, który do niej wejdzie, zdobędzie ją",
+                    {1.0f, 0.85f, 0.5f, 1.0f}};
         }
-        return;
+    } else if (def.attackRange > 0.0f) {
+        status.text = "Zasięg strzału: " + std::to_string(static_cast<int>(def.attackRange));
     }
+}
 
-    if (selectedUnits_.size() == 1) {
-        const Unit& u = w.units[selectedUnits_[0]];
-        const UnitDef& def = unitDef(u.type);
-        text(std::string(def.name) + (u.faction == kPlayer ? "" : " (wróg)"), px + 14, py + 26, 0.7f, title);
-        bar(px + 14, py + 38, 200, 8, u.hp / def.maxHp, hpColor(u.hp / def.maxHp));
-        text(std::to_string(static_cast<int>(u.hp)) + " / " + std::to_string(static_cast<int>(def.maxHp)), px + 224, py + 47,
-             0.45f, body);
-        std::string st = stateText(u, w);
-        if (u.type == UnitType::Settler && u.building >= 0 && w.buildings[u.building].alive &&
-            w.buildings[u.building].constructed && (u.state == UnitState::GoBuild || u.state == UnitState::Building)) {
-            st = u.state == UnitState::Building ? "Naprawia budynek" : "Idzie naprawić budynek";
+// Uszkodzony budynek: kto i czy go naprawia.
+void SettlersApp::describeBuildingRepair(const Building& b, PanelText& status) const {
+    const World& w = *world_;
+    if (!b.constructed || !w.needsRepairPublic(b)) return;
+    const int repairers = w.repairersOf(selectedBuilding_);
+    if (b.repairBlocked) status.text += "   Naprawa: brak desek";
+    else if (repairers > 0) status.text += "   Naprawia: " + std::to_string(repairers);
+    else if (w.gameTime - b.lastDamagedTime < kRecoveryDelay) status.text += "   Naprawa po walce";
+    else status.text += "   Czeka na naprawę";
+}
+
+// Towary: zapas magazynu, dostarczone surowce warsztatu i towary na fladze wyjściowej.
+void SettlersApp::describeBuildingGoods(const Building& b, PanelText& status, PanelText& hint) const {
+    const World& w = *world_;
+    if (!b.constructed) return;
+    if (storageCapacity(b.type) > 0) {
+        const bool full = b.stock.total() >= storageCapacity(b.type);
+        hint = {"Zapas " + std::to_string(b.stock.total()) + "/" + std::to_string(storageCapacity(b.type)) + ": " + stockSummary(b.stock, 5),
+                full ? Color{1.0f, 0.55f, 0.35f, 1.0f} : kPanelGood};
+        if (b.type == BuildingType::Warehouse && !w.buildingLinked(b)) {
+            hint = {"Brak drogi do zamku - połącz Magazyn z siecią dróg ('Połącz drogą' lub T)", kPanelBad};
         }
-        if (u.hp < def.maxHp && w.gameTime - u.lastDamagedTime >= 8.0f && u.state != UnitState::Attack) st += "  (leczy się)";
-        text(st, px + 14, py + 76, 0.55f, body);
-        if (u.type == UnitType::Settler) {
-            std::string job = "Osadnicy pracują samodzielnie - budują, obsługują warsztaty i noszą towary.";
-            if (u.building >= 0 && w.buildings[u.building].alive) {
-                job = std::string("Miejsce: ") + buildingDef(w.buildings[u.building].type).name;
+    }
+    if (b.faction == kPlayer) {
+        std::string inputs;
+        for (CarryType in : productionDef(b.type).inputs) {
+            if (in == CarryType::None) continue;
+            const int have = in == CarryType::AnyFood ? b.delivered.food() : b.delivered[in];
+            inputs += (inputs.empty() ? "" : ", ") + std::string(goodName(in)) + " " + std::to_string(have);
+        }
+        if (!inputs.empty()) {
+            hint = {"Dostarczone: " + inputs, kPanelGood};
+            if (b.inputStarved) hint = {hint.text + "  - BRAK w magazynach, praca stoi", {1.0f, 0.6f, 0.4f, 1.0f}};
+        }
+    }
+    if (producesGoods(b.type) && b.flag >= 0) {
+        const Flag& fl = w.flags[b.flag];
+        status.text += "   Na fladze: " + std::to_string(fl.goods.size()) + "/" + std::to_string(kFlagCapacity);
+        if (!fl.connected) {
+            hint = {"Brak drogi do magazynu - towary nie dotrą (T: droga, albo 'Połącz drogą')", kPanelBad};
+        } else if (b.outputBlocked) {
+            switch (w.flagBlockReason(b.flag)) {
+            case World::FlagBlock::StorageFull:
+                hint.text = "Flaga pełna - magazyny pełne: zbuduj Magazyn albo obniż limity zapasu (I)";
+                break;
+            case World::FlagBlock::StockLimit:
+                hint.text = "Flaga pełna - zapas osiągnął limit (I); towar idzie prosto do odbiorców";
+                break;
+            default: hint.text = "Flaga pełna - produkcja wstrzymana, czeka na tragarza (I: tragarze)"; break;
             }
-            text(job, px + 14, py + 104, 0.45f, {0.75f, 0.75f, 0.7f, 1.0f});
-        } else {
-            text("Atak: " + std::to_string(static_cast<int>(def.damage)) + "   Zasięg: " +
-                     std::to_string(static_cast<int>(def.range)) + "   PPM: ruch / atak, Ctrl+PPM: marsz bojowy, H: stój",
-                 px + 14, py + 104, 0.45f, {0.75f, 0.75f, 0.7f, 1.0f});
+            hint.color = kPanelWarn;
         }
-        return;
     }
+}
 
-    // Wiele jednostek
+void SettlersApp::drawUnitPanel(float px, float py) {
+    const World& w = *world_;
+    const Unit& u = w.units[selectedUnits_[0]];
+    const UnitDef& def = unitDef(u.type);
+    text(std::string(def.name) + (u.faction == kPlayer ? "" : " (wróg)"), px + 14, py + 26, 0.7f, kPanelTitle);
+    bar(px + 14, py + 38, 200, 8, u.hp / def.maxHp, hpColor(u.hp / def.maxHp));
+    text(std::to_string(static_cast<int>(u.hp)) + " / " + std::to_string(static_cast<int>(def.maxHp)), px + 224, py + 47, 0.45f,
+         kPanelBody);
+
+    std::string state = stateText(u, w);
+    const bool atBuilding = u.building >= 0 && w.buildings[u.building].alive;
+    // Osadnik przy gotowym budynku "buduje" = naprawia.
+    if (u.type == UnitType::Settler && atBuilding && w.buildings[u.building].constructed &&
+        (u.state == UnitState::GoBuild || u.state == UnitState::Building)) {
+        state = u.state == UnitState::Building ? "Naprawia budynek" : "Idzie naprawić budynek";
+    }
+    if (u.hp < def.maxHp && w.gameTime - u.lastDamagedTime >= kRecoveryDelay && u.state != UnitState::Attack) state += "  (leczy się)";
+    text(state, px + 14, py + 76, 0.55f, kPanelBody);
+
+    if (u.type == UnitType::Settler) {
+        const std::string job = atBuilding ? std::string("Miejsce: ") + buildingDef(w.buildings[u.building].type).name
+                                           : "Osadnicy pracują samodzielnie - budują, obsługują warsztaty i noszą towary.";
+        text(job, px + 14, py + 104, 0.45f, kPanelHint);
+    } else {
+        text("Atak: " + std::to_string(static_cast<int>(def.damage)) + "   Zasięg: " + std::to_string(static_cast<int>(def.range)) +
+                 "   PPM: ruch / atak, Ctrl+PPM: marsz bojowy, H: stój",
+             px + 14, py + 104, 0.45f, kPanelHint);
+    }
+}
+
+// Grupa jednostek: liczebność według typu i siatka ikon z paskami życia (do 54 ikon, 18 w rzędzie).
+void SettlersApp::drawGroupPanel(float px, float py) {
+    const World& w = *world_;
     std::map<std::string, int> counts;
     for (int id : selectedUnits_) counts[unitDef(w.units[id].type).name]++;
     std::string summary = "Zaznaczono: ";
     bool first = true;
     for (const auto& [name, c] : counts) {
-        if (!first) summary += ", ";
-        summary += std::to_string(c) + "x " + name;
+        summary += (first ? "" : ", ") + std::to_string(c) + "x " + name;
         first = false;
     }
-    text(summary, px + 14, py + 26, 0.62f, title);
-    const int perRow = 18;
-    for (size_t i = 0; i < selectedUnits_.size() && i < 54; ++i) {
+    text(summary, px + 14, py + 26, 0.62f, kPanelTitle);
+
+    constexpr int kPerRow = 18;
+    for (size_t i = 0; i < selectedUnits_.size() && i < 3 * kPerRow; ++i) {
         const Unit& u = w.units[selectedUnits_[i]];
         const UnitDef& def = unitDef(u.type);
-        const float ix = px + 14 + static_cast<float>(i % perRow) * 24.0f;
-        const float iy = py + 40 + static_cast<float>(i / perRow) * 22.0f;
+        const float ix = px + 14 + static_cast<float>(i % kPerRow) * 24.0f;
+        const float iy = py + 40 + static_cast<float>(i / kPerRow) * 22.0f;
         const Vec3 fc = u.type == UnitType::Settler ? Vec3{0.8f, 0.7f, 0.4f}
                                                      : (u.type == UnitType::Archer ? Vec3{0.4f, 0.7f, 0.3f} : Vec3{0.6f, 0.65f, 0.75f});
         gui_->addOverlayRect(ix, iy, 20, 14, {fc.x, fc.y, fc.z, 1.0f}, 0.96f);
         bar(ix, iy + 16, 20, 3, u.hp / def.maxHp, hpColor(u.hp / def.maxHp));
     }
-    text("PPM: ruch / atak   Ctrl+PPM: marsz bojowy   H: stój   Tab: całe wojsko", px + 14, py + 120, 0.45f,
-         {0.75f, 0.75f, 0.7f, 1.0f});
+    text("PPM: ruch / atak   Ctrl+PPM: marsz bojowy   H: stój   Tab: całe wojsko", px + 14, py + 120, 0.45f, kPanelHint);
 }
 
 // Pomoc F1: lista sterowania w dwóch kolumnach (z kControls) i zasady gry.

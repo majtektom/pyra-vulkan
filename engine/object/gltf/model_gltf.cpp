@@ -135,254 +135,239 @@ std::string texturePath(const tinygltf::Model& model, int texIdx, const std::str
     return "";
 }
 
-} // namespace
+// Indeks akcesora atrybutu wierzchołka (np. "POSITION"), -1 gdy siatka go nie ma.
+int attributeAccessor(const tinygltf::Primitive& prim, const char* name) {
+    const auto it = prim.attributes.find(name);
+    return it != prim.attributes.end() ? it->second : -1;
+}
 
-GltfModel loadGltfModel(const std::string& path) {
-    tinygltf::Model model;
-    tinygltf::TinyGLTF loader;
-    loader.SetImageLoader(loadGltfImage, nullptr);
-    std::string err, warn;
+// Obrót z kwaternionu węzła jako macierz 4x4 (kolumny = obrócone osie X, Y, Z).
+Matrix4 rotationMatrix(const std::vector<double>& rotation) {
+    const Quaternion q{(float)rotation[0], (float)rotation[1], (float)rotation[2], (float)rotation[3]};
+    const Vec3 x = rotateVector(q, Vec3{1, 0, 0});
+    const Vec3 y = rotateVector(q, Vec3{0, 1, 0});
+    const Vec3 z = rotateVector(q, Vec3{0, 0, 1});
+    Matrix4 r = Matrix4::identity();
+    r.values[0] = x.x; r.values[1] = x.y; r.values[2] = x.z;
+    r.values[4] = y.x; r.values[5] = y.y; r.values[6] = y.z;
+    r.values[8] = z.x; r.values[9] = z.y; r.values[10] = z.z;
+    return r;
+}
 
-    bool ok = false;
-    if (path.size() >= 4 && path.substr(path.size() - 4) == ".glb")
-        ok = loader.LoadBinaryFromFile(&model, &err, &warn, path);
-    else
-        ok = loader.LoadASCIIFromFile(&model, &err, &warn, path);
-
-    if (!warn.empty()) LOG_WARN("glTF warn: {}", warn);
-    if (!err.empty()) throw std::runtime_error("glTF error: " + err);
-    if (!ok) throw std::runtime_error("Failed to load glTF: " + path);
-
-    std::string baseDir;
-    auto slash = path.find_last_of("/\\");
-    if (slash != std::string::npos) baseDir = path.substr(0, slash);
-
-    GltfModel result;
-    std::vector<std::string> tempFiles;
-
-    std::function<Matrix4(int)> nodeWorldMatrix = [&](int nodeIdx) -> Matrix4 {
-        if (nodeIdx < 0 || nodeIdx >= (int)model.nodes.size()) return Matrix4::identity();
-        const auto& node = model.nodes[nodeIdx];
-        Matrix4 local = Matrix4::identity();
-        if (!node.matrix.empty() && node.matrix.size() == 16) {
-            for (int i = 0; i < 16; ++i) local.values[i] = (float)node.matrix[i];
-        } else {
-            if (!node.rotation.empty()) {
-                Quaternion q{(float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2], (float)node.rotation[3]};
-                Vec3 v{1,0,0}; v = rotateVector(q, v);
-                Vec3 v2{0,1,0}; v2 = rotateVector(q, v2);
-                Vec3 v3{0,0,1}; v3 = rotateVector(q, v3);
-                Matrix4 r = Matrix4::identity();
-                r.values[0] = v.x; r.values[1] = v.y; r.values[2] = v.z;
-                r.values[4] = v2.x; r.values[5] = v2.y; r.values[6] = v2.z;
-                r.values[8] = v3.x; r.values[9] = v3.y; r.values[10] = v3.z;
-                local = multiply(local, r);
-            }
-            if (!node.translation.empty()) local = multiply(local, translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
+int parentOf(const tinygltf::Model& model, int nodeIdx) {
+    for (int pi = 0; pi < (int)model.nodes.size(); ++pi) {
+        for (int c : model.nodes[pi].children) {
+            if (c == nodeIdx) return pi;
         }
-        for (int child : node.children) {
-            if (child == nodeIdx) continue;
+    }
+    return -1;
+}
+
+// Macierz świata węzła używana do "wypalenia" siatek statycznych w wierzchołki: obrót, potem przesunięcie,
+// złożone z rodzicami. (Animacja szkieletowa używa osobnych macierzy lokalnych - nodeLocalTransforms.)
+Matrix4 staticNodeWorldMatrix(const tinygltf::Model& model, int nodeIdx) {
+    if (nodeIdx < 0 || nodeIdx >= (int)model.nodes.size()) return Matrix4::identity();
+    const auto& node = model.nodes[nodeIdx];
+    Matrix4 local = Matrix4::identity();
+    if (node.matrix.size() == 16) {
+        for (int i = 0; i < 16; ++i) local.values[i] = (float)node.matrix[i];
+    } else {
+        if (!node.rotation.empty()) local = multiply(local, rotationMatrix(node.rotation));
+        if (!node.translation.empty()) {
+            local = multiply(local, translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
         }
-        int parentIdx = -1;
-        for (int pi = 0; pi < (int)model.nodes.size(); ++pi) {
-            for (int c : model.nodes[pi].children) {
-                if (c == nodeIdx) { parentIdx = pi; break; }
-            }
-            if (parentIdx >= 0) break;
-        }
-        if (parentIdx < 0) return local;
-        return multiply(nodeWorldMatrix(parentIdx), local);
+    }
+    const int parent = parentOf(model, nodeIdx);
+    return parent < 0 ? local : multiply(staticNodeWorldMatrix(model, parent), local);
+}
+
+// Macierz lokalna węzła w kolejności glTF: T * R * S (skala, potem obrót, potem przesunięcie).
+Matrix4 localTRS(const tinygltf::Node& node) {
+    Matrix4 local = Matrix4::identity();
+    if (node.matrix.size() == 16) {
+        for (int i = 0; i < 16; ++i) local.values[i] = (float)node.matrix[i];
+        return local;
+    }
+    if (!node.rotation.empty()) local = rotationMatrix(node.rotation);
+    if (!node.scale.empty()) local = multiply(local, scale((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]));
+    if (!node.translation.empty()) {
+        local = multiply(translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]), local);
+    }
+    return local;
+}
+
+// Materiał siatki: kolor bazowy i ścieżki tekstur PBR (osadzone w pliku są zapisywane do plików tymczasowych).
+void readPrimitiveMaterial(const tinygltf::Model& model, const tinygltf::Primitive& prim, const std::string& baseDir,
+                           std::vector<std::string>& tempFiles, GltfPrimitive& out) {
+    out.materialIndex = prim.material;
+    if (prim.material < 0 || prim.material >= (int)model.materials.size()) return;
+    const auto& mat = model.materials[prim.material];
+    const auto& pbr = mat.pbrMetallicRoughness;
+    out.materialName = mat.name;
+    out.baseColor = {(float)pbr.baseColorFactor[0], (float)pbr.baseColorFactor[1], (float)pbr.baseColorFactor[2],
+                     (float)pbr.baseColorFactor[3]};
+    auto path = [&](int textureIndex) {
+        return textureIndex >= 0 ? texturePath(model, textureIndex, baseDir, tempFiles) : std::string{};
     };
+    out.texturePath = path(pbr.baseColorTexture.index);
+    out.ormPath = path(pbr.metallicRoughnessTexture.index);
+    out.normalMapPath = path(mat.normalTexture.index);
+    out.occlusionPath = path(mat.occlusionTexture.index);
+    out.emissivePath = path(mat.emissiveTexture.index);
+}
 
+// Wierzchołki siatki. Siatki animowane zostają w układzie lokalnym - całe przekształcenie z pozy spoczynkowej
+// robią macierze kości na GPU (przemnożenie tu przez worldMat rozrzuciłoby części modelu). Siatkom statycznym
+// wliczamy przekształcenie węzła od razu w wierzchołki.
+void readPrimitiveVertices(const tinygltf::Model& model, const tinygltf::Primitive& prim, const Matrix4& worldMat,
+                           int vertexCount, MeshData& mesh) {
+    const float* positions = accessorData<float>(model, attributeAccessor(prim, "POSITION"));
+    const float* normals = accessorData<float>(model, attributeAccessor(prim, "NORMAL"));
+    const float* uvs = accessorData<float>(model, attributeAccessor(prim, "TEXCOORD_0"));
+    const float* colors = accessorData<float>(model, attributeAccessor(prim, "COLOR_0"));
+    const bool skinned = attributeAccessor(prim, "JOINTS_0") >= 0;
+    const auto& w = worldMat.values;
+    const Matrix4 normalMat = removeTranslation(worldMat);
+    const auto& nw = normalMat.values;
+
+    mesh.vertices.resize(vertexCount);
+    for (int i = 0; i < vertexCount; ++i) {
+        auto& v = mesh.vertices[i];
+        const float px = positions ? positions[i * 3] : 0, py = positions ? positions[i * 3 + 1] : 0,
+                    pz = positions ? positions[i * 3 + 2] : 0;
+        const float nx = normals ? normals[i * 3] : 0, ny = normals ? normals[i * 3 + 1] : 0,
+                    nz = normals ? normals[i * 3 + 2] : 0;
+        if (skinned) {
+            v.position = {px, py, pz};
+            v.normal = {nx, ny, nz};
+        } else {
+            v.position = {px * w[0] + py * w[4] + pz * w[8] + w[12],
+                          px * w[1] + py * w[5] + pz * w[9] + w[13],
+                          px * w[2] + py * w[6] + pz * w[10] + w[14]};
+            v.normal = {nx * nw[0] + ny * nw[4] + nz * nw[8],
+                        nx * nw[1] + ny * nw[5] + nz * nw[9],
+                        nx * nw[2] + ny * nw[6] + nz * nw[10]};
+        }
+        v.color = colors ? std::array<float, 3>{colors[i * 3], colors[i * 3 + 1], colors[i * 3 + 2]}
+                         : std::array<float, 3>{1, 1, 1};
+        // glTF ma początek UV w lewym górnym rogu, silnik w lewym dolnym - odwracamy V.
+        v.texCoord = uvs ? std::array<float, 2>{uvs[i * 2], 1.0f - uvs[i * 2 + 1]} : std::array<float, 2>{0, 0};
+    }
+}
+
+// Indeksy 4 kości na wierzchołek (uint8 albo uint16 w pliku) i ich wagi.
+template <typename JointIndex>
+void readJoints(const tinygltf::Model& model, int jointAccessor, const float* weights, int vertexCount, GltfPrimitive& out) {
+    const auto& acc = model.accessors[jointAccessor];
+    const int stride = acc.ByteStride(model.bufferViews[acc.bufferView]);
+    const auto* bytes = accessorData<uint8_t>(model, jointAccessor);
+    if (!bytes || !weights) return;
+    out.joints.resize(vertexCount);
+    out.weights.resize(vertexCount);
+    for (int i = 0; i < vertexCount; ++i) {
+        const auto* joint = reinterpret_cast<const JointIndex*>(bytes + i * stride);
+        for (int j = 0; j < 4; ++j) {
+            out.joints[i][j] = static_cast<uint32_t>(joint[j]);
+            out.weights[i][j] = weights[i * 4 + j];
+        }
+    }
+}
+
+void readPrimitiveSkinning(const tinygltf::Model& model, const tinygltf::Primitive& prim, int vertexCount, GltfPrimitive& out) {
+    const int jointAccessor = attributeAccessor(prim, "JOINTS_0");
+    if (jointAccessor < 0) return;
+    const float* weights = accessorData<float>(model, attributeAccessor(prim, "WEIGHTS_0"));
+    const int type = model.accessors[jointAccessor].componentType;
+    if (type == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+        readJoints<uint8_t>(model, jointAccessor, weights, vertexCount, out);
+    } else if (type == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+        readJoints<uint16_t>(model, jointAccessor, weights, vertexCount, out);
+    } else {
+        LOG_ERROR("nieobsługiwany typ danych JOINTS_0 (componentType {})", type);
+    }
+}
+
+// Wszystkie siatki z trójkątów, z każdego węzła, który ma siatkę.
+void readPrimitives(const tinygltf::Model& model, const std::string& baseDir, std::vector<std::string>& tempFiles,
+                    GltfModel& result) {
     for (int ni = 0; ni < (int)model.nodes.size(); ++ni) {
         const auto& node = model.nodes[ni];
         if (node.mesh < 0 || node.mesh >= (int)model.meshes.size()) continue;
+        const Matrix4 worldMat = staticNodeWorldMatrix(model, ni);
 
-        Matrix4 worldMat = nodeWorldMatrix(ni);
-        const auto& mesh = model.meshes[node.mesh];
-
-        for (size_t pi = 0; pi < mesh.primitives.size(); ++pi) {
-            const auto& prim = mesh.primitives[pi];
+        for (const auto& prim : model.meshes[node.mesh].primitives) {
             if (prim.mode != TINYGLTF_MODE_TRIANGLES && prim.mode != -1) continue;
-
-            GltfPrimitive outPrim;
-            outPrim.materialIndex = prim.material;
-
-            if (prim.material >= 0 && prim.material < (int)model.materials.size()) {
-                const auto& mat = model.materials[prim.material];
-                outPrim.materialName = mat.name;
-                auto& pbr = mat.pbrMetallicRoughness;
-                if (pbr.baseColorTexture.index >= 0)
-                    outPrim.texturePath = texturePath(model, pbr.baseColorTexture.index, baseDir, tempFiles);
-                outPrim.baseColor = {(float)pbr.baseColorFactor[0], (float)pbr.baseColorFactor[1],
-                                     (float)pbr.baseColorFactor[2], (float)pbr.baseColorFactor[3]};
-                if (pbr.metallicRoughnessTexture.index >= 0)
-                    outPrim.ormPath = texturePath(model, pbr.metallicRoughnessTexture.index, baseDir, tempFiles);
-                if (mat.normalTexture.index >= 0)
-                    outPrim.normalMapPath = texturePath(model, mat.normalTexture.index, baseDir, tempFiles);
-                if (mat.occlusionTexture.index >= 0)
-                    outPrim.occlusionPath = texturePath(model, mat.occlusionTexture.index, baseDir, tempFiles);
-                if (mat.emissiveTexture.index >= 0)
-                    outPrim.emissivePath = texturePath(model, mat.emissiveTexture.index, baseDir, tempFiles);
-            }
-
-            const float* posData = accessorData<float>(model, prim.attributes.count("POSITION") ? prim.attributes.at("POSITION") : -1);
-            const float* nrmData = accessorData<float>(model, prim.attributes.count("NORMAL") ? prim.attributes.at("NORMAL") : -1);
-            const float* texData = accessorData<float>(model, prim.attributes.count("TEXCOORD_0") ? prim.attributes.at("TEXCOORD_0") : -1);
-            const float* colData = accessorData<float>(model, prim.attributes.count("COLOR_0") ? prim.attributes.at("COLOR_0") : -1);
-
-            int posAcc = prim.attributes.count("POSITION") ? prim.attributes.at("POSITION") : -1;
-            int vertexCount = posAcc >= 0 ? (int)model.accessors[posAcc].count : 0;
+            const int positionAccessor = attributeAccessor(prim, "POSITION");
+            const int vertexCount = positionAccessor >= 0 ? (int)model.accessors[positionAccessor].count : 0;
             if (vertexCount == 0) continue;
 
-            auto indices = readIndices<unsigned char>(model, prim.indices);
-            if (indices.empty()) {
-                indices.resize(vertexCount);
-                for (int i = 0; i < vertexCount; ++i) indices[i] = (uint32_t)i;
+            GltfPrimitive out;
+            readPrimitiveMaterial(model, prim, baseDir, tempFiles, out);
+            readPrimitiveVertices(model, prim, worldMat, vertexCount, out.mesh);
+            readPrimitiveSkinning(model, prim, vertexCount, out);
+
+            out.mesh.indices = readIndices<unsigned char>(model, prim.indices);
+            if (out.mesh.indices.empty()) {   // siatka bez indeksów: wierzchołki po kolei
+                out.mesh.indices.resize(vertexCount);
+                for (int i = 0; i < vertexCount; ++i) out.mesh.indices[i] = (uint32_t)i;
             }
-
-            // Check if this primitive is skinned (has joints)
-            bool isSkinned = prim.attributes.count("JOINTS_0") > 0;
-
-            auto& meshData = outPrim.mesh;
-            meshData.vertices.resize(vertexCount);
-            for (int i = 0; i < vertexCount; ++i) {
-                auto& v = meshData.vertices[i];
-                float px = posData ? posData[i*3] : 0;
-                float py = posData ? posData[i*3+1] : 0;
-                float pz = posData ? posData[i*3+2] : 0;
-                float nx = nrmData ? nrmData[i*3] : 0;
-                float ny = nrmData ? nrmData[i*3+1] : 0;
-                float nz = nrmData ? nrmData[i*3+2] : 0;
-
-                if (isSkinned) {
-                    // For skinned meshes: store raw local-space vertices.
-                    // The GPU joint matrices handle all transformation from bind pose.
-                    // Pre-transforming by worldMat here causes parts to fly apart.
-                    v.position = {px, py, pz};
-                    v.normal = {nx, ny, nz};
-                } else {
-                    // For non-skinned meshes: bake the node world transform into vertices.
-                    Matrix4 normalMat = removeTranslation(worldMat);
-                    auto& w = worldMat.values;
-                    v.position = {px*w[0] + py*w[4] + pz*w[8] + w[12],
-                                  px*w[1] + py*w[5] + pz*w[9] + w[13],
-                                  px*w[2] + py*w[6] + pz*w[10] + w[14]};
-                    auto& nw = normalMat.values;
-                    v.normal = {nx*nw[0] + ny*nw[4] + nz*nw[8],
-                                nx*nw[1] + ny*nw[5] + nz*nw[9],
-                                nx*nw[2] + ny*nw[6] + nz*nw[10]};
-                }
-                v.color = colData ? std::array<float,3>{colData[i*3], colData[i*3+1], colData[i*3+2]} : std::array<float,3>{1,1,1};
-                v.texCoord = texData ? std::array<float,2>{texData[i*2], 1.0f - texData[i*2+1]} : std::array<float,2>{0,0};
-            }
-
-            const float* weightData = accessorData<float>(model, prim.attributes.count("WEIGHTS_0") ? prim.attributes.at("WEIGHTS_0") : -1);
-            int jointAcc = prim.attributes.count("JOINTS_0") ? prim.attributes.at("JOINTS_0") : -1;
-            if (jointAcc >= 0) {
-                const auto& acc = model.accessors[jointAcc];
-                int stride = acc.ByteStride(model.bufferViews[acc.bufferView]);
-                if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-                    const uint8_t* jointData8 = accessorData<uint8_t>(model, jointAcc);
-                    if (jointData8 && weightData) {
-                        outPrim.joints.resize(vertexCount);
-                        outPrim.weights.resize(vertexCount);
-                        for (int i = 0; i < vertexCount; ++i) {
-                            const uint8_t* jointPtr = reinterpret_cast<const uint8_t*>(reinterpret_cast<const uint8_t*>(jointData8) + i * stride);
-                            for (int j = 0; j < 4; ++j) {
-                                outPrim.joints[i][j] = static_cast<uint32_t>(jointPtr[j]);
-                                outPrim.weights[i][j] = weightData[i*4 + j];
-                            }
-                        }
-                    }
-                } else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-                    const uint16_t* jointData16 = accessorData<uint16_t>(model, jointAcc);
-                    if (jointData16 && weightData) {
-                        outPrim.joints.resize(vertexCount);
-                        outPrim.weights.resize(vertexCount);
-                        for (int i = 0; i < vertexCount; ++i) {
-                            const uint16_t* jointPtr = reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(jointData16) + i * stride);
-                            for (int j = 0; j < 4; ++j) {
-                                outPrim.joints[i][j] = static_cast<uint32_t>(jointPtr[j]);
-                                outPrim.weights[i][j] = weightData[i*4 + j];
-                            }
-                        }
-                    }
-                } else {
-                    LOG_ERROR("Unsupported JOINTS_0 componentType: {}", acc.componentType);
-                }
-            }
-
-            meshData.indices = std::move(indices);
-            result.primitives.push_back(std::move(outPrim));
+            result.primitives.push_back(std::move(out));
         }
     }
+}
 
-    result.nodeParents.resize(model.nodes.size(), -1);
-    result.nodeTransforms.resize(model.nodes.size(), Matrix4::identity());
-    result.nodeLocalTransforms.resize(model.nodes.size(), Matrix4::identity());
-    result.nodeTranslations.resize(model.nodes.size(), {0,0,0});
-    result.nodeScales.resize(model.nodes.size(), {1,1,1});
-    for (int ni = 0; ni < (int)model.nodes.size(); ++ni) {
-        for (int c : model.nodes[ni].children) result.nodeParents[c] = ni;
-        result.nodeTransforms[ni] = nodeWorldMatrix(ni);
+// Hierarchia węzłów dla animacji: rodzic, macierz lokalna (T*R*S), przesunięcie i skala, macierz świata.
+void readNodeHierarchy(const tinygltf::Model& model, GltfModel& result) {
+    const int count = (int)model.nodes.size();
+    result.nodeParents.assign(count, -1);
+    result.nodeLocalTransforms.assign(count, Matrix4::identity());
+    result.nodeTranslations.assign(count, {0, 0, 0});
+    result.nodeScales.assign(count, {1, 1, 1});
+    for (int ni = 0; ni < count; ++ni) {
         const auto& node = model.nodes[ni];
-        Matrix4 local = Matrix4::identity();
-        if (!node.matrix.empty() && node.matrix.size() == 16) {
-            for (int i = 0; i < 16; ++i) local.values[i] = (float)node.matrix[i];
-        } else {
-            if (!node.rotation.empty()) {
-                Quaternion q{(float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2], (float)node.rotation[3]};
-                Vec3 v{1,0,0}; v = rotateVector(q, v);
-                Vec3 v2{0,1,0}; v2 = rotateVector(q, v2);
-                Vec3 v3{0,0,1}; v3 = rotateVector(q, v3);
-                local.values[0] = v.x; local.values[1] = v.y; local.values[2] = v.z;
-                local.values[4] = v2.x; local.values[5] = v2.y; local.values[6] = v2.z;
-                local.values[8] = v3.x; local.values[9] = v3.y; local.values[10] = v3.z;
-            }
-            if (!node.scale.empty()) local = multiply(local, scale((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]));
-            if (!node.translation.empty()) local = multiply(translation((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]), local);
+        for (int c : node.children) result.nodeParents[c] = ni;
+        result.nodeLocalTransforms[ni] = localTRS(node);
+        if (!node.translation.empty()) {
+            result.nodeTranslations[ni] = {(float)node.translation[0], (float)node.translation[1], (float)node.translation[2]};
         }
-        result.nodeLocalTransforms[ni] = local;
-        if (!node.translation.empty()) result.nodeTranslations[ni] = {(float)node.translation[0], (float)node.translation[1], (float)node.translation[2]};
         if (!node.scale.empty()) result.nodeScales[ni] = {(float)node.scale[0], (float)node.scale[1], (float)node.scale[2]};
     }
 
-    // Recompute nodeTransforms from nodeLocalTransforms (consistent with worldMats)
-    {
-        int ncount = (int)result.nodeTransforms.size();
-        std::vector<bool> done(ncount, false);
-        for (int pass = 0; pass < ncount; ++pass) {
-            bool any = false;
-            for (int i = 0; i < ncount; ++i) {
-                if (done[i]) continue;
-                int p = result.nodeParents[i];
-                if (p >= 0 && !done[p]) continue;
-                result.nodeTransforms[i] = (p >= 0) ? multiply(result.nodeTransforms[p], result.nodeLocalTransforms[i])
-                                                     : result.nodeLocalTransforms[i];
-                done[i] = true;
-                any = true;
-            }
-            if (!any) break;
+    // Macierze świata: rodzic przed dzieckiem - w każdym przejściu liczymy węzły, których rodzic jest już gotowy.
+    result.nodeTransforms.assign(count, Matrix4::identity());
+    std::vector<bool> done(count, false);
+    for (int pass = 0; pass < count; ++pass) {
+        bool any = false;
+        for (int i = 0; i < count; ++i) {
+            const int p = result.nodeParents[i];
+            if (done[i] || (p >= 0 && !done[p])) continue;
+            result.nodeTransforms[i] = p >= 0 ? multiply(result.nodeTransforms[p], result.nodeLocalTransforms[i])
+                                              : result.nodeLocalTransforms[i];
+            done[i] = true;
+            any = true;
         }
+        if (!any) break;
     }
+}
 
+// Szkielety: lista węzłów-kości i macierze odwrotne pozy spoczynkowej (inverse bind matrices).
+void readSkins(const tinygltf::Model& model, GltfModel& result) {
     for (const auto& skin : model.skins) {
         GltfSkin gs;
         gs.joints = skin.joints;
-        auto* ibmData = accessorData<float>(model, skin.inverseBindMatrices);
-        if (ibmData && skin.inverseBindMatrices >= 0) {
-            int acc = skin.inverseBindMatrices;
-            int count = (int)model.accessors[acc].count;
+        if (const float* ibm = accessorData<float>(model, skin.inverseBindMatrices)) {
+            const int count = (int)model.accessors[skin.inverseBindMatrices].count;
             gs.inverseBindMatrices.resize(count);
             for (int i = 0; i < count; ++i) {
-                for (int j = 0; j < 16; ++j)
-                    gs.inverseBindMatrices[i].values[j] = ibmData[i * 16 + j];
+                for (int j = 0; j < 16; ++j) gs.inverseBindMatrices[i].values[j] = ibm[i * 16 + j];
             }
         }
         result.skins.push_back(std::move(gs));
     }
+}
 
+// Animacje: dla każdego kanału (węzeł + przesunięcie/obrót/skala) czasy klatek kluczowych i wartości.
+void readAnimations(const tinygltf::Model& model, GltfModel& result) {
     for (const auto& anim : model.animations) {
         GltfAnimation ga;
         ga.name = anim.name;
@@ -390,24 +375,45 @@ GltfModel loadGltfModel(const std::string& path) {
             GltfAnimChannel gc;
             gc.nodeIndex = ch.target_node;
             gc.path = ch.target_path;
-            const auto& samp = anim.samplers[ch.sampler];
-            auto* timeData = accessorData<float>(model, samp.input);
-            auto* valueData = accessorData<float>(model, samp.output);
-            if (timeData && valueData) {
-                int tc = (int)model.accessors[samp.input].count;
-                int vc = (int)model.accessors[samp.output].count;
-                int numComp = 1;
-                int accType = model.accessors[samp.output].type;
-                if (accType == TINYGLTF_TYPE_VEC3) numComp = 3;
-                else if (accType == TINYGLTF_TYPE_VEC4) numComp = 4;
-                gc.times.assign(timeData, timeData + tc);
-                gc.values.assign(valueData, valueData + vc * numComp);
+            const auto& sampler = anim.samplers[ch.sampler];
+            const float* times = accessorData<float>(model, sampler.input);
+            const float* values = accessorData<float>(model, sampler.output);
+            if (times && values) {
+                const auto& out = model.accessors[sampler.output];
+                const int components = out.type == TINYGLTF_TYPE_VEC3 ? 3 : out.type == TINYGLTF_TYPE_VEC4 ? 4 : 1;
+                gc.times.assign(times, times + model.accessors[sampler.input].count);
+                gc.values.assign(values, values + out.count * components);
             }
             ga.channels.push_back(std::move(gc));
         }
         result.animations.push_back(std::move(ga));
     }
+}
 
+} // namespace
+
+GltfModel loadGltfModel(const std::string& path) {
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    loader.SetImageLoader(loadGltfImage, nullptr);
+    std::string err, warn;
+    const bool binary = path.size() >= 4 && path.substr(path.size() - 4) == ".glb";
+    const bool ok = binary ? loader.LoadBinaryFromFile(&model, &err, &warn, path)
+                           : loader.LoadASCIIFromFile(&model, &err, &warn, path);
+    if (!warn.empty()) LOG_WARN("glTF ostrzeżenie: {}", warn);
+    if (!err.empty()) throw std::runtime_error("błąd glTF: " + err);
+    if (!ok) throw std::runtime_error("nie udało się wczytać glTF: " + path);
+
+    // Ścieżki tekstur w pliku są względne wobec katalogu modelu.
+    const auto slash = path.find_last_of("/\\");
+    const std::string baseDir = slash != std::string::npos ? path.substr(0, slash) : std::string{};
+
+    GltfModel result;
+    std::vector<std::string> tempFiles;
+    readPrimitives(model, baseDir, tempFiles, result);
+    readNodeHierarchy(model, result);
+    readSkins(model, result);
+    readAnimations(model, result);
     return result;
 }
 
@@ -455,7 +461,7 @@ void evaluateAnimation(const GltfModel& model, int animIdx, float time, std::vec
         }
     }
 
-    // For animated nodes, fill missing TRS from original node data (not decomposed matrix!)
+    // Węzły animowane: brakujące TRS bierzemy z oryginalnych danych węzła (nie z rozłożonej macierzy!)
     for (int i = 0; i < ncount; ++i) {
         if (!local[i].animated) continue;
         if (!local[i].hasT) local[i].t = model.nodeTranslations[i];
@@ -535,12 +541,12 @@ bool GltfSkinnedModel::load(Renderer* renderer, MeshManager* meshManager, Materi
     try {
         model_ = loadGltfModel(path);
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to load GLTF model ({}): {}", path, e.what());
+        LOG_ERROR("nie udało się wczytać modelu glTF ({}): {}", path, e.what());
         return false;
     }
 
     if (model_.primitives.empty()) {
-        LOG_WARN("GLTF model has no primitives: {}", path);
+        LOG_WARN("model glTF nie ma siatek: {}", path);
         return false;
     }
 
@@ -570,24 +576,19 @@ bool GltfSkinnedModel::load(Renderer* renderer, MeshManager* meshManager, Materi
 
         // Tworzenie bufora wierzchołków dla wag i indeksów kości (Skinning Vertex Buffer)
         if (!prim.joints.empty()) {
-            size_t skinSize = prim.joints.size() * (sizeof(uint32_t) * 4 + sizeof(float) * 4);
+            // Układ jak SkinVertex (core/types.h) - ten sam opis czytają potoki animowanych siatek.
+            std::vector<SkinVertex> skinData(prim.joints.size());
+            for (size_t v = 0; v < prim.joints.size(); ++v) {
+                for (int k = 0; k < 4; ++k) {
+                    skinData[v].joints[k] = static_cast<uint32_t>(prim.joints[v][k]);
+                    skinData[v].weights[k] = prim.weights[v][k];
+                }
+            }
+            const size_t skinSize = skinData.size() * sizeof(SkinVertex);
             vk::createBuffer(renderer->device(), renderer->physicalDevice(), skinSize,
                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                              primitives_[i].skinVertexBuffer, primitives_[i].skinVertexMemory);
-
-            std::vector<uint8_t> skinData(skinSize);
-            for (size_t v = 0; v < prim.joints.size(); ++v) {
-                size_t off = v * (sizeof(uint32_t) * 4 + sizeof(float) * 4);
-                uint32_t jointIndices[4] = {
-                    static_cast<uint32_t>(prim.joints[v][0]),
-                    static_cast<uint32_t>(prim.joints[v][1]),
-                    static_cast<uint32_t>(prim.joints[v][2]),
-                    static_cast<uint32_t>(prim.joints[v][3])
-                };
-                memcpy(skinData.data() + off, jointIndices, sizeof(uint32_t) * 4);
-                memcpy(skinData.data() + off + sizeof(uint32_t) * 4, prim.weights[v].data(), sizeof(float) * 4);
-            }
 
             void* mapped;
             vkMapMemory(renderer->device(), primitives_[i].skinVertexMemory, 0, skinSize, 0, &mapped);
@@ -677,7 +678,7 @@ bool GltfSkinnedInstance::initialize(Renderer* renderer, const GltfSkinnedModel&
     vkMapMemory(dev, boneMemory_, 0, boneSize * kBoneSlots, 0, &boneMapped_);
     std::memset(boneMapped_, 0, static_cast<size_t>(boneSize * kBoneSlots));
 
-    // Create descriptor pool for this instance
+    // Pula deskryptorów tej instancji
     VkDescriptorPoolSize bonePoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kBoneSlots};
     VkDescriptorPoolCreateInfo bonePoolInfo{};
     bonePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -688,7 +689,7 @@ bool GltfSkinnedInstance::initialize(Renderer* renderer, const GltfSkinnedModel&
         return false;
     }
 
-    // Create descriptor set layout
+    // Układ zestawu deskryptorów
     VkDescriptorSetLayoutBinding boneBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo boneLayoutInfo{};
     boneLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

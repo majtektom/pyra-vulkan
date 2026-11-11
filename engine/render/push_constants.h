@@ -15,8 +15,8 @@
 namespace engine3d {
 
 /**
- * Materiał obiektu: G-Buffer (gbuffer/gbuffer_common.hlsl), shadery materiałów (default, terrain, vegetation...).
- * Shadery G-Buffera czytają tylko początek (do layerMaskTextureSets) - dłuższy blok w C++ im nie przeszkadza.
+ * Materiał obiektu - w shaderach blok assets/shaders/shared/material_push.hlsl (include w default, G-Buffer,
+ * terrain, vegetation, particle, sprite). Nowe pole: tu i w tym jednym pliku.
  * Zakres push constants w layoutach potoków: 256 B.
  */
 struct MaterialPushConstants {
@@ -44,7 +44,7 @@ struct MaterialPushConstants {
 static_assert(sizeof(MaterialPushConstants) == 240, "układ musi odpowiadać blokowi push constants w shaderach");
 static_assert(sizeof(MaterialPushConstants) <= 256, "zakres push constants w layoutach potoków to 256 B");
 
-/** Mapa cieni zwykłych i animowanych siatek (shadow_depth.hlsl, shadow_depth_skinned.hlsl). */
+/** Mapa cieni zwykłych i animowanych siatek - w shaderach shared/shadow_push.hlsl. */
 struct ShadowPushConstants {
     Matrix4 model;
     Matrix4 lightViewProj;                      // kaskada słońca albo światło lokalne
@@ -52,7 +52,7 @@ struct ShadowPushConstants {
     uint32_t baseColorTextureSet;
     float pad[2];
 };
-static_assert(sizeof(ShadowPushConstants) == 144, "układ jak w shadow_depth.hlsl");
+static_assert(sizeof(ShadowPushConstants) == 144, "układ jak w shared/shadow_push.hlsl");
 
 /** Cień terenu teselowanego (terrain_shadow.hlsl) - ta sama teselacja i wysokość co na ekranie. */
 struct TerrainShadowPushConstants {

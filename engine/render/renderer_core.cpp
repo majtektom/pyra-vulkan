@@ -4,7 +4,7 @@ namespace engine3d {
 
 bool Renderer::RendererImpl::initialize(const std::string& appName, bool enableValidationLayers) {
     if (!vulkanContext_) {
-        LOG_ERROR("Vulkan context is null during renderer initialization");
+        LOG_ERROR("brak kontekstu Vulkan przy inicjalizacji renderera");
         return false;
     }
     try {
@@ -14,17 +14,8 @@ bool Renderer::RendererImpl::initialize(const std::string& appName, bool enableV
                                                        VK_PRESENT_MODE_FIFO_KHR);
 
         createUniformBuffers();
-        createDefaultTexture();
-        createDefaultNormalTexture();
-        createDefaultOrmTexture();
-        createDefaultBlackTexture();
         createDescriptorResources();
-
-        // Register default textures
-        registerTextureInBindless("default", defaultImageView_, defaultSampler_);
-        registerTextureInBindless("default_normal", defaultNormalImageView_, defaultNormalSampler_);
-        registerTextureInBindless("default_orm", defaultOrmImageView_, defaultOrmSampler_);
-        registerTextureInBindless("default_black", defaultBlackImageView_, defaultBlackSampler_);
+        createDefaultTextures();
 
         defaultDiffuseIndex_ = getTextureIndex("default");
         defaultNormalIndex_ = getTextureIndex("default_normal");
@@ -45,7 +36,7 @@ bool Renderer::RendererImpl::initialize(const std::string& appName, bool enableV
         createFogOfWarResources();
         createGBufferResources();
         createSceneColorResources();
-        LOG_INFO("Deferred PBR Renderer initialized.");
+        LOG_INFO("Renderer deferred PBR gotowy");
         return true;
     } catch (const std::exception& e) {
         LOG_CRITICAL("Renderer Init Error: {}", e.what());
@@ -110,7 +101,7 @@ void Renderer::RendererImpl::render(const RenderScene& scene, const RenderView& 
 
     uploadFogOfWarIfChanged();
 
-    // Pre-render stage (outside render passes, e.g. for compute dispatches)
+    // Etap przed rysowaniem (poza przebiegami, np. obliczenia compute)
     for (auto& feature : features_) {
         if (feature->isActive()) {
             feature->preRender(cmd, currentFrame_, view);
@@ -235,18 +226,10 @@ void Renderer::RendererImpl::cleanup() {
     if (boneDescriptorSetLayout_) { vkDestroyDescriptorSetLayout(device, boneDescriptorSetLayout_, nullptr); boneDescriptorSetLayout_ = VK_NULL_HANDLE; }
     if (pipelineLayout_) { vkDestroyPipelineLayout(device, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
     
-    if (defaultSampler_) { vkDestroySampler(device, defaultSampler_, nullptr); defaultSampler_ = VK_NULL_HANDLE; }
-    if (defaultImageView_) { vkDestroyImageView(device, defaultImageView_, nullptr); defaultImageView_ = VK_NULL_HANDLE; }
-    if (defaultImage_) { vkDestroyImage(device, defaultImage_, nullptr); defaultImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultImageMemory_, nullptr); defaultImageMemory_ = VK_NULL_HANDLE; }
-    if (defaultNormalSampler_) { vkDestroySampler(device, defaultNormalSampler_, nullptr); defaultNormalSampler_ = VK_NULL_HANDLE; }
-    if (defaultNormalImageView_) { vkDestroyImageView(device, defaultNormalImageView_, nullptr); defaultNormalImageView_ = VK_NULL_HANDLE; }
-    if (defaultNormalImage_) { vkDestroyImage(device, defaultNormalImage_, nullptr); defaultNormalImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultNormalImageMemory_, nullptr); defaultNormalImageMemory_ = VK_NULL_HANDLE; }
-    if (defaultOrmSampler_) { vkDestroySampler(device, defaultOrmSampler_, nullptr); defaultOrmSampler_ = VK_NULL_HANDLE; }
-    if (defaultOrmImageView_) { vkDestroyImageView(device, defaultOrmImageView_, nullptr); defaultOrmImageView_ = VK_NULL_HANDLE; }
-    if (defaultOrmImage_) { vkDestroyImage(device, defaultOrmImage_, nullptr); defaultOrmImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultOrmImageMemory_, nullptr); defaultOrmImageMemory_ = VK_NULL_HANDLE; }
-    if (defaultBlackSampler_) { vkDestroySampler(device, defaultBlackSampler_, nullptr); defaultBlackSampler_ = VK_NULL_HANDLE; }
-    if (defaultBlackImageView_) { vkDestroyImageView(device, defaultBlackImageView_, nullptr); defaultBlackImageView_ = VK_NULL_HANDLE; }
-    if (defaultBlackImage_) { vkDestroyImage(device, defaultBlackImage_, nullptr); defaultBlackImage_ = VK_NULL_HANDLE; vkFreeMemory(device, defaultBlackImageMemory_, nullptr); defaultBlackImageMemory_ = VK_NULL_HANDLE; }
+    destroySolidTexture(defaultTex_);
+    destroySolidTexture(defaultNormalTex_);
+    destroySolidTexture(defaultOrmTex_);
+    destroySolidTexture(defaultBlackTex_);
 
     if (shadowPipeline_) { vkDestroyPipeline(device, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
     if (shadowSunPipeline_) { vkDestroyPipeline(device, shadowSunPipeline_, nullptr); shadowSunPipeline_ = VK_NULL_HANDLE; }
@@ -488,7 +471,7 @@ void Renderer::RendererImpl::updateUniformBuffer(const RenderView& view) {
             Matrix4 lProj = perspective(outerAngle, 1.0f, 0.1f, l.params[2]);
             l.lightViewProj[0] = multiply(lProj, lView);
         } else if (type == 2) { // Point
-            // Point lights look straight down at the scene center for better floor coverage
+            // Światła punktowe patrzą w dół na środek sceny - lepiej pokrywają podłoże
             Vec3 target = {lPos.x, 0.0f, lPos.z};
             Matrix4 lView = lookAt(lPos, target, Vec3{0, 0, 1});
             Matrix4 lProj = perspective(radians(120.0f), 1.0f, 0.1f, l.params[2]);
@@ -516,7 +499,7 @@ void Renderer::RendererImpl::createDescriptorResources() {
     poolInfo.pPoolSizes = poolSizes;
     poolInfo.maxSets = kMaxFrames;
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor pool");
+        throw std::runtime_error("nie udało się utworzyć puli deskryptorów");
     }
 
     VkDescriptorSetLayoutBinding bindings[3] = {};
@@ -556,10 +539,10 @@ void Renderer::RendererImpl::createDescriptorResources() {
     layoutInfo.bindingCount = 3;
     layoutInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor set layout");
+        throw std::runtime_error("nie udało się utworzyć układu zestawu deskryptorów");
     }
 
-    // Create bone descriptor set layout for compatibility with MaterialSystem
+    // Układ deskryptorów kości (set 1) - taki sam jak w MaterialCompiler
     VkDescriptorSetLayoutBinding boneBinding{};
     boneBinding.binding = 0;
     boneBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -570,7 +553,7 @@ void Renderer::RendererImpl::createDescriptorResources() {
     boneLayoutInfo.bindingCount = 1;
     boneLayoutInfo.pBindings = &boneBinding;
     if (vkCreateDescriptorSetLayout(device, &boneLayoutInfo, nullptr, &boneDescriptorSetLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create bone descriptor set layout");
+        throw std::runtime_error("nie udało się utworzyć układu deskryptorów kości");
     }
 
     VkPushConstantRange pushRange{};
@@ -586,7 +569,7 @@ void Renderer::RendererImpl::createDescriptorResources() {
     plInfo.pushConstantRangeCount = 1;
     plInfo.pPushConstantRanges = &pushRange;
     if (vkCreatePipelineLayout(device, &plInfo, nullptr, &pipelineLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create pipeline layout");
+        throw std::runtime_error("nie udało się utworzyć układu potoku");
     }
 
     descriptorSets_.resize(kMaxFrames);
@@ -597,7 +580,7 @@ void Renderer::RendererImpl::createDescriptorResources() {
     allocInfo.descriptorSetCount = kMaxFrames;
     allocInfo.pSetLayouts = layouts.data();
     if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets_.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate descriptor sets");
+        throw std::runtime_error("nie udało się przydzielić zestawów deskryptorów");
     }
 
     for (int i = 0; i < kMaxFrames; i++) {
@@ -630,29 +613,11 @@ void Renderer::RendererImpl::recreateSwapChain() {
 }
 
 VkCommandBuffer Renderer::RendererImpl::beginSingleTimeCommands() {
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = vulkanContext_->commandPool();
-    allocInfo.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(vulkanContext_->device(), &allocInfo, &cmd);
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-    return cmd;
+    return vk::beginOneTimeCommands(vulkanContext_->device(), vulkanContext_->commandPool());
 }
 
 void Renderer::RendererImpl::endSingleTimeCommands(VkCommandBuffer cmd) {
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(vulkanContext_->graphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vulkanContext_->graphicsQueue());
-    vkFreeCommandBuffers(vulkanContext_->device(), vulkanContext_->commandPool(), 1, &cmd);
+    vk::endOneTimeCommands(vulkanContext_->device(), vulkanContext_->commandPool(), vulkanContext_->graphicsQueue(), cmd);
 }
 
 void Renderer::RendererImpl::createSyncObjects() {
@@ -806,7 +771,7 @@ VkCommandPool Renderer::commandPool() const { return impl_->commandPool(); }
 VkQueue Renderer::graphicsQueue() const { return impl_->graphicsQueue(); }
 VkExtent2D Renderer::extent() const { return impl_->extent(); }
 VkDescriptorSet Renderer::getTextureDescriptorSet(const std::string& n, uint32_t f) const {
-    return impl_->getDescriptorSet(f); // Always return global set for bindless
+    return impl_->getDescriptorSet(f); // zawsze globalny set (tablica bindless)
 }
 VkBuffer Renderer::getUniformBuffer(uint32_t f) const {
     return impl_->getUniformBuffer(f);

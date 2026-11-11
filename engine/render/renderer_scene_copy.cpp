@@ -64,7 +64,7 @@ void Renderer::RendererImpl::copySceneColorImage(VkCommandBuffer cmd, uint32_t i
     };
     vk::imageBarriers(cmd, afterCopy, 2);
 
-    // Update bindless descriptors for this frame
+    // Zaległe zapisy deskryptorów bindless dla tej klatki
     registerSceneColorForFrame(currentFrame_);
 }
 

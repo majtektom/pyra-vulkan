@@ -1,6 +1,7 @@
 add_library(engine3d SHARED
     core/logger.cpp
     core/engine.cpp
+    core/engine_map.cpp
     core/profiler.cpp
     core/asset_registry.cpp
     core/component.cpp
@@ -10,6 +11,7 @@ add_library(engine3d SHARED
     core/mesh_manager.cpp
     camera/camera_component.cpp
     camera/camera_controller.cpp
+    camera/fly_camera.cpp
     camera/camera_picking.cpp
     camera/rts_camera_controller.cpp
     core/mesh_builder.cpp
@@ -28,6 +30,7 @@ add_library(engine3d SHARED
     render/renderer_textures.cpp
     render/renderer_fog_of_war.cpp
     render/vulkan_util.cpp
+    render/pipeline_builder.cpp
     render/texture_asset_loader.cpp
     render/texture_manager.cpp
     render/shader_manager.cpp

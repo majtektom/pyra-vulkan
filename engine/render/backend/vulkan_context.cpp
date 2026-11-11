@@ -173,7 +173,7 @@ bool VulkanContext::initialize(const std::string& appName, bool enableValidation
 void VulkanContext::createSurface(SDL_Window* window) {
     // Krok 3: Połączenie okna SDL z systemem okien Vulkana (powierzchnia rysowania Surface).
     if (!SDL_Vulkan_CreateSurface(window, instance_, nullptr, &surface_)) {
-        throw std::runtime_error(std::string("failed to create SDL Vulkan surface: ") + SDL_GetError());
+        throw std::runtime_error(std::string("nie udało się utworzyć powierzchni Vulkan w oknie SDL: ") + SDL_GetError());
     }
     
     // Krok 4: Wybór fizycznej karty graficznej (GPU) spełniającej wymagania silnika.
@@ -236,7 +236,7 @@ void VulkanContext::createInstance(const std::string& appName) {
     }
 
     if (vkCreateInstance(&createInfo, nullptr, &instance_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create Vulkan instance");
+        throw std::runtime_error("nie udało się utworzyć instancji Vulkan");
     }
 }
 
@@ -410,7 +410,7 @@ void VulkanContext::createLogicalDevice() {
     depthClampSupported_ = supported.depthClamp == VK_TRUE;
     features.depthClamp = supported.depthClamp;
     if (!supported.fillModeNonSolid) {
-        LOG_WARN("[VulkanContext] fillModeNonSolid not supported - wireframe mode unavailable");
+        LOG_WARN("[VulkanContext] karta nie obsługuje fillModeNonSolid - tryb siatki (wireframe) niedostępny");
     }
 
     // Funkcjonalności z wersji Vulkan 1.2 – kluczowe dla zaawansowanego bindowania tekstur.
@@ -463,7 +463,7 @@ void VulkanContext::createLogicalDevice() {
     createInfo.ppEnabledExtensionNames = kDeviceExtensions.data();
 
     if (vkCreateDevice(physicalDevice_, &createInfo, nullptr, &device_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create logical device");
+        throw std::runtime_error("nie udało się utworzyć urządzenia logicznego Vulkan");
     }
     
     // Pobieramy uchwyty do poszczególnych kolejek urządzenia logicznego.
@@ -480,7 +480,7 @@ void VulkanContext::createCommandPool() {
     // VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT zezwala na resetowanie pojedynczych buforów komend alokowanych z tej puli.
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     if (vkCreateCommandPool(device_, &poolInfo, nullptr, &commandPool_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create command pool");
+        throw std::runtime_error("nie udało się utworzyć puli poleceń");
     }
 }
 

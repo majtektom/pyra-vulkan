@@ -1,5 +1,6 @@
 #pragma once
 
+#include <istream>
 #include <string>
 #include <vector>
 #include "core/math.h"
@@ -101,6 +102,8 @@ private:
     Vec3Number processVector3(const std::string& str);
     Vec4Number processVector4(const std::string& str);
     bool processEvent(ParticleEmitter* emitter, float fadeMin, float fadeMax, const std::string& line);
+    void readEmitterBlock(std::istream& in, ParticleEmitter* emitter);
+    void applyEmitterProperty(ParticleEmitter* emitter, const std::string& name, const std::string& value);
 
     std::vector<ParticleEmitter*> emitters_;
     JobSystem* jobSystem_ = nullptr;

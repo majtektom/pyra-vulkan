@@ -35,7 +35,7 @@ const TextureAsset* TextureManager::get(const std::string& name) const {
 const TextureAsset& TextureManager::require(const std::string& name) const {
     auto it = textures_.find(name);
     if (it == textures_.end()) {
-        throw std::runtime_error("texture not found: " + name);
+        throw std::runtime_error("nie znaleziono tekstury: " + name);
     }
     return it->second;
 }

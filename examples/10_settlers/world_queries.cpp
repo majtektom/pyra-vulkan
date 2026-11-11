@@ -74,7 +74,7 @@ int World::territoryOwnerExact(const Vec3& p) const {
     int owner = -1;
     float bestDepth = 0.0f;
     for (const auto& s : territorySources_) {
-        const float depth = s.radius - dist2D(p, s.pos);
+        const float depth = s.radius - distanceXZ(p, s.pos);
         if (depth > bestDepth) {
             bestDepth = depth;
             owner = s.faction;
@@ -224,7 +224,7 @@ bool World::canPlace(BuildingType type, const Vec3& pos, int faction, std::strin
     // Flaga przed wejściem: może to być istniejąca flaga (tuż przy drzwiach), ale nie flaga "prawie" w tym miejscu.
     for (const auto& fl : flags) {
         if (!fl.alive) continue;
-        const float d = dist2D(fl.pos, door);
+        const float d = distanceXZ(fl.pos, door);
         if (d < 2.5f && fl.faction == faction && fl.building < 0) continue;
         if (d < 4.5f) return fail("Wejście za blisko innej flagi");
     }
@@ -254,7 +254,7 @@ int World::findNearestNode(NodeKind kind, const Vec3& from, float radius) const 
         const auto& n = nodes[i];
         if (!n.alive || n.kind != kind || n.amount <= 0 || n.fallTimer >= 0.0f || n.reserved >= maxReserve) continue;
         if (n.blockedUntil > gameTime || n.growth < 1.0f) continue;   // nieosiągalne lub sadzonka jeszcze rośnie
-        const float d = dist2D(from, n.pos);
+        const float d = distanceXZ(from, n.pos);
         if (d < bestD) {
             bestD = d;
             best = static_cast<int>(i);
@@ -269,7 +269,7 @@ int World::countNodesInRange(NodeKind kind, const Vec3& from, float radius) cons
     for (const auto& n : nodes) {
         if (!n.alive || n.kind != kind || n.amount <= 0 || n.fallTimer >= 0.0f || n.blockedUntil > gameTime) continue;
         if (n.growth < 1.0f) continue;
-        if (dist2D(from, n.pos) <= radius) ++count;
+        if (distanceXZ(from, n.pos) <= radius) ++count;
     }
     return count;
 }
@@ -296,7 +296,7 @@ bool World::isWorkerOnFarm(const Unit& u, int id) const {
 // Budynek wymaga naprawy, gdy ma mniej niż 97% PŻ.
 bool World::needsRepair(const Building& b) const {
     if (!b.alive || !b.constructed) return false;
-    return b.hp < buildingDef(b.type).maxHp * 0.97f;
+    return b.hp < buildingDef(b.type).maxHp * kRepairBelowHp;
 }
 
 // Ilu osadników idzie naprawiać / naprawia budynek.
@@ -313,7 +313,7 @@ int World::repairersOf(int building) const {
 int World::countSaplingsInRange(const Vec3& from, float radius) const {
     int count = 0;
     for (const auto& n : nodes) {
-        if (n.alive && n.kind == NodeKind::Tree && n.growth < 1.0f && dist2D(from, n.pos) <= radius) ++count;
+        if (n.alive && n.kind == NodeKind::Tree && n.growth < 1.0f && distanceXZ(from, n.pos) <= radius) ++count;
     }
     return count;
 }
@@ -371,7 +371,7 @@ bool World::findPlantingSpot(const Building& forester, Vec3& out) {
     const float radius = buildingDef(BuildingType::Forester).workRadius;
     int treesAround = 0;
     for (const auto& n : nodes) {
-        if (n.alive && n.kind == NodeKind::Tree && dist2D(forester.pos, n.pos) <= radius) ++treesAround;
+        if (n.alive && n.kind == NodeKind::Tree && distanceXZ(forester.pos, n.pos) <= radius) ++treesAround;
     }
     if (treesAround >= 45) return false;
 
@@ -384,14 +384,14 @@ bool World::findPlantingSpot(const Building& forester, Vec3& out) {
         if (h < kWaterLevel + 3.0f || h > kMountainLevel + 6.0f) continue;
         bool free = true;
         for (const auto& n : nodes) {
-            if (n.alive && dist2D(p, n.pos) < 6.0f + n.radius) {
+            if (n.alive && distanceXZ(p, n.pos) < 6.0f + n.radius) {
                 free = false;
                 break;
             }
         }
         for (const auto& b : buildings) {
             if (!free) break;
-            if (b.alive && (distanceToBuilding(p, b) < 5.0f || dist2D(p, b.door()) < 6.0f)) free = false;
+            if (b.alive && (distanceToBuilding(p, b) < 5.0f || distanceXZ(p, b.door()) < 6.0f)) free = false;
         }
         if (free) {
             out = p;
@@ -407,7 +407,7 @@ int World::findIdleSettler(int faction, const Vec3& near) const {
     for (size_t i = 0; i < units.size(); ++i) {
         const auto& u = units[i];
         if (!u.alive || u.faction != faction || u.type != UnitType::Settler || u.state != UnitState::Idle) continue;
-        const float d = dist2D(u.pos, near);
+        const float d = distanceXZ(u.pos, near);
         if (d < bestD) {
             bestD = d;
             best = static_cast<int>(i);
@@ -423,7 +423,7 @@ int World::findEnemyUnitNear(int faction, const Vec3& p, float radius) const {
     auto consider = [&](int i) {
         const auto& u = units[static_cast<size_t>(i)];
         if (!u.alive || u.faction == faction || u.state == UnitState::Garrison) return;   // załoga wieży jest w środku
-        const float d = dist2D(u.pos, p);
+        const float d = distanceXZ(u.pos, p);
         if (d > radius) return;
         // Żołnierze mają pierwszeństwo przed osadnikami
         const float score = d + (u.type == UnitType::Settler ? 40.0f : 0.0f);
@@ -564,7 +564,7 @@ std::string World::describeUnit(int id) const {
         nav_.worldToCell(d.x, d.z, dx, dz);
         std::snprintf(buf, sizeof(buf), " | budynek %s poz=(%.1f,%.1f) rot=%.2f drzwi=(%.1f,%.1f) kom=%s odl.do drzwi=%.1f",
                       buildingDef(b.type).name, b.pos.x, b.pos.z, b.rotY, d.x, d.z, nav_.isWalkable(dx, dz) ? "wolna" : "ZABL",
-                      dist2D(u.pos, d));
+                      distanceXZ(u.pos, d));
         out += buf;
     }
     return out;

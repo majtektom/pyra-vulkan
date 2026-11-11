@@ -26,10 +26,10 @@ namespace engine3d {
 // a wysokość to jasność piksela 0..255 (dla obrazu w skali szarości R = G = B).
 static std::vector<float> loadHeightmap(const std::string& path, int& w, int& h) {
     SDL_Surface* loaded = IMG_Load(path.c_str());
-    if (!loaded) throw std::runtime_error("Cannot load heightmap: " + path + " - " + SDL_GetError());
+    if (!loaded) throw std::runtime_error("nie można wczytać mapy wysokości: " + path + " - " + SDL_GetError());
     SDL_Surface* rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
     SDL_DestroySurface(loaded);
-    if (!rgba) throw std::runtime_error("Cannot convert heightmap: " + path + " - " + SDL_GetError());
+    if (!rgba) throw std::runtime_error("nie można przekonwertować mapy wysokości: " + path + " - " + SDL_GetError());
     w = rgba->w;
     h = rgba->h;
     std::vector<float> hm(static_cast<size_t>(w) * h);
@@ -148,11 +148,11 @@ void Terrain::uploadTo(MeshManager& mgr) {
     }
     meshManager_ = &mgr;
     
-    // Assign unique IDs to leaf nodes
+    // Liście drzewa dostają unikalne numery
     int nextId = 0;
     assignNodeIds(root_, nextId);
     
-    // Upload vertex buffers for all leaf nodes
+    // Bufory wierzchołków wszystkich liści
     uploadNodeMeshes(root_, mgr, meshName_);
     
     // Upload shared LOD index buffers
@@ -210,7 +210,7 @@ void Terrain::buildTree(Node* node) {
 }
 
 void Terrain::buildNodeVertices(Node* node) {
-    // Left empty: vertices generated per-node in uploadNodeMeshes
+    // Celowo puste: wierzchołki powstają osobno dla węzłów w uploadNodeMeshes
 }
 
 void Terrain::findNeighbors(Node* node) {
@@ -248,7 +248,7 @@ Terrain::Node* Terrain::findNodeAt(Node* node, float cx, float cz) {
     return nullptr;
 }
 
-// --- Per-frame update ---
+// --- Aktualizacja co klatkę ---
 
 namespace {
 void collectLeaves(Terrain::Node* node, std::vector<Terrain::Node*>& leaves) {
@@ -270,7 +270,7 @@ void Terrain::update(const CameraComponent* cam, MeshManager& meshManager, const
     updateLeafLods(root_, camPos);
 
     // Enforce neighbor LOD difference constraint (diff <= 1)
-    // Symmetric relaxation: adjust both directions in one pass for faster convergence
+    // Wyrównanie w obie strony w jednym przejściu - szybciej się ustala
     std::vector<Node*> leaves;
     collectLeaves(root_, leaves);
     bool changed = true;
@@ -282,12 +282,12 @@ void Terrain::update(const CameraComponent* cam, MeshManager& meshManager, const
                 Node* neighbor = node->neighbor[i];
                 if (!neighbor) continue;
                 
-                // If this node is too coarse (high LOD number), make it more detailed
+                // Ten węzeł jest za rzadki (duży numer LOD) - zagęść go
                 if (node->lodLevel > neighbor->lodLevel + 1) {
                     node->lodLevel = neighbor->lodLevel + 1;
                     changed = true;
                 }
-                // If neighbor is too coarse, make it more detailed (symmetric)
+                // Sąsiad jest za rzadki - zagęść go (symetrycznie)
                 if (neighbor->lodLevel > node->lodLevel + 1) {
                     neighbor->lodLevel = node->lodLevel + 1;
                     changed = true;
@@ -378,7 +378,7 @@ void Terrain::uploadNodeMeshes(Node* node, MeshManager& mgr, const std::string& 
         return;
     }
 
-    // Leaf node - generate and upload its vertices
+    // Liść - generujemy i wysyłamy jego wierzchołki
     MeshData nodeMesh;
     nodeMesh.vertices.reserve((gridRes_ + 1) * (gridRes_ + 1));
 

@@ -15,7 +15,7 @@ void Renderer::RendererImpl::recordTransparentPass(VkCommandBuffer cmd, const Re
     swColorAttachment2.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     swColorAttachment2.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
-    // Depth in READ_ONLY layout — can be sampled by shaders while still used for depth test
+    // Głębokość w układzie READ_ONLY - shadery mogą ją czytać, a test głębokości dalej działa
     VkRenderingAttachmentInfo swDepthAttachment2{};
     swDepthAttachment2.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     swDepthAttachment2.imageView = swapchain_->depthImageView(imageIndex);

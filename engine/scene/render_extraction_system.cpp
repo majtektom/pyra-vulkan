@@ -104,9 +104,9 @@ void RenderExtractionSystem::update(Scene& scene, float /*deltaTime*/) {
                     tc->collectRenderPackets(myBuf, meshManager_, tessActive, tessLevel);
 
                     for (size_t pi = prevCount; pi < myBuf.size(); ++pi) {
-                        // For debug packets, we don't overwrite materialHandle unless it's the main terrain packet
+                        // Paczki debug: nie nadpisujemy materialHandle, chyba że to główna paczka terenu
                         if (!myBuf[pi].materialHandle.isValid()) {
-                            // Already set in collectRenderPackets for debug box
+                            // ustawione już w collectRenderPackets (ramka debug)
                         } else {
                             myBuf[pi].materialHandle = tc->materialHandle;
                         }

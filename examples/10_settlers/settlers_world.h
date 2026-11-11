@@ -29,8 +29,9 @@
  *   world_update.cpp    - główny krok symulacji
  *   world_settlers.cpp  - automat stanów osadnika
  *   world_combat.cpp    - walka i rozkazy wojskowe
- *   world_ai.cpp        - komputerowy przeciwnik
- *   world_roads.cpp     - drogi, flagi, tragarze i magazyny (transport towarów)
+ *   ai_planner.cpp      - komputerowy przeciwnik (osobna klasa AiPlanner, ai_planner.h)
+ *   world_roads.cpp     - drogi, flagi i magazyny
+ *   transport.cpp       - przewóz towarów: trasy, zlecenia, tragarze (osobna klasa Transport, transport.h)
  *   world_save.cpp      - zapis i wczytanie stanu gry (JSON: ziarno mapy + listy obiektów)
  *   world_fog.cpp       - mgła wojny i zwiad (widoczność gracza, tekstura dla renderera)
  *
@@ -57,6 +58,8 @@
 
 #include "camera/camera_picking.h"
 #include "feature/ai/nav_grid.h"
+#include "ai_planner.h"
+#include "transport.h"
 #include "settlers_assets.h"
 #include "settlers_defs.h"
 #include "slot_ref.h"
@@ -495,18 +498,15 @@ public:
     // Testy planisty AI.
     [[nodiscard]] int countNodesInRangePublic(NodeKind kind, const Vec3& p, float r) const { return countNodesInRange(kind, p, r); }
     // Testy mgły wojny AI i szukania miejsca.
-    bool aiKnowsPublic(int faction, const Vec3& p) const { return aiKnows(faction, p); }
-    std::vector<int> aiKnownEnemyBuildingsPublic(int faction) const { return aiEconomy(faction).knownEnemyBuildings; }
+    bool aiKnowsPublic(int faction, const Vec3& p) const { return ai_.knows(faction, p); }
+    std::vector<int> aiKnownEnemyBuildingsPublic(int faction) const { return ai_.economyOf(faction).knownEnemyBuildings; }
     bool findPlacementNearPublic(BuildingType t, int faction, const Vec3& c, float minR, float maxR, Vec3& out) {
         return findPlacementNear(t, faction, c, minR, maxR, out);
     }
-    BuildingType aiPlanForPublic(int faction, CarryType good) {
-        aiEco_[faction] = aiEconomy(faction);   // jak w updateAI: pamięć ekonomii z bieżącego stanu
-        return aiPlanFor(faction, aiEco_[faction], good, 0);
-    }
+    BuildingType aiPlanForPublic(int faction, CarryType good) { return ai_.planForTest(faction, good); }
     // Odległości po drogach od flagi (diagnostyka, testy).
     void networkDistancesPublic(int fromFlag, std::vector<float>& dist, std::vector<int>& prevRoad) const {
-        networkDistances(fromFlag, dist, prevRoad);
+        transport_.networkDistances(fromFlag, dist, prevRoad);
     }
     // Zapas "do limitu": towary w magazynach + niesione właśnie do magazynów.
     [[nodiscard]] Resources storeBound(int faction) const;
@@ -818,36 +818,8 @@ private:
     void updateFlags(float dt);
     // Pracownik odkłada towary na fladze warsztatu; false = flaga pełna (produkcja wstrzymana).
     bool depositAtWorkshopFlag(Unit& u, Building& b);
-    // Dijkstra po sieci dróg od flagi: odległości do wszystkich flag i odcinek, którym do nich doszliśmy.
-    void networkDistances(int fromFlag, std::vector<float>& dist, std::vector<int>& prevRoad) const;
-    // Odległości po drogach od flagi - z pamięci podręcznej (Dijkstra liczona raz na flagę startową, dopóki
-    // sieć dróg się nie zmieni). Wcześniej przydział zleceń liczył Dijkstrę dla każdego tragarza i zlecenia.
-    struct NetDistances {
-        std::vector<float> dist;     // odległość od flagi startowej (>= 1e8 = brak połączenia)
-        std::vector<int> prev;       // odcinek drogi, którym doszliśmy do flagi (do odtworzenia trasy)
-        uint64_t version = 0;
-    };
-    const NetDistances& networkFrom(int fromFlag) const;
-    // Zmiana flag lub dróg - pamięć odległości do przeliczenia.
-    void roadGraphChanged() { ++roadGraphVersion_; }
-    mutable std::unordered_map<int, NetDistances> netCache_;   // flaga startowa -> odległości po drogach
-    uint64_t roadGraphVersion_ = 1;
-    // Trasa po drogach od flagi do flagi (punkty dróg w kolejności marszu); false = brak połączenia.
-    bool networkPath(int fromFlag, int toFlag, std::vector<Vec3>& out) const;
-    // Tragarze: nabór wolnych osadników do docelowej liczby albo zwalnianie nadmiaru.
-    void manageCarriers(int faction, int limit);
-    // Przydział zleceń (odbiory i dostawy) wolnym tragarzom.
-    void assignTransportJobs(int faction);
-    // Opłaca zlecenie towarem z najbliższego magazynu albo leżącym na fladze (false = brak towaru).
-    bool fundOrder(TransportOrder& o);
-    // Cofa opłatę zlecenia: towar wraca do magazynu / zwalnia rezerwację na fladze.
-    void unfundOrder(TransportOrder& o);
-    // Automat tragarza.
-    void updateCarrier(Unit& u, int id, float dt);
-    // Tragarz przerywa zlecenie: zwalnia rezerwacje, niesiony towar zostawia na fladze.
-    void releaseCarrierJob(Unit& u);
-    // Odkłada niesiony towar na fladze (gdy cel zniknął) - inny tragarz zaniesie go do magazynu.
-    void dropCarriedGoods(Unit& u, int flag);
+    // Trasy po drogach, opłacanie zleceń i tragarze - osobna klasa Transport (transport.h), pole transport_ niżej.
+    friend class Transport;
     [[nodiscard]] int otherEnd(const Road& r, int flag) const { return r.flagA == flag ? r.flagB : r.flagA; }
     [[nodiscard]] static bool isCarrierState(UnitState s) {
         return s == UnitState::GoToRoad || s == UnitState::CarrierWait || s == UnitState::CarrierWalk;
@@ -858,52 +830,11 @@ private:
     void removeRoadsOnLostLand();
 
     // ----------------------------------------------------------------------------------
-    // AI przeciwnika                                                          [world_ai.cpp]
+    // AI przeciwnika                                                       [ai_planner.cpp]
     // ----------------------------------------------------------------------------------
 
-    void updateAI(int faction, float dt);
-    void aiBuildNext(int faction);
-    void aiTrainArmy(int faction);
-    // Jaki budynek wyprodukuje brakujący materiał budowlany (Count = żaden / już powstaje).
-    // Planista budowy AI (world_ai.cpp): stan gospodarki, wybór producenta towaru, miejsce na budynek.
-    struct AiEconomy {
-        std::array<int, kBuildingTypeCount> total{}, inProgress{}, warmingUp{}, blocked{}, starved{};
-        std::array<int, kBuildingTypeCount> backlog{};   // producenci z zaległymi towarami na fladze (>= 4)
-        int underConstruction = 0;
-        int onFlags = 0;
-        bool peopleShort = false;   // za mało tragarzy / brak jedzenia na nowych osadników
-        Resources have;      // magazyny + wolne towary na flagach
-        Resources waiting;   // dostawy czekające na towar (brak w magazynach)
-        // Pamięć na jeden krok myślenia AI (liczone raz w aiEconomy, zamiast przeglądać wszystkie budynki świata
-        // w każdym zapytaniu aiFindSpot / aiResourceCluster / aiNeedsWarehouse):
-        std::array<std::vector<int>, kBuildingTypeCount> own;   // żywe budynki frakcji według typu
-        int buildingCount = 0;
-        int storageBlocked = 0;     // warsztaty wstrzymane, bo magazyny pełne
-        int soldiers = 0;           // żołnierze frakcji (załogi wież)
-        std::vector<int> knownEnemyBuildings;   // budynki wroga na terenie odkrytym przez AI
-    };
-    std::array<AiEconomy, kFactionCount> aiEco_;   // stan z ostatniego kroku myślenia AI (updateAI)
-    // Czy AI frakcji zna ten punkt mapy (mgła wojny AI): własne terytorium albo teren odkryty przez jej ludzi.
-    [[nodiscard]] bool aiKnows(int faction, const Vec3& p) const;
-    // Zwiad: jeden żołnierz idzie na najbliższy nieodkryty ląd, dopóki AI nie zna wroga i większej części mapy.
-    void aiScout(int faction, float dt);
-    bool aiUnexploredTarget(int faction, const Vec3& from, Vec3& target) const;
-    std::array<std::vector<Vec3>, kFactionCount> aiScoutFailed_;   // cele zwiadu, do których nie dało się dojść
-    std::array<Vec3, kFactionCount> aiScoutGoal_{};                 // ostatni cel zwiadowcy
-    [[nodiscard]] AiEconomy aiEconomy(int faction) const;
-    [[nodiscard]] bool aiProducerReady(const AiEconomy& e, BuildingType t) const;
-    BuildingType aiPlanFor(int faction, const AiEconomy& e, CarryType good, int depth);
-    int aiResourceCluster(int faction, NodeKind kind, BuildingType worker, Vec3& center) const;
-    bool aiFindSpot(int faction, BuildingType type, Vec3& spot);
-    // Punkt poza terytorium, w stronę którego warto postawić wieżę (las / skały / góry / wolny teren).
-    // blind (opcjonalnie): cel "na ślepo" - AI nie zna miejsca z potrzebnym surowcem (mgła wojny AI).
-    bool aiExpansionTarget(int faction, BuildingType wanted, Vec3& target, bool* blind = nullptr) const;
-    void aiLogDecision(int faction, const std::string& text);
-    [[nodiscard]] bool aiNeedsWarehouse(int faction, const AiEconomy& e) const;
-    // Łączy drogami warsztaty i magazyny, które nie mają połączenia z magazynem.
-    void aiConnectRoads(int faction);
-    void aiLaunchAttackWave(int faction, float dt);
-    [[nodiscard]] Vec3 aiHome(int faction) const;
+    // Logika komputerowego przeciwnika jest w osobnej klasie AiPlanner (ai_planner.h) - pole ai_ niżej.
+    friend class AiPlanner;
 
     // ----------------------------------------------------------------------------------
     // Ruch                                                                  [world_movement.cpp]
@@ -945,13 +876,6 @@ private:
                            const std::function<bool(const Vec3&)>& accept = {});
     // Czy z punktu "from" da się dojść pieszo w okolice p (ten sam obszar nawigacji; p może leżeć na przeszkodzie).
     [[nodiscard]] bool landReachable(const Vec3& from, const Vec3& p) const;
-    // Jaka część zasięgu wieży w punkcie p to nowy ląd dla frakcji (nie jej teren, nie woda, osiągalny z zamku).
-    [[nodiscard]] float aiTowerGain(int faction, const Vec3& p) const;
-    // Front obrony: punkt na naszej granicy od strony zagrożenia (ostatni atak albo najbliższy znany budynek wroga).
-    // level: 0 = brak zagrożenia, 1 = wróg w pobliżu, 2 = niedawny atak.
-    bool aiDefenseFront(int faction, Vec3& front, int& level) const;
-    bool aiDefenseTower_ = false;    // aiFindSpot: wieża obronna (gęsto przy froncie) zamiast poszerzającej teren
-    float aiTowerBestGain_ = 0.0f;   // diagnostyka: najlepszy zysk lądu z ostatniego szukania miejsca na wieżę
     // Odległość od punktu do ściany budynku (0 = wewnątrz obrysu).
     [[nodiscard]] float distanceToBuilding(const Vec3& p, const Building& b) const;
     [[nodiscard]] bool buildingAreaFree(BuildingType type, const Vec3& pos) const;
@@ -966,6 +890,8 @@ private:
     // ----------------------------------------------------------------------------------
 
     engine3d::Engine& engine_;
+    AiPlanner ai_{*this};                        // komputerowy przeciwnik (ai_planner.cpp)
+    Transport transport_{*this};                 // trasy, zlecenia, tragarze (transport.cpp)
     GameMaterials materials_;
     engine3d::Scene* scene_ = nullptr;
     std::shared_ptr<engine3d::Terrain> terrain_;

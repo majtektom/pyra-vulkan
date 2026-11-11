@@ -25,7 +25,7 @@ const FontAsset* FontManager::get(const std::string& name) const {
 const FontAsset& FontManager::require(const std::string& name) const {
     auto it = fonts_.find(name);
     if (it == fonts_.end()) {
-        throw std::runtime_error("font not found: " + name);
+        throw std::runtime_error("nie znaleziono czcionki: " + name);
     }
     return it->second;
 }

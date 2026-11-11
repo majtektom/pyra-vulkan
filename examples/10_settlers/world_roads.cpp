@@ -30,7 +30,7 @@ namespace {
 // Długość łamanej w poziomie.
 float polylineLength(const std::vector<Vec3>& pts) {
     float len = 0.0f;
-    for (size_t i = 1; i < pts.size(); ++i) len += dist2D(pts[i - 1], pts[i]);
+    for (size_t i = 1; i < pts.size(); ++i) len += distanceXZ(pts[i - 1], pts[i]);
     return len;
 }
 
@@ -41,7 +41,7 @@ std::vector<Vec3> densify(const std::vector<Vec3>& pts, float step) {
     out.push_back(pts[0]);
     for (size_t i = 1; i < pts.size(); ++i) {
         const Vec3 a = pts[i - 1], b = pts[i];
-        const float d = dist2D(a, b);
+        const float d = distanceXZ(a, b);
         const int n = std::max(1, static_cast<int>(std::ceil(d / step)));
         for (int k = 1; k <= n; ++k) {
             const float t = static_cast<float>(k) / static_cast<float>(n);
@@ -56,7 +56,7 @@ size_t nearestIndex(const std::vector<Vec3>& pts, const Vec3& p) {
     size_t best = 0;
     float bestD = std::numeric_limits<float>::max();
     for (size_t i = 0; i < pts.size(); ++i) {
-        const float d = dist2D(pts[i], p);
+        const float d = distanceXZ(pts[i], p);
         if (d < bestD) {
             bestD = d;
             best = i;
@@ -176,7 +176,7 @@ int World::createFlag(int f, const Vec3& p, int building) {
     const int id = freeFlags_.allocate(flags, gameTime);
     fl.gen = flags[id].gen;
     flags[id] = std::move(fl);
-    roadGraphChanged();
+    transport_.roadGraphChanged();
     routingDirty_ = true;
     return id;
 }
@@ -187,7 +187,7 @@ int World::flagNear(int f, const Vec3& p, float radius) const {
     for (size_t i = 0; i < flags.size(); ++i) {
         const Flag& fl = flags[i];
         if (!fl.alive || fl.faction != f) continue;
-        const float d = dist2D(fl.pos, p);
+        const float d = distanceXZ(fl.pos, p);
         if (d <= bestD) {
             bestD = d;
             best = static_cast<int>(i);
@@ -205,7 +205,7 @@ bool World::canPlaceFlag(int f, const Vec3& p, std::string* reason) const {
     if (heightAt(p.x, p.z) < kWaterLevel + 0.5f) return fail("Flaga w wodzie");
     if (!isInTerritory(f, p)) return fail("Poza terytorium");
     for (const auto& fl : flags) {
-        if (fl.alive && dist2D(fl.pos, p) < kFlagMinSpacing) return fail("Za blisko innej flagi");
+        if (fl.alive && distanceXZ(fl.pos, p) < kFlagMinSpacing) return fail("Za blisko innej flagi");
     }
     return true;
 }
@@ -237,7 +237,7 @@ void World::removeFlag(int id) {
     destroyEntity(fl.entity);
     for (auto*& e : fl.goodEntities) destroyEntity(e);
     freeFlags_.release(id, gameTime);
-    roadGraphChanged();   // graf dróg bez tej flagi (removeRoad też to woła, ale flaga mogła nie mieć dróg)
+    transport_.roadGraphChanged();   // graf dróg bez tej flagi (removeRoad też to woła, ale flaga mogła nie mieć dróg)
     routingDirty_ = true;
 }
 
@@ -261,7 +261,7 @@ int World::createRoad(int f, int a, int b, const std::vector<Vec3>& points) {
     flags[a].roads.push_back(id);
     flags[b].roads.push_back(id);
     buildRoadMesh(id);
-    roadGraphChanged();
+    transport_.roadGraphChanged();
     markRoadCellsDirty();
     routingDirty_ = true;
     return id;
@@ -278,7 +278,7 @@ void World::removeRoad(int id) {
     destroyEntity(r.entity);
     freeRoads_.release(id, gameTime);
     engine_.getMeshManager()->removeMesh(roadMeshName(id));   // siatka drogi zwolniona (inaczej zostaje w VRAM)
-    roadGraphChanged();
+    transport_.roadGraphChanged();
     markRoadCellsDirty();
     routingDirty_ = true;
 }
@@ -384,7 +384,7 @@ bool World::planRoad(int f, int fromFlag, const Vec3& toIn, std::vector<Vec3>& o
     } else if (!canPlaceFlag(f, to, reason)) {
         return false;
     }
-    if (dist2D(from, to) < 4.0f) return fail("Za krótka droga");
+    if (distanceXZ(from, to) < 4.0f) return fail("Za krótka droga");
 
     std::vector<Vec3> path;
     if (nav_.lineWalkable(from, to)) {
@@ -427,7 +427,7 @@ int World::buildRoad(int f, int fromFlag, const Vec3& to, std::string* reason) {
 
     for (size_t i = 1; i + 1 < pts.size(); ++i) {
         const Vec3 p = pts[i];
-        segLen += dist2D(seg.back(), p);
+        segLen += distanceXZ(seg.back(), p);
         seg.push_back(p);
 
         // 1. Trasa mija istniejącą flagę.
@@ -443,9 +443,9 @@ int World::buildRoad(int f, int fromFlag, const Vec3& to, std::string* reason) {
             const Road& cr = roads[cross];
             const size_t k = nearestIndex(cr.points, p);
             int at;
-            if (dist2D(cr.points[k], flags[cr.flagA].pos) < kFlagMinSpacing) {
+            if (distanceXZ(cr.points[k], flags[cr.flagA].pos) < kFlagMinSpacing) {
                 at = cr.flagA;   // przecięcie tuż przy fladze - łączymy się z nią
-            } else if (dist2D(cr.points[k], flags[cr.flagB].pos) < kFlagMinSpacing) {
+            } else if (distanceXZ(cr.points[k], flags[cr.flagB].pos) < kFlagMinSpacing) {
                 at = cr.flagB;
             } else {
                 at = splitRoad(cross, k);
@@ -476,10 +476,10 @@ bool World::autoConnectFlag(int id, std::string* reason) {
     std::vector<int> candidates;
     for (size_t i = 0; i < flags.size(); ++i) {
         if (static_cast<int>(i) == id || !flags[i].alive || flags[i].faction != f || !linked(static_cast<int>(i))) continue;
-        if (dist2D(flags[i].pos, flags[id].pos) < 220.0f) candidates.push_back(static_cast<int>(i));
+        if (distanceXZ(flags[i].pos, flags[id].pos) < 220.0f) candidates.push_back(static_cast<int>(i));
     }
     std::sort(candidates.begin(), candidates.end(), [&](int a, int b) {
-        return dist2D(flags[a].pos, flags[id].pos) < dist2D(flags[b].pos, flags[id].pos);
+        return distanceXZ(flags[a].pos, flags[id].pos) < distanceXZ(flags[b].pos, flags[id].pos);
     });
     std::string why = "Brak połączonej z magazynem flagi w pobliżu";
     for (size_t i = 0; i < candidates.size() && i < 6; ++i) {
@@ -533,71 +533,6 @@ void World::updateRouting() {
     }
 }
 
-const World::NetDistances& World::networkFrom(int from) const {
-    NetDistances& e = netCache_[from];
-    if (e.version != roadGraphVersion_ || e.dist.size() != flags.size()) {
-        networkDistances(from, e.dist, e.prev);
-        e.version = roadGraphVersion_;
-    }
-    return e;
-}
-
-void World::networkDistances(int from, std::vector<float>& dist, std::vector<int>& prevRoad) const {
-    dist.assign(flags.size(), 1e9f);
-    prevRoad.assign(flags.size(), -1);
-    if (from < 0 || from >= static_cast<int>(flags.size()) || !flags[from].alive) return;
-    using Item = std::pair<float, int>;
-    std::priority_queue<Item, std::vector<Item>, std::greater<Item>> open;
-    dist[from] = 0.0f;
-    open.push({0.0f, from});
-    while (!open.empty()) {
-        const auto [d, cur] = open.top();
-        open.pop();
-        if (d > dist[cur]) continue;
-        for (int r : flags[cur].roads) {
-            if (!roads[r].alive) continue;
-            const int next = otherEnd(roads[r], cur);
-            const float nd = d + roads[r].length;
-            if (nd < dist[next]) {
-                dist[next] = nd;
-                prevRoad[next] = r;
-                open.push({nd, next});
-            }
-        }
-    }
-}
-
-// Trasa po drogach: odtwarzamy łańcuch odcinków od celu do startu i sklejamy ich punkty
-// (każdy odcinek w kierunku marszu).
-bool World::networkPath(int from, int to, std::vector<Vec3>& out) const {
-    out.clear();
-    if (from == to) {
-        if (to >= 0) out.push_back(flags[to].pos);
-        return to >= 0;
-    }
-    const NetDistances& net = networkFrom(from);
-    const auto& dist = net.dist;
-    const auto& prev = net.prev;
-    if (to < 0 || to >= static_cast<int>(flags.size()) || dist[to] >= 1e8f) return false;
-    std::vector<int> chain;   // odcinki od celu do startu
-    for (int cur = to; cur != from;) {
-        const int r = prev[cur];
-        chain.push_back(r);
-        cur = otherEnd(roads[r], cur);
-    }
-    int at = from;
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        const Road& r = roads[*it];
-        if (r.flagA == at) {
-            out.insert(out.end(), r.points.begin(), r.points.end());
-        } else {
-            out.insert(out.end(), r.points.rbegin(), r.points.rend());
-        }
-        at = otherEnd(r, at);
-    }
-    return true;
-}
-
 // =====================================================================================
 // Zlecenia dostaw (magazyn -> plac budowy / koszary)
 // =====================================================================================
@@ -617,7 +552,7 @@ void World::orderMaterials(int building, const Resources& r) {
             o.amount = std::min(left, kCarrierLoad);
             o.dest = building;
             left -= o.amount;
-            fundOrder(o);
+            transport_.fundOrder(o);
             // Slot po wykonanym zleceniu (Ref<TransportOrder> tragarza rozpozna, że to już inne zlecenie) albo nowy.
             const int id = freeOrders_.allocate(orders, gameTime);
             o.gen = orders[id].gen;
@@ -642,96 +577,6 @@ void World::requestInputs(int id) {
         }
         if (have < kInputBuffer) orderMaterials(id, Resources{{in, kInputBuffer - have}});
     }
-}
-
-// Opłaca zlecenie towarem najbliższym odbiorcy:
-//  - z magazynu (zapas zdejmowany od razu),
-//  - albo leżącym na fladze (np. deski na fladze tartaku) - towar zostaje na fladze, ale jest zarezerwowany.
-// Dzięki flagom budowa i warsztaty dostają towar, nawet gdy magazyny są pełne albo towar przekroczył limit zapasu.
-// Flagi mają lekką przewagę (x0,8 odległości) - zabranie towaru z flagi odblokowuje warsztat.
-bool World::fundOrder(TransportOrder& o) {
-    if (o.dest < 0) return false;   // odbiorca zniknął (zlecenie zaraz zostanie zwolnione)
-    const Building& dst = buildings[o.dest];
-    const Vec3 at = dst.pos;
-    // Dowolna żywność: rodzaj, którego jest najwięcej (count zwraca liczbę dostępnych sztuk danego rodzaju).
-    auto pickType = [&](auto count) {
-        if (o.type != CarryType::AnyFood) return o.type;
-        CarryType best = CarryType::Bread;
-        for (CarryType fd : kFoods) {
-            if (count(fd) > count(best)) best = fd;
-        }
-        return best;
-    };
-
-    // Tylko źródła osiągalne po drogach od odbiorcy - towaru z magazynu bez drogi nikt nie doniesie,
-    // a opłacone zlecenie blokowałoby budowę na zawsze. Odbiorca bez drogi: zlecenie poczeka na drogę.
-    if (dst.flag < 0 || !flags[dst.flag].alive || !flags[dst.flag].connected) return false;
-    const auto& dist = networkFrom(dst.flag).dist;
-
-    int bestStore = -1, bestFlag = -1;
-    float bestD = 1e9f;
-    CarryType bestType = o.type;
-    for (size_t i = 0; i < buildings.size(); ++i) {
-        const Building& b = buildings[i];
-        if (!b.alive || !b.constructed || b.faction != o.faction || storageCapacity(b.type) <= 0) continue;
-        if (b.flag < 0 || dist[b.flag] >= 1e8f) continue;
-        const CarryType type = pickType([&](CarryType t) { return b.stock[t]; });
-        if (b.stock[type] < o.amount) continue;
-        const float d = dist2D(b.pos, at);
-        if (d < bestD) {
-            bestD = d;
-            bestStore = static_cast<int>(i);
-            bestType = type;
-        }
-    }
-
-    // Flagi: tylko osiągalne drogami z flagi odbiorcy.
-    for (size_t i = 0; i < flags.size(); ++i) {
-        const Flag& fl = flags[i];
-        if (!fl.alive || fl.faction != o.faction || static_cast<int>(i) == dst.flag || fl.goods.empty()) continue;
-        auto freeOf = [&](CarryType t) {
-            return static_cast<int>(std::count(fl.goods.begin(), fl.goods.end(), t)) - fl.reserved[static_cast<int>(t)];
-        };
-        const CarryType type = pickType(freeOf);
-        if (freeOf(type) < o.amount) continue;
-        const float d = dist2D(fl.pos, at) * 0.8f;
-        if (d >= bestD || dist[i] >= 1e8f) continue;
-        bestD = d;
-        bestFlag = static_cast<int>(i);
-        bestStore = -1;
-        bestType = type;
-    }
-
-    if (bestFlag >= 0) {
-        o.type = bestType;
-        flags[bestFlag].reserved[static_cast<int>(o.type)] += o.amount;
-        o.sourceFlag = bestFlag;
-        o.source = -1;
-        o.funded = true;
-        return true;
-    }
-    if (bestStore < 0) return false;
-    o.type = bestType;   // od teraz konkretny towar (chleb / ryby / mięso)
-    buildings[bestStore].stock[o.type] -= o.amount;
-    o.source = bestStore;
-    o.sourceFlag = -1;
-    o.funded = true;
-    routingDirty_ = true;
-    return true;
-}
-
-void World::unfundOrder(TransportOrder& o) {
-    if (o.funded && !o.picked) {
-        if (o.source >= 0 && buildings[o.source].alive) {
-            resourceRef(buildings[o.source].stock, o.type) += o.amount;
-        } else if (o.sourceFlag >= 0 && flags[o.sourceFlag].alive) {
-            int& r = flags[o.sourceFlag].reserved[static_cast<int>(o.type)];
-            r = std::max(0, r - o.amount);
-        }
-    }
-    o.funded = false;
-    o.source = -1;
-    o.sourceFlag = -1;
 }
 
 int World::flagAvailableGoods(const Flag& fl) const {
@@ -828,7 +673,7 @@ void World::updateFlags(float dt) {
         const bool destOk = o.dest >= 0 && buildings[o.dest].alive;
         if (!destOk && !o.picked) {
             // Odbiorca zniknął - opłacony towar wraca do magazynu, z którego go zdjęto (albo zwalniamy rezerwację na fladze).
-            unfundOrder(o);
+            transport_.unfundOrder(o);
             if (o.carrier >= 0 && units[o.carrier].alive && units[o.carrier].jobOrder >= 0 &&
                 &orders[units[o.carrier].jobOrder] == &o) {
                 units[o.carrier].jobOrder = -1;
@@ -850,12 +695,12 @@ void World::updateFlags(float dt) {
             // Źródło przestało być osiągalne (zburzona droga) - cofamy opłatę, zlecenie opłaci się z innego miejsca.
             const int dflag = buildings[o.dest].flag;
             const int src = o.source >= 0 ? buildings[o.source].flag : o.sourceFlag;
-            if (src < 0 || dflag < 0 || networkFrom(dflag).dist[src] >= 1e8f) unfundOrder(o);
+            if (src < 0 || dflag < 0 || transport_.networkFrom(dflag).dist[src] >= 1e8f) transport_.unfundOrder(o);
         }
-        if (!o.funded && !o.picked) fundOrder(o);
+        if (!o.funded && !o.picked) transport_.fundOrder(o);
     }
     refreshFactionResources();
-    for (int f = 0; f < kFactionCount; ++f) assignTransportJobs(f);
+    for (int f = 0; f < kFactionCount; ++f) transport_.assignTransportJobs(f);
 }
 
 // Pracownik odkłada wyrób (ProductionDef::outputCount sztuk) na fladze swojego warsztatu.
@@ -929,394 +774,6 @@ TransportStats World::transportStats(int f) const {
         else if (o.carrier < 0) ++s.ordersWaiting;
     }
     return s;
-}
-
-// Nabór tragarzy spośród wolnych osadników (najwyżej limit naraz) albo zwalnianie wolnych, gdy jest ich za dużo.
-// Nowy tragarz idzie do flagi zamku i tam czeka na zlecenia.
-void World::manageCarriers(int f, int limit) {
-    const int target = std::min(limit, carrierTargetOf(f));
-    int count = 0;
-    for (const auto& u : units) {
-        if (u.alive && u.faction == f && isCarrierState(u.state)) ++count;
-    }
-    const int castle = factions[f].castle;
-    if (castle < 0 || !buildings[castle].alive) return;
-    const int home = buildings[castle].flag;
-    while (count < target) {
-        const int s = findIdleSettler(f, flags[home].pos);
-        if (s < 0) return;
-        Unit& u = units[s];
-        u.state = UnitState::GoToRoad;
-        u.atFlag = home;
-        u.jobFlag = -1;
-        u.jobOrder = -1;
-        u.jobDest = -1;
-        u.carryCount = 0;
-        setPath(u, flags[home].pos);
-        ++count;
-    }
-    // Za dużo tragarzy (gracz zmniejszył liczbę) - wolni wracają do zwykłych prac.
-    if (limit >= 1000) {
-        const int wanted = carrierTargetOf(f);
-        for (auto& u : units) {
-            if (count <= wanted) break;
-            if (u.alive && u.faction == f && u.state == UnitState::CarrierWait) {
-                becomeIdleSettler(u);
-                --count;
-            }
-        }
-    }
-}
-
-// Przydział zleceń: każdy wolny tragarz (czekający przy fladze) bierze najbliższe po drogach zadanie:
-//  - odbiór towaru z flagi warsztatu (cel: najbliższy magazyn z miejscem),
-//  - dostawę opłaconego zlecenia (z magazynu do odbiorcy).
-void World::assignTransportJobs(int f) {
-    Resources bound = storeBound(f);   // limity zapasu: magazyny + towary już niesione do magazynów
-    bool anyStoreRoom = false;
-    for (const auto& b : buildings) {
-        anyStoreRoom |= b.alive && b.constructed && b.faction == f && storageCapacity(b.type) > 0 &&
-                        b.stock.total() + b.incoming < storageCapacity(b.type);
-    }
-    for (size_t ci = 0; ci < units.size(); ++ci) {
-        Unit& u = units[ci];
-        if (!u.alive || u.faction != f || u.state != UnitState::CarrierWait) continue;
-        if (u.atFlag < 0 || !flags[u.atFlag].alive) continue;
-        const auto& dist = networkFrom(u.atFlag).dist;
-
-        // Najlepszy odbiór: blisko, a przy dużej liczbie towarów na fladze - chętniej.
-        int bestFlag = -1;
-        float bestScore = 1e9f;
-        for (size_t i = 0; i < flags.size(); ++i) {
-            const Flag& fl = flags[i];
-            if (!fl.alive || fl.faction != f || dist[i] >= 1e8f) continue;
-            if (fl.building >= 0) {
-                const Building& b = buildings[fl.building];
-                // Flaga magazynu z wolnym miejscem rozładowuje się sama.
-                if (b.alive && b.constructed && storageCapacity(b.type) > 0 && b.stock.total() + b.incoming < storageCapacity(b.type)) continue;
-            }
-            const int avail = anyStoreRoom ? pickupableGoods(fl, bound) : 0;
-            if (avail <= 0) continue;
-            const float score = dist[i] - static_cast<float>(avail) * 8.0f;
-            if (score < bestScore) {
-                bestScore = score;
-                bestFlag = static_cast<int>(i);
-            }
-        }
-        // Najlepsza dostawa: odległość do magazynu źródłowego.
-        int bestOrder = -1;
-        for (size_t i = 0; i < orders.size(); ++i) {
-            const TransportOrder& o = orders[i];
-            if (!o.alive || o.faction != f || !o.funded || o.carrier >= 0) continue;
-            const int src = o.source >= 0 ? buildings[o.source].flag : o.sourceFlag;
-            const int dst = buildingOrDead(o.dest).flag;
-            if (src < 0 || dst < 0 || dist[src] >= 1e8f) continue;
-            if (networkFrom(src).dist[dst] >= 1e8f) continue;   // odbiorca nie ma drogi do magazynu
-            const float score = dist[src] - 20.0f;   // dostawy odrobinę ważniejsze (stoją place budowy)
-            if (score < bestScore) {
-                bestScore = score;
-                bestOrder = static_cast<int>(i);
-                bestFlag = -1;
-            }
-        }
-
-        if (bestOrder >= 0) {
-            TransportOrder& o = orders[bestOrder];
-            o.carrier = static_cast<int>(ci);
-            u.jobOrder = bestOrder;
-            u.jobFlag = -1;
-            u.jobDest = o.dest;
-            u.carry = CarryType::None;
-            u.carryCount = 0;
-            const int src = o.source >= 0 ? buildings[o.source].flag : o.sourceFlag;
-            networkPath(u.atFlag, src, u.path);
-            u.pathIndex = 0;
-            u.atFlag = src;
-            u.state = UnitState::GoToRoad;
-            continue;
-        }
-        if (bestFlag < 0) continue;
-
-        // Magazyn docelowy dla odbioru: najbliższy po drogach z wolnym miejscem.
-        Flag& fl = flags[bestFlag];
-        const auto& d2 = networkFrom(bestFlag).dist;
-        int store = -1;
-        float storeD = 1e9f;
-        for (size_t i = 0; i < buildings.size(); ++i) {
-            const Building& b = buildings[i];
-            if (!b.alive || !b.constructed || b.faction != f || storageCapacity(b.type) <= 0 || b.flag < 0) continue;
-            if (b.stock.total() + b.incoming >= storageCapacity(b.type) || d2[b.flag] >= 1e8f) continue;
-            if (d2[b.flag] < storeD) {
-                storeD = d2[b.flag];
-                store = static_cast<int>(i);
-            }
-        }
-        if (store < 0) continue;   // wszystkie magazyny pełne - towar poczeka
-        // Rodzaj towaru: ten, którego najwięcej czeka (niezarezerwowany).
-        CarryType type = CarryType::None;
-        int bestAvail = 0;
-        for (int t = 1; t <= kGoodTypeCount; ++t) {
-            if (bound.v[t] >= factions[f].stockLimit[t]) continue;   // limit zapasu osiągnięty - towar zostaje na fladze
-            const int avail = static_cast<int>(std::count(fl.goods.begin(), fl.goods.end(), static_cast<CarryType>(t))) - fl.reserved[t];
-            if (avail > bestAvail) {
-                bestAvail = avail;
-                type = static_cast<CarryType>(t);
-            }
-        }
-        if (type == CarryType::None) continue;
-        const int load = std::min({kCarrierLoad, bestAvail, storageCapacity(buildings[store].type) - buildings[store].stock.total() -
-                                                               buildings[store].incoming,
-                                   factions[f].stockLimit[static_cast<int>(type)] - bound[type]});
-        resourceRef(bound, type) += load;
-        fl.reserved[static_cast<int>(type)] += load;
-        buildings[store].incoming += load;
-        u.jobFlag = bestFlag;
-        u.jobOrder = -1;
-        u.jobDest = store;
-        u.carry = type;          // rodzaj, po który idzie (model postaci pokazuje go dopiero po podniesieniu)
-        u.carryCount = load;
-        networkPath(u.atFlag, bestFlag, u.path);
-        u.pathIndex = 0;
-        u.atFlag = bestFlag;
-        u.state = UnitState::GoToRoad;
-    }
-}
-
-// Tragarz przerywa zlecenie (śmierć, zwolnienie, zniknięcie drogi).
-void World::releaseCarrierJob(Unit& u) {
-    if (u.state == UnitState::GoToRoad && u.jobFlag >= 0) {
-        // Szedł po towar: zwalnia rezerwację na fladze i miejsce w magazynie.
-        if (flags[u.jobFlag].alive && u.carry != CarryType::None) {
-            int& r = flags[u.jobFlag].reserved[static_cast<int>(u.carry)];
-            r = std::max(0, r - u.carryCount);
-        }
-        if (u.jobDest >= 0) buildings[u.jobDest].incoming = std::max(0, buildings[u.jobDest].incoming - u.carryCount);
-    } else if (u.state == UnitState::CarrierWalk) {
-        // Niesie towar: zostawia go na najbliższej fladze; inny tragarz zaniesie go do magazynu.
-        if (u.jobFlag >= 0 && u.jobDest >= 0) buildings[u.jobDest].incoming = std::max(0, buildings[u.jobDest].incoming - u.carryCount);
-        int near = u.atFlag;
-        float best = 1e9f;
-        for (size_t i = 0; i < flags.size(); ++i) {
-            if (!flags[i].alive || flags[i].faction != u.faction) continue;
-            const float d = dist2D(flags[i].pos, u.pos);
-            if (d < best) {
-                best = d;
-                near = static_cast<int>(i);
-            }
-        }
-        dropCarriedGoods(u, near);
-    }
-    if (u.jobOrder >= 0 && u.jobOrder < static_cast<int>(orders.size())) {
-        TransportOrder& o = orders[u.jobOrder];
-        if (o.alive && o.carrier >= 0 && &units[o.carrier] == &u) {
-            o.carrier = -1;
-            if (o.picked) {
-                o.picked = false;   // towar leży na fladze - zlecenie trzeba opłacić od nowa
-                o.funded = false;
-                o.source = -1;
-                o.sourceFlag = -1;
-            }
-        }
-    }
-    u.jobFlag = -1;
-    u.jobOrder = -1;
-    u.jobDest = -1;
-    u.carry = CarryType::None;
-    u.carryCount = 0;
-}
-
-void World::dropCarriedGoods(Unit& u, int flag) {
-    if (u.carryCount > 0 && u.carry != CarryType::None && flag >= 0 && flag < static_cast<int>(flags.size()) && flags[flag].alive) {
-        for (int k = 0; k < u.carryCount; ++k) flags[flag].goods.push_back(u.carry);
-    }
-    u.carry = CarryType::None;
-    u.carryCount = 0;
-}
-
-// Tragarz:
-//   GoToRoad    - idzie bez ładunku: do flagi warsztatu (odbiór), do magazynu (dostawa) albo wraca do magazynu,
-//   CarrierWalk - niesie towar do celu,
-//   CarrierWait - czeka przy fladze na zlecenie (gdy stoi nie przy magazynie - po chwili wraca do najbliższego).
-void World::updateCarrier(Unit& u, int id, float dt) {
-    (void)id;
-    u.ghostTimer = std::max(u.ghostTimer, 0.2f);   // tragarze przechodzą przez tłum (wąskie drogi)
-    if (u.atFlag >= 0 && !flags[u.atFlag].alive) u.atFlag = -1;
-
-    auto finishJob = [&]() {
-        u.jobFlag = -1;
-        u.jobOrder = -1;
-        u.jobDest = -1;
-        u.carry = CarryType::None;
-        u.carryCount = 0;
-        u.state = UnitState::CarrierWait;
-        u.timer = 0.0f;
-        u.path.clear();
-    };
-
-    switch (u.state) {
-    case UnitState::CarrierWait: {
-        u.timer += dt;
-        // Flaga zniknęła albo tragarz stoi z dala od magazynu - wraca do najbliższego magazynu.
-        bool atStore = false;
-        if (u.atFlag >= 0 && flags[u.atFlag].building >= 0) {
-            const Building& b = buildings[flags[u.atFlag].building];
-            atStore = b.alive && b.constructed && storageCapacity(b.type) > 0;
-        }
-        if (!atStore && u.timer > 3.0f) {
-            int best = -1;
-            float bestD = 1e9f;
-            const auto& dist = networkFrom(u.atFlag).dist;   // atFlag = -1: wszystkie "bez połączenia"
-            for (const auto& b : buildings) {
-                if (!b.alive || !b.constructed || b.faction != u.faction || storageCapacity(b.type) <= 0 || b.flag < 0) continue;
-                const float d = u.atFlag >= 0 && dist[b.flag] < 1e8f ? dist[b.flag] : 5000.0f + dist2D(u.pos, flags[b.flag].pos);
-                if (d < bestD) {
-                    bestD = d;
-                    best = b.flag;
-                }
-            }
-            if (best >= 0) {
-                if (u.atFlag < 0 || !networkPath(u.atFlag, best, u.path)) setPath(u, flags[best].pos);
-                u.pathIndex = 0;
-                u.atFlag = best;
-                u.state = UnitState::GoToRoad;
-            }
-            u.timer = 0.0f;
-        }
-        return;
-    }
-    case UnitState::GoToRoad: {
-        if (!pathFinished(u)) {
-            followPath(u, dt, 0.3f);
-            return;
-        }
-        if (u.atFlag < 0) {
-            finishJob();
-            return;
-        }
-        if (dist2D(u.pos, flags[u.atFlag].pos) > 2.5f) {
-            u.stuckTimer += dt;
-            if (u.stuckTimer > 6.0f) {   // nie da się dojść - porzuca zlecenie
-                u.stuckTimer = 0.0f;
-                releaseCarrierJob(u);
-                finishJob();
-                return;
-            }
-            setPath(u, flags[u.atFlag].pos);
-            return;
-        }
-        u.stuckTimer = 0.0f;
-        if (u.jobFlag >= 0) {
-            // Odbiór: zabiera zarezerwowane towary.
-            Flag& fl = flags[u.jobFlag];
-            int& reserved = fl.reserved[static_cast<int>(u.carry)];
-            reserved = std::max(0, reserved - u.carryCount);
-            int taken = 0;
-            for (auto it = fl.goods.begin(); it != fl.goods.end() && taken < u.carryCount;) {
-                if (*it == u.carry) {
-                    it = fl.goods.erase(it);
-                    ++taken;
-                } else {
-                    ++it;
-                }
-            }
-            Building& store = buildingOrDead(u.jobDest);   // magazyn mógł zniknąć w trakcie marszu
-            store.incoming = std::max(0, store.incoming - (u.carryCount - taken));
-            u.carryCount = taken;
-            if (taken == 0 || !store.alive || store.flag < 0 || !networkPath(u.jobFlag, store.flag, u.path)) {
-                if (taken > 0) dropCarriedGoods(u, u.jobFlag);
-                store.incoming = std::max(0, store.incoming - taken);
-                finishJob();
-                return;
-            }
-            u.pathIndex = 0;
-            u.atFlag = store.flag;
-            u.state = UnitState::CarrierWalk;
-            return;
-        }
-        if (u.jobOrder >= 0) {
-            // Dostawa: zabiera opłacony towar z magazynu.
-            TransportOrder& o = orders[u.jobOrder];
-            if (!o.alive || !o.funded || o.dest < 0 || !buildings[o.dest].alive || buildings[o.dest].flag < 0 ||
-                !networkPath(u.atFlag, buildings[o.dest].flag, u.path)) {
-                if (o.alive) o.carrier = -1;
-                finishJob();
-                return;
-            }
-            if (o.sourceFlag >= 0) {
-                // Towar z flagi: zdejmujemy zarezerwowane sztuki.
-                Flag& src = flags[o.sourceFlag];
-                int& r = src.reserved[static_cast<int>(o.type)];
-                r = std::max(0, r - o.amount);
-                int taken = 0;
-                for (auto it = src.goods.begin(); it != src.goods.end() && taken < o.amount;) {
-                    if (*it == o.type) {
-                        it = src.goods.erase(it);
-                        ++taken;
-                    } else {
-                        ++it;
-                    }
-                }
-                if (taken < o.amount) {   // towaru zabrakło (nie powinno się zdarzyć) - odkładamy i opłacamy od nowa
-                    for (int k = 0; k < taken; ++k) src.goods.push_back(o.type);
-                    o.funded = false;
-                    o.sourceFlag = -1;
-                    o.carrier = -1;
-                    finishJob();
-                    return;
-                }
-                o.sourceFlag = -1;
-            }
-            o.picked = true;
-            u.carry = o.type;
-            u.carryCount = o.amount;
-            u.pathIndex = 0;
-            u.atFlag = buildingOrDead(o.dest).flag;   // -1 = odbiorca zniknął (obsłużone w CarrierWalk)
-            u.state = UnitState::CarrierWalk;
-            return;
-        }
-        finishJob();   // powrót do magazynu zakończony
-        return;
-    }
-    case UnitState::CarrierWalk: {
-        if (!pathFinished(u)) {
-            followPath(u, dt, 0.3f);
-            return;
-        }
-        if (u.atFlag < 0) {   // flaga celu zniknęła po drodze
-            releaseCarrierJob(u);
-            finishJob();
-            return;
-        }
-        if (u.jobFlag >= 0) {
-            // Odbiór: towar trafia do magazynu (gdy w międzyczasie się zapełnił - zostaje na jego fladze).
-            Building& store = buildingOrDead(u.jobDest);   // zniszczony magazyn - towar zostaje na fladze
-            store.incoming = std::max(0, store.incoming - u.carryCount);
-            if (store.alive && store.constructed) {
-                const int n = std::min(u.carryCount, storageCapacity(store.type) - store.stock.total());
-                resourceRef(store.stock, u.carry) += std::max(0, n);
-                u.carryCount -= std::max(0, n);
-                refreshFactionResources();
-            }
-            dropCarriedGoods(u, u.atFlag);
-            if (u.faction == kPlayer) emitSound("deliver", u.pos, 0.25f);
-        } else if (u.jobOrder >= 0) {
-            TransportOrder& o = orders[u.jobOrder];
-            Building* dest = (o.dest >= 0 && buildings[o.dest].alive) ? &buildings[o.dest] : nullptr;
-            if (dest) {
-                resourceRef(dest->delivered, u.carry) += u.carryCount;
-                u.carryCount = 0;
-            } else {
-                dropCarriedGoods(u, u.atFlag);   // odbiorca zniknął - towar wróci do magazynu
-            }
-            releaseOrder(o);
-        }
-        finishJob();
-        return;
-    }
-    default:
-        finishJob();
-        return;
-    }
 }
 
 // Towary leżące przy flagach: do kFlagCapacity modeli na flagę, ułożonych w krąg wokół masztu.

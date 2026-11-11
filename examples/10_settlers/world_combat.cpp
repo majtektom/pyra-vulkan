@@ -130,7 +130,7 @@ void World::soldierGoGarrison(Unit& u, float dt) {
     const Building& t = buildings[u.homeTower];
     const Vec3 door = t.door();
     const bool pathDone = !u.path.empty() && u.pathIndex >= u.path.size();
-    if (dist2D(u.pos, door) < 3.0f || (pathDone && dist2D(u.pos, door) < kNavCell * 2.5f)) {
+    if (distanceXZ(u.pos, door) < 3.0f || (pathDone && distanceXZ(u.pos, door) < kNavCell * 2.5f)) {
         u.state = UnitState::Garrison;
         u.pos = door;
         u.path.clear();
@@ -158,7 +158,7 @@ void World::autoGarrison(int f) {
         for (size_t i = 0; i < units.size(); ++i) {
             const Unit& u = units[i];
             if (!u.alive || u.faction != f || u.type == UnitType::Settler || u.state != UnitState::Idle || u.homeTower >= 0) continue;
-            const float d = dist2D(u.pos, t.pos);
+            const float d = distanceXZ(u.pos, t.pos);
             if (d < bestD) {
                 bestD = d;
                 best = static_cast<int>(i);
@@ -180,13 +180,13 @@ void World::soldierAssaultTower(Unit& u, int id, float dt) {
     // Obrońca już na zewnątrz - walczymy z nim.
     for (size_t i = 0; i < units.size(); ++i) {
         const Unit& d = units[i];
-        if (d.alive && d.homeTower == ti && d.state != UnitState::Garrison && dist2D(d.pos, t.pos) < 90.0f) {
+        if (d.alive && d.homeTower == ti && d.state != UnitState::Garrison && distanceXZ(d.pos, t.pos) < 90.0f) {
             u.targetUnit = static_cast<int>(i);
             return;   // następna klatka: zwykła walka z jednostką
         }
     }
 
-    const float toDoor = dist2D(u.pos, door);
+    const float toDoor = distanceXZ(u.pos, door);
     if (toDoor < 14.0f) {
         if (garrisonOf(ti) > 0) {
             // Wywołanie obrońcy: pierwszy z załogi wychodzi przed drzwi i atakuje.
@@ -356,7 +356,7 @@ void World::updateSoldier(Unit& u, int id, float dt) {
         if (u.homeTower >= 0) {
             u.state = UnitState::GoGarrison;
             u.path.clear();
-        } else if (dist2D(u.pos, u.guardPos) > 10.0f) {
+        } else if (distanceXZ(u.pos, u.guardPos) > 10.0f) {
             u.state = UnitState::Moving;
             setPath(u, u.guardPos);
         } else {
@@ -423,9 +423,9 @@ void World::soldierAttack(Unit& u, int id, float dt) {
     if (u.targetUnit >= 0) {
         const Unit& t = units[u.targetUnit];
         targetPos = t.pos;
-        distance = dist2D(u.pos, targetPos) - unitDef(t.type).radius;
+        distance = distanceXZ(u.pos, targetPos) - unitDef(t.type).radius;
         // "Smycz": cel wybrany automatycznie nie jest ścigany dalej niż 160 od posterunku.
-        if (!u.attackMove && dist2D(u.pos, u.guardPos) > 160.0f) {
+        if (!u.attackMove && distanceXZ(u.pos, u.guardPos) > 160.0f) {
             u.targetUnit = -1;
             u.state = UnitState::Moving;
             setPath(u, u.guardPos);
@@ -561,7 +561,7 @@ void World::alertDefenders(int faction, const Vec3& p, int attackerUnit) {
     for (auto& u : units) {
         if (!u.alive || u.faction != faction || u.type == UnitType::Settler) continue;
         if (u.state != UnitState::Idle || u.targetUnit >= 0) continue;
-        if (dist2D(u.pos, p) > 140.0f) continue;
+        if (distanceXZ(u.pos, p) > 140.0f) continue;
         u.targetUnit = attackerUnit;
         u.state = UnitState::Attack;
         u.path.clear();
@@ -583,7 +583,7 @@ void World::fireArrow(const Vec3& from, int faction, int targetUnit, int targetB
     } else {
         p.end = add(buildings[targetBuilding].pos, {0.0f, buildingDef(buildings[targetBuilding].type).height * 0.3f, 0.0f});
     }
-    const float d = dist2D(p.start, p.end);
+    const float d = distanceXZ(p.start, p.end);
     p.duration = 0.25f + d / 110.0f;
     p.arcHeight = d * 0.12f;
     emitSound("bow", from, 0.5f);

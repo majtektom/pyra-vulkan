@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 #include "render/renderer.h"
+#include "render/pipeline_builder.h"
 #include "render/vulkan_util.h"
 #include "core/math.h"
 #include "core/types.h"
@@ -151,144 +152,26 @@ void SkydomeRenderer::init(Renderer* renderer) {
     VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
     VkCommandPool commandPool = renderer_->commandPool();
     VkQueue graphicsQueue = renderer_->graphicsQueue();
-    VkExtent2D extent = renderer_->extent();
     VkDescriptorSetLayout descriptorSetLayout = renderer_->descriptorSetLayout();
     VkFormat colorFormat = renderer_->colorFormat();
     VkFormat depthFormat = renderer_->depthFormat();
 
-    const auto vertCode = vk::readFile(shaderDir_ + "/skydome.vert.spv");
-    const auto fragCode = vk::readFile(shaderDir_ + "/skydome.frag.spv");
+    // Kopuła oglądana od środka: bez cullingu, głębokość tylko testowana (LEQUAL) - niebo zostaje w tle.
+    const vk::ShaderModule vert(device, shaderDir_ + "/skydome.vert.spv");
+    const vk::ShaderModule frag(device, shaderDir_ + "/skydome.frag.spv");
 
-    const VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
-    const VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertModule;
-    vertStage.pName = "vertexMain";
-
-    VkPipelineShaderStageCreateInfo fragStage{};
-    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragStage.module = fragModule;
-    fragStage.pName = "fragmentMain";
-
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertStage, fragStage};
-
-    auto bindingDesc = Vertex::bindingDescription();
-    auto attribDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
-
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDesc;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribDescs.size());
-    vertexInput.pVertexAttributeDescriptions = attribDescs.data();
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-
-    VkViewport viewport{};
-    viewport.x = 0.0f; viewport.y = 0.0f;
-    viewport.width = static_cast<float>(extent.width);
-    viewport.height = static_cast<float>(extent.height);
-    viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = {0, 0}; scissor.extent = extent;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = (renderer_ && renderer_->isWireframeEnabled()) ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    VkPipelineColorBlendAttachmentState blendAttach{};
-    blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &blendAttach;
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushRange.offset = 0;
-    pushRange.size = sizeof(SkydomePushConstants);
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-
-    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout_) != VK_SUCCESS) {
-        vkDestroyShaderModule(device, fragModule, nullptr);
-        vkDestroyShaderModule(device, vertModule, nullptr);
-        throw std::runtime_error("failed to create skydome pipeline layout");
-    }
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    std::vector<VkDynamicState> dynStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynStates.size());
-    dynamicState.pDynamicStates = dynStates.data();
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
-    pipelineInfo.pStages = stages.data();
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = VK_NULL_HANDLE;
-    pipelineInfo.subpass = 0;
-
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &colorFormat;
-    renderingInfo.depthAttachmentFormat = depthFormat;
-    pipelineInfo.pNext = &renderingInfo;
-
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
-        vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
-        pipelineLayout_ = VK_NULL_HANDLE;
-        vkDestroyShaderModule(device, fragModule, nullptr);
-        vkDestroyShaderModule(device, vertModule, nullptr);
-        throw std::runtime_error("failed to create skydome pipeline");
-    }
-
-    vkDestroyShaderModule(device, fragModule, nullptr);
-    vkDestroyShaderModule(device, vertModule, nullptr);
+    pipelineLayout_ = vk::createPipelineLayout(device, {descriptorSetLayout}, sizeof(SkydomePushConstants),
+                                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, "skydome");
+    pipeline_ = vk::GraphicsPipelineBuilder()
+        .shaders(vert, frag)
+        .vertexInput(Vertex::bindingDescription(), vk::filterVertexAttributes(vert.code(), Vertex::attributeDescriptions()))
+        .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
+        .polygonMode(renderer_->isWireframeEnabled() ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL)
+        .cull(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE)
+        .depth(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .colorFormat(colorFormat)
+        .depthFormat(depthFormat)
+        .build(device, pipelineLayout_, "skydome");
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -327,7 +210,7 @@ void SkydomeRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const Ren
 
     if (!ready_) return;
 
-    // Dynamically advance time of day and compute sun elevation for dynamic day/night cycle
+    // Upływ pory dnia i wysokość słońca (cykl dnia i nocy)
     config_.timeOfDay = std::fmod(11.0f + time_ * 0.05f, 24.0f);
     if (config_.timeOfDay < 0.0f) config_.timeOfDay += 24.0f;
     
@@ -455,7 +338,7 @@ float SkydomeRenderer::getSunIntensity() const {
 }
 
 float SkydomeRenderer::getAmbientStrength() const {
-    // Ambient fades out between -12.0 and +10.0 degrees sun elevation
+    // Światło otoczenia gaśnie, gdy słońce schodzi z +10 do -12 stopni
     float ambientFactor = std::clamp((config_.sunElevation + 12.0f) / 22.0f, 0.0f, 1.0f);
     ambientFactor = ambientFactor * ambientFactor * (3.0f - 2.0f * ambientFactor); // Smoothstep
     

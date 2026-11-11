@@ -15,20 +15,15 @@
 #include "scene/scene.h"
 #include "core/entity.h"
 #include "core/logger.h"
-#include "object/skydome_renderer.h"
-#include "object/ocean_renderer.h"
-#include "object/model_3ds.h"
 #include "object/model_md2.h"
 #include "object/gltf/model_gltf.h"
+#include "object/skydome_renderer.h"
+#include "object/ocean_renderer.h"
 #include "object/terrain/terrain.h"
 #include "object/terrain/terrain_component.h"
-#include "object/terrain/terrain_placement_component.h"
-#include <fstream>
-#include <nlohmann/json.hpp>
 
 #include "core/profiler.h"
 #include <cstdlib>
-#include <random>
 
 #include <chrono>
 #include <cmath>
@@ -59,7 +54,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
     try {
         platform = std::make_unique<Platform>(appName, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
         if (!platform) {
-            LOG_ERROR("Failed to create platform");
+            LOG_ERROR("nie udało się utworzyć okna (platformy)");
             return false;
         }
 
@@ -69,7 +64,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
 
         vulkanContext = std::make_shared<VulkanContext>();
         if (!vulkanContext->initialize(appName, enableValidationLayers)) {
-            LOG_ERROR("Failed to initialize Vulkan Context");
+            LOG_ERROR("nie udało się zainicjalizować Vulkana");
             return false;
         }
         vulkanContext->createSurface(platform->nativeWindow());
@@ -88,7 +83,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
         textureManager->setAssetRegistry(assetRegistry.get());
 
         if (!renderer->initialize(appName, enableValidationLayers)) {
-            LOG_ERROR("Failed to initialize renderer");
+            LOG_ERROR("nie udało się zainicjalizować renderera");
             return false;
         }
 
@@ -104,7 +99,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
         }
 
         initialized = true;
-        LOG_INFO("Engine initialized successfully");
+        LOG_INFO("Silnik gotowy");
         return true;
     } catch (const std::exception& e) {
         LOG_CRITICAL("Engine initialization failed: {}", e.what());
@@ -114,7 +109,7 @@ bool Engine::initialize(const std::string& appName, int width, int height, bool 
 
 void Engine::run() {
     if (!initialized) {
-        LOG_ERROR("Engine not initialized!");
+        LOG_ERROR("silnik nie jest zainicjalizowany");
         return;
     }
 
@@ -173,20 +168,7 @@ void Engine::cleanup() {
     if (audio_) audio_->shutdown();
 
     // Zwolnienie zasobów mapy przed zniszczeniem renderera i kontekstu Vulkan
-    if (renderer) {
-        renderer->waitIdle();
-        renderer->removeFeature("SkydomeRenderer");
-        renderer->removeFeature("OceanRenderer");
-        renderer->removeFeature("VolumetricFogRenderer");
-    }
-
-    currentBrainInstances_.clear();
-    currentBrainModel_.reset();
-    currentMd2Anim_.reset();
-    currentMd2Model_.reset();
-    currentOcean_.reset();
-    currentSkydome_.reset();
-    volumetricFogRenderer_.reset();
+    clearMapFeatures();
 
     if (renderer) {
         renderer->cleanup();
@@ -591,6 +573,11 @@ bool Engine::mouseDown(int button) const {
     return currentInput_.mouseButtons[button];
 }
 
+bool Engine::keyPressed(int scancode) const {
+    if (scancode < 0 || scancode >= 256) return false;
+    return currentInput_.keys[scancode] && !previousInput_.keys[scancode];
+}
+
 bool Engine::mousePressed(int button) const {
     if (button < 0 || button >= 5) return false;
     return currentInput_.mouseButtons[button] && !previousInput_.mouseButtons[button];
@@ -599,503 +586,6 @@ bool Engine::mousePressed(int button) const {
 bool Engine::mouseReleased(int button) const {
     if (button < 0 || button >= 5) return false;
     return !currentInput_.mouseButtons[button] && previousInput_.mouseButtons[button];
-}
-
-
-bool Engine::loadMap(const std::string& path, Scene* scene) {
-    if (!scene) {
-        LOG_ERROR("Scene is null in loadMap");
-        return false;
-    }
-
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        LOG_ERROR("Failed to open map file: {}", path);
-        return false;
-    }
-
-    nlohmann::json root;
-    try {
-        file >> root;
-    } catch (const std::exception& e) {
-        LOG_ERROR("Failed to parse map file JSON: {}", e.what());
-        return false;
-    }
-
-    // Czyszczenie starej mapy z silnika
-    if (renderer) {
-        renderer->waitIdle();
-        renderer->removeFeature("SkydomeRenderer");
-        renderer->removeFeature("OceanRenderer");
-        renderer->removeFeature("VolumetricFogRenderer");
-    }
-
-    currentBrainInstances_.clear();
-    currentBrainModel_.reset();
-    currentMd2Anim_.reset();
-    currentMd2Model_.reset();
-    md2Instances_.clear();
-    currentOcean_.reset();
-    currentSkydome_.reset();
-    volumetricFogRenderer_.reset();
-
-
-
-    // 1. Oświetlenie otoczenia (Ambient)
-    if (root.contains("ambient")) {
-        auto anode = root["ambient"];
-        setAmbientStrength(anode.value("strength", 0.28f));
-        if (anode.contains("color")) {
-            auto c = anode["color"];
-            setAmbientColor(c.value("r", 0.35f), c.value("g", 0.38f), c.value("b", 0.45f));
-        }
-    }
-
-    // 2. Mgła (Fog)
-    if (root.contains("fog")) {
-        auto fnode = root["fog"];
-        setFogEnabled(fnode.value("enabled", true));
-        if (fnode.contains("color")) {
-            auto c = fnode["color"];
-            setFogColor(c.value("r", 0.575f), c.value("g", 0.68f), c.value("b", 0.88f));
-        }
-        setFogStart(fnode.value("start", 150.0f));
-        setFogEnd(fnode.value("end", 3500.0f));
-        setFogDensity(fnode.value("density", 0.83f));
-    }
-
-    // 3. Atmosfera i Skydome i Ocean
-    if (root.contains("skydome")) {
-        auto snode = root["skydome"];
-        if (snode.value("enabled", false)) {
-            currentSkydome_ = std::make_shared<SkydomeRenderer>();
-            SkydomeConfig skydomeCfg;
-            skydomeCfg.enabled = true;
-            skydomeCfg.domeScale = snode.value("domeScale", 1.6f);
-            skydomeCfg.timeOfDay = snode.value("timeOfDay", 12.0f);
-            skydomeCfg.cloudCoverage = snode.value("cloudCoverage", 0.35f);
-            skydomeCfg.cloudSpeed0 = snode.value("cloudSpeed0", 0.25f);
-            skydomeCfg.cloudSpeed1 = snode.value("cloudSpeed1", 0.12f);
-            skydomeCfg.cloudScale0 = snode.value("cloudScale0", 1200.0f);
-            skydomeCfg.cloudScale1 = snode.value("cloudScale1", 820.0f);
-            skydomeCfg.sunElevation = snode.value("sunElevation", 50.0f);
-            skydomeCfg.enableSunLight = snode.value("enableSunLight", true);
-            currentSkydome_->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
-            currentSkydome_->setEnabled(true);
-            renderer->addFeature(currentSkydome_);
-        }
-    }
-
-    if (root.contains("ocean")) {
-        auto onode = root["ocean"];
-        if (onode.value("enabled", false)) {
-            currentOcean_ = std::make_shared<OceanRenderer>();
-            OceanConfig oceanCfg;
-            oceanCfg.enabled = true;
-            oceanCfg.waterLevel = onode.value("waterLevel", 20.0f);
-            oceanCfg.waveAmplitude = onode.value("waveAmplitude", 2.3f);
-            oceanCfg.waveSpeed = onode.value("waveSpeed", 0.9f);
-            oceanCfg.waveFrequency = onode.value("waveFrequency", 9.0f);
-            oceanCfg.foamThreshold = onode.value("foamThreshold", 15.9f);
-            currentOcean_->configure(oceanCfg, "bin/assets/shaders/ocean", "ocean");
-            currentOcean_->setEnabled(true);
-            renderer->addFeature(currentOcean_);
-        }
-    }
-
-    // 4b. Volumetric Fog (only if enabled in map)
-    if (root.contains("fog") && root["fog"].value("enabled", true)) {
-        const auto& fogNode = root["fog"];
-        volumetricFogRenderer_ = std::make_shared<VolumetricFogRenderer>();
-        volumetricFogRenderer_->configure("bin/assets/shaders/fog");
-        volumetricFogRenderer_->setFogDensity(fogNode.value("volumetricDensity", 0.002f));
-        volumetricFogRenderer_->setHeightFalloff(fogNode.value("heightFalloff", 0.004f));
-        volumetricFogRenderer_->setSeaLevel(fogNode.value("seaLevel", 0.0f));
-        volumetricFogRenderer_->setFogRadius(fogNode.value("radius", 1500.0f));
-        if (fogNode.contains("color")) {
-            const auto& c = fogNode["color"];
-            volumetricFogRenderer_->setFogColor({c.value("r", 0.575f), c.value("g", 0.68f), c.value("b", 0.88f)});
-        }
-
-        std::vector<LocalFogVolume> localVolumes;
-        if (fogNode.contains("volumes") && fogNode["volumes"].is_array()) {
-            for (const auto& volumeNode : fogNode["volumes"]) {
-                LocalFogVolume volume;
-                if (volumeNode.contains("center")) {
-                    const auto& center = volumeNode["center"];
-                    volume.center = {
-                        center.value("x", 0.0f),
-                        center.value("y", 0.0f),
-                        center.value("z", 0.0f)};
-                }
-                if (volumeNode.contains("halfExtents")) {
-                    const auto& extents = volumeNode["halfExtents"];
-                    volume.halfExtents = {
-                        extents.value("x", 100.0f),
-                        extents.value("y", 20.0f),
-                        extents.value("z", 100.0f)};
-                }
-                volume.density = volumeNode.value("density", 0.004f);
-                volume.edgeFade = volumeNode.value("edgeFade", 0.25f);
-                localVolumes.push_back(volume);
-            }
-        }
-        volumetricFogRenderer_->setLocalVolumes(std::move(localVolumes));
-        volumetricFogRenderer_->setEnabled(true);
-        renderer->addFeature(volumetricFogRenderer_);
-    }
-
-    // 5. Kamera (Camera)
-    if (root.contains("camera")) {
-        auto cnode = root["camera"];
-        Entity* camEnt = scene->createEntity("game_camera");
-        auto* camComp = camEnt->addComponent<CameraComponent>();
-        if (cnode.contains("position")) {
-            auto pos = cnode["position"];
-            camEnt->transform().position = {pos.value("x", -110.0f), pos.value("y", 90.0f), pos.value("z", -110.0f)};
-        }
-        if (cnode.contains("target")) {
-            auto tgt = cnode["target"];
-            camComp->target = {tgt.value("x", 0.0f), tgt.value("y", 28.0f), tgt.value("z", 0.0f)};
-        }
-        camComp->fieldOfViewDegrees = cnode.value("fov", 55.0f);
-        camComp->nearPlane = cnode.value("near", 0.5f);
-        camComp->farPlane = cnode.value("far", 12000.0f);
-        scene->setActiveCamera(camComp);
-    }
-
-    // 6. Modele 3DS
-    if (root.contains("static_models_3ds")) {
-        for (const auto& item : root["static_models_3ds"]) {
-            std::string mpath = item.value("model_path", "");
-            Model3ds model;
-            if (!model.load(mpath)) {
-                LOG_WARN("Could not load 3DS: {}", mpath);
-                continue;
-            }
-
-            std::string fallbackTexture = item.value("texture", "");
-            bool disableAlpha = item.value("disableAlpha", false);
-            std::vector<MaterialHandle> sourceMaterials;
-            sourceMaterials.reserve(model.materialList.size());
-            for (size_t i = 0; i < model.materialList.size(); ++i) {
-                const auto& src = *model.materialList[i];
-                Material material = Convert3dsMaterialToEngineMaterial(src);
-                material.name = "map_3ds_mat_" + std::to_string(i) + "_" + mpath;
-                if (disableAlpha) {
-                    material.blendMode = BlendMode::Disabled;
-                    material.depthWrite = true;
-                    material.cullMode = CullMode::Back;
-                }
-                std::string texPath = src.texturePath;
-                if (texPath.empty()) {
-                    texPath = fallbackTexture;
-                }
-                if (!texPath.empty()) {
-                    TextureHandle texture = renderer->loadTexture(material.name + "_tex", texPath, false, disableAlpha);
-                    material.textureHandle = texture;
-                }
-                sourceMaterials.push_back(materialManager.add(material));
-            }
-
-            if (sourceMaterials.empty() && !fallbackTexture.empty()) {
-                Material material;
-                material.name = "map_3ds_mat_default_" + mpath;
-                TextureHandle texture = renderer->loadTexture(material.name + "_tex", fallbackTexture, false, disableAlpha);
-                material.textureHandle = texture;
-                material.cullMode = CullMode::Back;
-                material.blendMode = BlendMode::Disabled;
-                material.depthWrite = true;
-                sourceMaterials.push_back(materialManager.add(material));
-            }
-
-            struct SubMeshRef {
-                std::string meshName;
-                MaterialHandle material;
-            };
-            std::vector<SubMeshRef> subMeshes;
-            subMeshes.reserve(model.objectList.size());
-            for (size_t i = 0; i < model.objectList.size(); ++i) {
-                const auto& object = *model.objectList[i];
-                std::string meshName = "map_3ds_mesh_" + std::to_string(i) + "_" + mpath;
-                meshManager->loadMesh(meshName, object.mesh);
-
-                MaterialHandle matHandle{};
-                if (!sourceMaterials.empty()) {
-                    int matIdx = object.materialIndex;
-                    if (matIdx < 0 || matIdx >= static_cast<int>(sourceMaterials.size())) {
-                        matIdx = 0;
-                    }
-                    matHandle = sourceMaterials[matIdx];
-                }
-                subMeshes.push_back({meshName, matHandle});
-            }
-
-            Vec3 scale{1.0f, 1.0f, 1.0f};
-            if (item.contains("scale")) {
-                auto sc = item["scale"];
-                scale = {sc.value("x", 1.0f), sc.value("y", 1.0f), sc.value("z", 1.0f)};
-            }
-            bool snap = item.value("snap_to_terrain", false);
-            float offset = item.value("terrain_offset", 0.0f);
-
-            std::vector<Vec3> positions;
-            std::shared_ptr<Terrain> terrain = nullptr;
-            for (const auto& ent : scene->getEntities()) {
-                if (auto* tc = ent->getComponent<TerrainComponent>()) {
-                    terrain = tc->terrain;
-                    break;
-                }
-            }
-            if (item.contains("random_instances") && terrain) {
-                auto randNode = item["random_instances"];
-                int count = randNode.value("count", 0);
-                float minHeight = randNode.value("min_height", -9999.0f);
-                float maxBound = terrain->worldSizeXZ() / 2.0f;
-                float minBound = -maxBound;
-
-                std::random_device rd;
-                std::mt19937 gen(rd());
-                std::uniform_real_distribution<float> dis(minBound, maxBound);
-
-                int attempts = 0;
-                while (positions.size() < static_cast<size_t>(count) && attempts < 100000) {
-                    float rx = dis(gen);
-                    float rz = dis(gen);
-                    float h = terrain->getHeight(rx, rz);
-                    if (h >= minHeight) {
-                        positions.push_back({rx, 0.0f, rz});
-                    }
-                    attempts++;
-                }
-            } else if (item.contains("instances")) {
-                for (const auto& instNode : item["instances"]) {
-                    if (instNode.contains("position")) {
-                        auto pos = instNode["position"];
-                        positions.push_back({pos.value("x", 0.0f), pos.value("y", 0.0f), pos.value("z", 0.0f)});
-                    } else {
-                        positions.push_back({0.0f, 0.0f, 0.0f});
-                    }
-                }
-            }
-
-            int instIdx = 0;
-            for (const auto& pos : positions) {
-                Entity* rootEnt = scene->createEntity("map_3ds_root_" + std::to_string(instIdx) + "_" + mpath);
-                rootEnt->transform().position = pos;
-                rootEnt->transform().scale = scale;
-                if (snap) {
-                    rootEnt->addComponent<TerrainPlacementComponent>(offset);
-                }
-
-                for (size_t i = 0; i < subMeshes.size(); ++i) {
-                    Entity* part = scene->createEntity("map_3ds_part_" + std::to_string(instIdx) + "_" + std::to_string(i) + "_" + mpath);
-                    scene->setParent(part, rootEnt);
-                    auto* meshComp = part->addComponent<MeshComponent>(subMeshes[i].meshName);
-                    meshComp->materialHandle = subMeshes[i].material;
-                }
-                instIdx++;
-            }
-        }
-    }
-
-    // 7. Modele MD2
-    if (root.contains("characters_md2")) {
-        for (const auto& item : root["characters_md2"]) {
-            std::string name = item.value("name", "goblin");
-            std::string mpath = item.value("model_path", "");
-            std::string tpath = item.value("texture_path", "");
-            std::string npath = item.value("normalmap_path", "");
-            currentMd2Model_ = std::make_shared<Md2ModelData>(loadMd2Model(mpath));
-            if (!currentMd2Model_ || currentMd2Model_->frames.empty()) {
-                LOG_WARN("Could not load MD2: {}", mpath);
-                currentMd2Model_.reset();
-                continue;
-            }
-
-            currentMd2Anim_ = std::make_shared<Md2AnimationState>();
-            currentMd2Anim_->startFrame = 0;
-            currentMd2Anim_->endFrame = static_cast<int>(currentMd2Model_->frames.size()) - 1;
-            currentMd2Anim_->speed = item.value("anim_speed", 10.0f);
-
-            meshManager->loadMesh(name + "_mesh", currentMd2Model_->triangles);
-            
-            Material material;
-            material.name = name + "_mat";
-            if (!tpath.empty()) {
-                TextureHandle texture = renderer->loadTexture(name + "_tex", tpath);
-                material.textureHandle = texture;
-            }
-            if (!npath.empty()) {
-                TextureHandle texture = renderer->loadTexture(name + "_norm", npath);
-                material.normalMapHandle = texture;
-                material.bumpIntensity = 1.0f;
-            }
-            material.cullMode = CullMode::Back;
-            material.blendMode = BlendMode::Disabled;
-            material.depthWrite = true;
-            MaterialHandle matHandle = materialManager.add(material);
-
-            Entity* ent = scene->createEntity(name + "_entity");
-            auto* meshComp = ent->addComponent<MeshComponent>(name + "_mesh");
-            meshComp->materialHandle = matHandle;
-
-            if (item.contains("position")) {
-                auto pos = item["position"];
-                ent->transform().position = {pos.value("x", 0.0f), pos.value("y", 0.0f), pos.value("z", 0.0f)};
-            }
-            if (item.contains("rotation")) {
-                auto rot = item["rotation"];
-                ent->transform().rotation = {rot.value("x", 0.0f), rot.value("y", 0.0f), rot.value("z", 0.0f)};
-            }
-            if (item.contains("scale")) {
-                auto sc = item["scale"];
-                ent->transform().scale = {sc.value("x", 1.0f), sc.value("y", 1.0f), sc.value("z", 1.0f)};
-            }
-
-            if (item.value("snap_to_terrain", false)) {
-                ent->addComponent<TerrainPlacementComponent>(item.value("terrain_offset", 0.0f));
-            }
-
-            md2Instances_.push_back({name + "_mesh", currentMd2Model_, currentMd2Anim_});
-        }
-    }
-
-    // 8. Modele GLTF
-    if (root.contains("gltf_models")) {
-        for (const auto& item : root["gltf_models"]) {
-            std::string mpath = item.value("model_path", "");
-            GltfModel model = loadGltfModel(mpath);
-            if (model.primitives.empty()) {
-                LOG_WARN("Could not load GLTF: {}", mpath);
-                continue;
-            }
-
-            struct SubMeshRef {
-                std::string meshName;
-                MaterialHandle material;
-            };
-            std::vector<SubMeshRef> subMeshes;
-            subMeshes.reserve(model.primitives.size());
-
-            int primIdx = 0;
-            for (const auto& primitive : model.primitives) {
-                std::string meshName = "map_gltf_mesh_" + std::to_string(primIdx) + "_" + mpath;
-                std::string materialName = "map_gltf_mat_" + std::to_string(primIdx) + "_" + mpath;
-                meshManager->loadMesh(meshName, primitive.mesh);
-
-                Material material;
-                material.name = materialName;
-                material.cullMode = CullMode::Disabled;
-                if (!primitive.texturePath.empty()) {
-                    TextureHandle texture = renderer->loadTexture(materialName + "_tex", primitive.texturePath);
-                    material.textureHandle = texture;
-                }
-                if (!primitive.normalMapPath.empty()) {
-                    TextureHandle texture = renderer->loadTexture(materialName + "_n", primitive.normalMapPath);
-                    material.normalMapHandle = texture;
-                    material.bumpIntensity = 1.0f;
-                }
-                if (!primitive.ormPath.empty()) {
-                    TextureHandle texture = renderer->loadTexture(materialName + "_orm", primitive.ormPath);
-                    material.metallicRoughnessTextureHandle = texture;
-                }
-                if (!primitive.occlusionPath.empty()) {
-                    TextureHandle texture = renderer->loadTexture(materialName + "_occ", primitive.occlusionPath);
-                    material.occlusionTextureHandle = texture;
-                }
-                if (!primitive.emissivePath.empty()) {
-                    TextureHandle texture = renderer->loadTexture(materialName + "_em", primitive.emissivePath);
-                    material.emissiveTextureHandle = texture;
-                }
-                material.roughnessFactor = 0.5f;
-                MaterialHandle handle = materialManager.add(material);
-
-                subMeshes.push_back({meshName, handle});
-                primIdx++;
-            }
-
-            Vec3 scale{1.0f, 1.0f, 1.0f};
-            if (item.contains("scale")) {
-                auto sc = item["scale"];
-                scale = {sc.value("x", 1.0f), sc.value("y", 1.0f), sc.value("z", 1.0f)};
-            }
-            bool snap = item.value("snap_to_terrain", false);
-            float offset = item.value("terrain_offset", 0.0f);
-
-            int instIdx = 0;
-            for (const auto& instNode : item["instances"]) {
-                Entity* rootEnt = scene->createEntity("map_gltf_root_" + std::to_string(instIdx) + "_" + mpath);
-                if (instNode.contains("position")) {
-                    auto pos = instNode["position"];
-                    rootEnt->transform().position = {pos.value("x", 0.0f), pos.value("y", 0.0f), pos.value("z", 0.0f)};
-                }
-                if (instNode.contains("rotation")) {
-                    auto rot = instNode["rotation"];
-                    rootEnt->transform().rotation = {rot.value("x", 0.0f), rot.value("y", 0.0f), rot.value("z", 0.0f)};
-                }
-                rootEnt->transform().scale = scale;
-                if (snap) {
-                    rootEnt->addComponent<TerrainPlacementComponent>(offset);
-                }
-
-                for (size_t i = 0; i < subMeshes.size(); ++i) {
-                    Entity* part = scene->createEntity("map_gltf_part_" + std::to_string(instIdx) + "_" + std::to_string(i) + "_" + mpath);
-                    scene->setParent(part, rootEnt);
-                    auto* meshComp = part->addComponent<MeshComponent>(subMeshes[i].meshName);
-                    meshComp->materialHandle = subMeshes[i].material;
-                }
-                instIdx++;
-            }
-        }
-    }
-
-    // 9. Animowane szkieletowo GLTF
-    if (root.contains("gltf_skinned_models")) {
-        currentBrainModel_ = std::make_unique<GltfSkinnedModel>();
-        for (const auto& item : root["gltf_skinned_models"]) {
-            std::string mpath = item.value("model_path", "");
-            
-            if (!currentBrainModel_->load(renderer.get(), meshManager.get(), &materialManager, assetRegistry.get(), mpath)) {
-                LOG_WARN("Could not load GLTF skinned: {}", mpath);
-                continue;
-            }
-
-            Vec3 scale{1.0f, 1.0f, 1.0f};
-            if (item.contains("scale")) {
-                auto sc = item["scale"];
-                scale = {sc.value("x", 1.0f), sc.value("y", 1.0f), sc.value("z", 1.0f)};
-            }
-            bool snap = item.value("snap_to_terrain", false);
-            float offset = item.value("terrain_offset", 0.0f);
-
-            int instIdx = 0;
-            for (const auto& instNode : item["instances"]) {
-                auto inst = std::make_unique<GltfSkinnedInstance>();
-                if (inst->initialize(renderer.get(), *currentBrainModel_)) {
-                    Entity* rootEnt = inst->instantiate(scene, "map_skinned_" + std::to_string(instIdx) + "_" + mpath);
-                    if (instNode.contains("position")) {
-                        auto pos = instNode["position"];
-                        rootEnt->transform().position = {pos.value("x", 0.0f), pos.value("y", 0.0f), pos.value("z", 0.0f)};
-                    }
-                    if (instNode.contains("rotation")) {
-                        auto rot = instNode["rotation"];
-                        rootEnt->transform().rotation = {rot.value("x", 0.0f), rot.value("y", 0.0f), rot.value("z", 0.0f)};
-                    }
-                    rootEnt->transform().scale = scale;
-                    if (snap) {
-                        rootEnt->addComponent<TerrainPlacementComponent>(offset);
-                    }
-                    inst->setAnimationTime(static_cast<float>(instIdx) * 0.7f);
-                    currentBrainInstances_.push_back(std::move(inst));
-                }
-                instIdx++;
-            }
-        }
-    }
-
-    LOG_INFO("Successfully loaded map from {}", path);
-    return true;
 }
 
 } // namespace engine3d

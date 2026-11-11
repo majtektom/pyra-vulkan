@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "render/pipeline_builder.h"
 #include "render/vulkan_util.h"
 #include "render/renderer.h"
 #include "render/backend/vulkan_context.h"
@@ -63,7 +64,7 @@ void VolumetricFogRenderer::init(Renderer* renderer) {
     writeDescriptorSets(device);
 
     ready_ = true;
-    LOG_INFO("Volumetric Fog Renderer initialized ({}x{}x{})", kFroxelX, kFroxelY, kFroxelZ);
+    LOG_INFO("Mgła wolumetryczna gotowa (siatka {}x{}x{})", kFroxelX, kFroxelY, kFroxelZ);
 }
 
 void VolumetricFogRenderer::cleanup(VkDevice device) {
@@ -91,17 +92,6 @@ void VolumetricFogRenderer::cleanup(VkDevice device) {
     ready_ = false;
 }
 
-static void executeOneTimeCommand(VkDevice device, VkCommandPool pool, VkQueue queue,
-                                   VkCommandBuffer cmd) {
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
-    vkFreeCommandBuffers(device, pool, 1, &cmd);
-}
 
 void VolumetricFogRenderer::createVolumeTexture(VkDevice device, VkPhysicalDevice physicalDevice) {
     // Musi odpowiadać formatowi storage image w fog_volume.hlsl (RWTexture3D<float4> -> Rgba32f).
@@ -120,7 +110,7 @@ void VolumetricFogRenderer::createVolumeTexture(VkDevice device, VkPhysicalDevic
     ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     if (vkCreateImage(device, &ci, nullptr, &volumeImage_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create fog volume 3D image");
+        throw std::runtime_error("nie udało się utworzyć obrazu 3D mgły");
     }
 
     VkMemoryRequirements memReq;
@@ -144,7 +134,7 @@ void VolumetricFogRenderer::createVolumeTexture(VkDevice device, VkPhysicalDevic
     if (!found || vkAllocateMemory(device, &ai, nullptr, &volumeImageMemory_) != VK_SUCCESS) {
         vkDestroyImage(device, volumeImage_, nullptr);
         volumeImage_ = VK_NULL_HANDLE;
-        throw std::runtime_error("failed to allocate fog volume memory");
+        throw std::runtime_error("nie udało się przydzielić pamięci mgły");
     }
     vkBindImageMemory(device, volumeImage_, volumeImageMemory_, 0);
 
@@ -159,44 +149,15 @@ void VolumetricFogRenderer::createVolumeTexture(VkDevice device, VkPhysicalDevic
     iv.subresourceRange.baseArrayLayer = 0;
     iv.subresourceRange.layerCount = 1;
     if (vkCreateImageView(device, &iv, nullptr, &volumeImageView_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create fog volume image view");
+        throw std::runtime_error("nie udało się utworzyć widoku obrazu mgły");
     }
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.minLod = 0;
-    samplerInfo.maxLod = 0;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &volumeSampler_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create fog volume sampler");
-    }
+    volumeSampler_ = vk::createClampSampler(device);
 
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = renderer_->commandPool();
-    allocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(device, &allocInfo, &cmd);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-
-    vk::imageBarrier(cmd, {.image = volumeImage_, .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                           .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                           .mipCount = 1, .layerCount = 1});
-
-    executeOneTimeCommand(device, renderer_->commandPool(), renderer_->graphicsQueue(), cmd);
+    // Obraz od razu w układzie do odczytu w shaderze.
+    vk::transitionImageLayout(device, renderer_->commandPool(), renderer_->graphicsQueue(), volumeImage_,
+                              VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
 }
 
 void VolumetricFogRenderer::createLocalVolumeBuffer(VkDevice device, VkPhysicalDevice physicalDevice) {
@@ -210,7 +171,7 @@ void VolumetricFogRenderer::createLocalVolumeBuffer(VkDevice device, VkPhysicalD
         localVolumeBuffer_,
         localVolumeBufferMemory_);
     if (vkMapMemory(device, localVolumeBufferMemory_, 0, size, 0, &localVolumeBufferMapped_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to map local fog volume buffer");
+        throw std::runtime_error("nie udało się zmapować bufora lokalnych obszarów mgły");
     }
 }
 
@@ -233,48 +194,23 @@ void VolumetricFogRenderer::createComputePipeline(VkDevice device) {
     storageLayoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     storageLayoutInfo.pBindings = bindings.data();
     if (vkCreateDescriptorSetLayout(device, &storageLayoutInfo, nullptr, &computeDescriptorSetLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create compute descriptor set layout");
+        throw std::runtime_error("nie udało się utworzyć układu deskryptorów obliczeń mgły");
     }
 
-    auto compCode = vk::readFile(shaderDir_ + "/fog_volume.comp.spv");
-    VkShaderModule compModule = vk::createShaderModule(device, compCode);
-
-    VkPipelineShaderStageCreateInfo stage{};
-    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stage.module = compModule;
-    stage.pName = "main";
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &computeDescriptorSetLayout_;
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset = 0;
-    pushRange.size = 128;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-
-    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &computePipelineLayout_) != VK_SUCCESS) {
-        vkDestroyShaderModule(device, compModule, nullptr);
-        throw std::runtime_error("failed to create fog compute pipeline layout");
-    }
+    const vk::ShaderModule comp(device, shaderDir_ + "/fog_volume.comp.spv");
+    computePipelineLayout_ = vk::createPipelineLayout(device, {computeDescriptorSetLayout_}, 128,
+                                                      VK_SHADER_STAGE_COMPUTE_BIT, "fog_volume");
 
     VkComputePipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage = stage;
+    pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.stage.module = comp;
+    pipelineInfo.stage.pName = "main";
     pipelineInfo.layout = computePipelineLayout_;
-
     if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline_) != VK_SUCCESS) {
-        vkDestroyPipelineLayout(device, computePipelineLayout_, nullptr);
-        computePipelineLayout_ = VK_NULL_HANDLE;
-        vkDestroyShaderModule(device, compModule, nullptr);
-        throw std::runtime_error("failed to create fog compute pipeline");
+        throw std::runtime_error("nie udało się utworzyć potoku obliczeń mgły");
     }
-
-    vkDestroyShaderModule(device, compModule, nullptr);
 }
 
 void VolumetricFogRenderer::createCompositePipeline(VkDevice device) {
@@ -289,144 +225,24 @@ void VolumetricFogRenderer::createCompositePipeline(VkDevice device) {
     volumeLayoutInfo.bindingCount = 1;
     volumeLayoutInfo.pBindings = &volumeBinding;
     if (vkCreateDescriptorSetLayout(device, &volumeLayoutInfo, nullptr, &compositeDescriptorSetLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create composite descriptor set layout");
+        throw std::runtime_error("nie udało się utworzyć układu deskryptorów nakładania mgły");
     }
 
-    auto vertCode = vk::readFile(shaderDir_ + "/fog_composite.vert.spv");
-    auto fragCode = vk::readFile(shaderDir_ + "/fog_composite.frag.spv");
+    // Pełnoekranowy trójkąt bez buforów wierzchołków; mgła jest już przemnożona przez alfę
+    // (kolor + tło * (1 - a)), głębokości nie testujemy - shader sam czyta głębię sceny.
+    const vk::ShaderModule vert(device, shaderDir_ + "/fog_composite.vert.spv");
+    const vk::ShaderModule frag(device, shaderDir_ + "/fog_composite.frag.spv");
 
-    VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
-    VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
-
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertModule;
-    stages[0].pName = "vertexMain";
-
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragModule;
-    stages[1].pName = "fragmentMain";
-
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_FALSE;
-    depthStencil.depthWriteEnable = VK_FALSE;
-
-    VkPipelineColorBlendAttachmentState blendAttach{};
-    blendAttach.blendEnable = VK_TRUE;
-    blendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    blendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    blendAttach.colorBlendOp = VK_BLEND_OP_ADD;
-    blendAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    blendAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    blendAttach.alphaBlendOp = VK_BLEND_OP_ADD;
-    blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &blendAttach;
-
-    VkDescriptorSetLayout setLayouts[2] = {
-        renderer_->descriptorSetLayout(),
-        compositeDescriptorSetLayout_
-    };
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 2;
-    layoutInfo.pSetLayouts = setLayouts;
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushRange.offset = 0;
-    pushRange.size = 8;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-
-    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &compositePipelineLayout_) != VK_SUCCESS) {
-        vkDestroyShaderModule(device, fragModule, nullptr);
-        vkDestroyShaderModule(device, vertModule, nullptr);
-        throw std::runtime_error("failed to create fog composite pipeline layout");
-    }
-
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(renderer_->extent().width);
-    viewport.height = static_cast<float>(renderer_->extent().height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.extent = renderer_->extent();
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    std::vector<VkDynamicState> dynStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynStates.size());
-    dynamicState.pDynamicStates = dynStates.data();
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
-    pipelineInfo.pStages = stages.data();
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = compositePipelineLayout_;
-    pipelineInfo.renderPass = VK_NULL_HANDLE;
-    pipelineInfo.subpass = 0;
-
-    VkFormat colorFormat = renderer_->colorFormat();
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &colorFormat;
-    renderingInfo.depthAttachmentFormat = renderer_->depthFormat();
-    pipelineInfo.pNext = &renderingInfo;
-
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &compositePipeline_) != VK_SUCCESS) {
-        vkDestroyPipelineLayout(device, compositePipelineLayout_, nullptr);
-        compositePipelineLayout_ = VK_NULL_HANDLE;
-        vkDestroyShaderModule(device, fragModule, nullptr);
-        vkDestroyShaderModule(device, vertModule, nullptr);
-        throw std::runtime_error("failed to create fog composite pipeline");
-    }
-
-    vkDestroyShaderModule(device, vertModule, nullptr);
-    vkDestroyShaderModule(device, fragModule, nullptr);
+    compositePipelineLayout_ = vk::createPipelineLayout(
+        device, {renderer_->descriptorSetLayout(), compositeDescriptorSetLayout_}, 8,
+        VK_SHADER_STAGE_FRAGMENT_BIT, "fog_composite");
+    compositePipeline_ = vk::GraphicsPipelineBuilder()
+        .shaders(vert, frag)
+        .cull(VK_CULL_MODE_NONE)
+        .depth(false, false)
+        .colorFormat(renderer_->colorFormat(), vk::BlendMode::Premultiplied)
+        .depthFormat(renderer_->depthFormat())
+        .build(device, compositePipelineLayout_, "fog_composite");
 }
 
 void VolumetricFogRenderer::writeDescriptorSets(VkDevice device) {
@@ -445,7 +261,7 @@ void VolumetricFogRenderer::writeDescriptorSets(VkDevice device) {
     poolInfo.maxSets = 2;
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create fog descriptor pool");
+        throw std::runtime_error("nie udało się utworzyć puli deskryptorów mgły");
     }
 
     VkDescriptorSetAllocateInfo allocInfo{};
@@ -454,7 +270,7 @@ void VolumetricFogRenderer::writeDescriptorSets(VkDevice device) {
     allocInfo.descriptorSetCount = 1;
     allocInfo.pSetLayouts = &computeDescriptorSetLayout_;
     if (vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSet_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate compute descriptor set");
+        throw std::runtime_error("nie udało się przydzielić deskryptorów obliczeń mgły");
     }
 
     VkDescriptorImageInfo storageInfo{};
@@ -487,7 +303,7 @@ void VolumetricFogRenderer::writeDescriptorSets(VkDevice device) {
 
     allocInfo.pSetLayouts = &compositeDescriptorSetLayout_;
     if (vkAllocateDescriptorSets(device, &allocInfo, &compositeDescriptorSet_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate composite descriptor set");
+        throw std::runtime_error("nie udało się przydzielić deskryptorów nakładania mgły");
     }
 
     VkDescriptorImageInfo sampledInfo{};

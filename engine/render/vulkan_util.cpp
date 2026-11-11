@@ -16,7 +16,7 @@ std::vector<char> readFile(const std::string& path) {
     // std::ios::ate ustawia kursor na końcu pliku (At The End), dzięki czemu tellg() od razu podaje rozmiar pliku.
     std::ifstream file(path, std::ios::ate | std::ios::binary);
     if (!file.is_open()) {
-        throw std::runtime_error("failed to open file: " + path);
+        throw std::runtime_error("nie można otworzyć pliku: " + path);
     }
 
     const auto fileSize = static_cast<std::size_t>(file.tellg());
@@ -38,7 +38,7 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
 
     VkShaderModule shaderModule = VK_NULL_HANDLE;
     if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create shader module");
+        throw std::runtime_error("nie udało się utworzyć modułu shadera");
     }
     return shaderModule;
 }
@@ -119,7 +119,7 @@ uint32_t findMemoryType(
         }
     }
 
-    throw std::runtime_error("failed to find suitable memory type");
+    throw std::runtime_error("brak pasującego typu pamięci GPU");
 }
 
 void createBuffer(
@@ -139,7 +139,7 @@ void createBuffer(
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // Dostępny tylko z jednej kolejki (np. graficznej)
 
     if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create buffer");
+        throw std::runtime_error("nie udało się utworzyć bufora");
     }
 
     // 2. Pobranie wymagań pamięciowych dla nowo utworzonego bufora (wielkość wyrównania, obsługiwane typy pamięci)
@@ -156,7 +156,7 @@ void createBuffer(
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
         vkDestroyBuffer(device, buffer, nullptr);
-        throw std::runtime_error("failed to allocate buffer memory");
+        throw std::runtime_error("nie udało się przydzielić pamięci bufora");
     }
 
     // 4. Powiązanie przydzielonej pamięci z logicznym buforem (od offsetu 0)
@@ -278,7 +278,7 @@ void createImage(
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create image");
+        throw std::runtime_error("nie udało się utworzyć obrazu");
     }
 
     // 2. Pobranie wymagań alokacji pamięci dla obrazu
@@ -295,7 +295,7 @@ void createImage(
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
         vkDestroyImage(device, image, nullptr);
-        throw std::runtime_error("failed to allocate image memory");
+        throw std::runtime_error("nie udało się przydzielić pamięci obrazu");
     }
 
     // 4. Powiązanie pamięci z obrazem
@@ -326,7 +326,7 @@ VkImageView createImageView(
 
     VkImageView imageView = VK_NULL_HANDLE;
     if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create image view");
+        throw std::runtime_error("nie udało się utworzyć widoku obrazu");
     }
     return imageView;
 }
@@ -341,20 +341,7 @@ void transitionImageLayout(
     VkImageLayout newLayout,
     uint32_t mipLevels
 ) {
-    // Alokacja i start jednorazowego bufora komend do przeprowadzenia tranzycji
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = commandPool;
-    allocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    VkCommandBuffer commandBuffer = beginOneTimeCommands(device, commandPool);
 
     // Bariera: zmiana układu obrazu. Etapy i dostępy zależą od rodzaju przejścia.
     ImageBarrier barrier{.image = image, .oldLayout = oldLayout, .newLayout = newLayout, .mipCount = mipLevels, .layerCount = 1};
@@ -373,19 +360,34 @@ void transitionImageLayout(
         barrier.dstAccess = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
     }
     imageBarrier(commandBuffer, barrier);
+    endOneTimeCommands(device, commandPool, graphicsQueue, commandBuffer);
+}
 
-    vkEndCommandBuffer(commandBuffer);
+VkCommandBuffer beginOneTimeCommands(VkDevice device, VkCommandPool pool) {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = pool;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device, &allocInfo, &cmd);
 
-    // Wysłanie komend do wykonania
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;   // nagrany raz, wysłany raz
+    vkBeginCommandBuffer(cmd, &beginInfo);
+    return cmd;
+}
+
+void endOneTimeCommands(VkDevice device, VkCommandPool pool, VkQueue queue, VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
-
-    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue);
+    vkFreeCommandBuffers(device, pool, 1, &cmd);
 }
 
 // ---------------------------------------------------------------
@@ -508,16 +510,16 @@ VkSampler createSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32
 
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create sampler");
+        throw std::runtime_error("nie udało się utworzyć samplera");
     }
     return sampler;
 }
 
-VkSampler createClampSampler(VkDevice device) {
+VkSampler createClampSampler(VkDevice device, VkFilter filter) {
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.magFilter = filter;
+    samplerInfo.minFilter = filter;
     
     // Tryb CLAMP_TO_EDGE: współrzędne UV poza [0, 1] są przycinane do krawędzi tekstury.
     // Zapobiega to prześwitom sąsiednich znaków w atlasach czcionek oraz czarnym liniom na łączeniach skyboxa.
@@ -535,7 +537,7 @@ VkSampler createClampSampler(VkDevice device) {
 
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create clamp sampler");
+        throw std::runtime_error("nie udało się utworzyć samplera (clamp)");
     }
     return sampler;
 }

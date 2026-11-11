@@ -22,7 +22,7 @@ const ShaderProgram* ShaderManager::get(const std::string& name) const {
 const ShaderProgram& ShaderManager::require(const std::string& name) const {
     auto it = shaders_.find(name);
     if (it == shaders_.end()) {
-        throw std::runtime_error("shader not found: " + name);
+        throw std::runtime_error("nie znaleziono shadera: " + name);
     }
     return it->second;
 }

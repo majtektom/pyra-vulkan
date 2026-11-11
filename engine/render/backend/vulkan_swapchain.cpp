@@ -14,7 +14,7 @@ static VkFormat findSupportedFormat(VkPhysicalDevice d, const std::vector<VkForm
         if (t == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & f) == f) return format;
         if (t == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & f) == f) return format;
     }
-    throw std::runtime_error("no supported depth format");
+    throw std::runtime_error("karta nie obsługuje żadnego formatu głębokości");
 }
 
 static VkFormat findDepthFormat(VkPhysicalDevice d) {
@@ -88,7 +88,7 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
         }
     }
 
-    LOG_INFO("Swapchain present mode: {}", 
+    LOG_INFO("Tryb prezentacji swapchaina: {}", 
              selectedPresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE (VSync OFF)" :
              selectedPresentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX (VSync OFF)" : "FIFO (VSync ON)");
 
@@ -107,7 +107,7 @@ void VulkanSwapchain::createSwapchain(uint32_t w, uint32_t h) {
     ci.clipped = VK_TRUE;
 
     if (vkCreateSwapchainKHR(dev, &ci, nullptr, &swapchain_) != VK_SUCCESS)
-        throw std::runtime_error("swapchain create failed");
+        throw std::runtime_error("nie udało się utworzyć swapchaina");
 
     vkGetSwapchainImagesKHR(dev, swapchain_, &imgCount, nullptr);
     images_.resize(imgCount);
@@ -127,7 +127,7 @@ void VulkanSwapchain::createImageViews() {
         ci.subresourceRange.levelCount = 1;
         ci.subresourceRange.layerCount = 1;
         if (vkCreateImageView(dev, &ci, nullptr, &imageViews_[i]) != VK_SUCCESS)
-            throw std::runtime_error("image view create failed");
+            throw std::runtime_error("nie udało się utworzyć widoku obrazu");
     }
 }
 
@@ -150,7 +150,7 @@ void VulkanSwapchain::createDepthResources() {
         ci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ci.samples = VK_SAMPLE_COUNT_1_BIT;
         if (vkCreateImage(dev, &ci, nullptr, &depthImages_[i]) != VK_SUCCESS)
-            throw std::runtime_error("depth image create failed");
+            throw std::runtime_error("nie udało się utworzyć bufora głębokości");
 
         VkMemoryRequirements mr;
         vkGetImageMemoryRequirements(dev, depthImages_[i], &mr);
@@ -167,7 +167,7 @@ void VulkanSwapchain::createDepthResources() {
             }
         }
         if (vkAllocateMemory(dev, &ai, nullptr, &depthMemories_[i]) != VK_SUCCESS)
-            throw std::runtime_error("depth memory alloc failed");
+            throw std::runtime_error("nie udało się przydzielić pamięci bufora głębokości");
         vkBindImageMemory(dev, depthImages_[i], depthMemories_[i], 0);
 
         VkImageViewCreateInfo vi{};
@@ -179,7 +179,7 @@ void VulkanSwapchain::createDepthResources() {
         vi.subresourceRange.levelCount = 1;
         vi.subresourceRange.layerCount = 1;
         if (vkCreateImageView(dev, &vi, nullptr, &depthImageViews_[i]) != VK_SUCCESS)
-            throw std::runtime_error("depth view create failed");
+            throw std::runtime_error("nie udało się utworzyć widoku bufora głębokości");
     }
 }
 
@@ -188,12 +188,12 @@ uint32_t VulkanSwapchain::acquireNextImage(VkSemaphore s) {
     uint32_t idx = 0;
     VkResult result = vkAcquireNextImageKHR(context_->device(), swapchain_, UINT64_MAX, s, VK_NULL_HANDLE, &idx);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        throw std::runtime_error("swapchain out of date");
+        throw std::runtime_error("swapchain nieaktualny (zmiana rozmiaru okna)");
     }
     // VK_SUBOPTIMAL_KHR: obraz JEST pozyskany, a semafor zostanie zasygnalizowany — trzeba
     // tę klatkę wyrenderować i zaprezentować. Przebudowa nastąpi po present().
     if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        throw std::runtime_error("failed to acquire swapchain image");
+        throw std::runtime_error("nie udało się pobrać obrazu swapchaina");
     }
     return idx;
 }

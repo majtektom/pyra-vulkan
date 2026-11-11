@@ -48,7 +48,7 @@ SpriteSystem::~SpriteSystem() { clear(); }
 
 int SpriteSystem::addSprite(const Sprite& sprite) {
     if (spriteCount_ >= MAX_SPRITES) {
-        LOG_ERROR("[SpriteSystem] Max sprites reached ({})", MAX_SPRITES);
+        LOG_ERROR("[SpriteSystem] osiągnięto limit sprite'ów ({})", MAX_SPRITES);
         return -1;
     }
     int id = spriteCount_++;

@@ -10,6 +10,7 @@
 
 namespace engine3d {
 
+// Wierzchołek GUI: pozycja w NDC (x, y z zakresu -1..1, z = głębokość warstwy okna), UV i kolor.
 struct GuiVertex {
     float pos[3], texCoord[2], color[4];
     static VkVertexInputBindingDescription bindingDescription();
@@ -18,19 +19,26 @@ struct GuiVertex {
 
 static constexpr uint32_t kGuiMaxFrames = Renderer::kMaxFrames;
 
-// Prosty renderer 2D dla GUI — rysuje kolorowe prostokąty i tekst w NDC.
+// Prosty renderer 2D dla GUI — rysuje kolorowe prostokąty, tekst i obrazki we współrzędnych NDC.
+// Wszystko idzie jednym potokiem: prostokąty i tekst z białą teksturą 1x1, obrazki z własną.
 class GuiRenderer {
 public:
-    void init(VkDevice device, VkPhysicalDevice pd, VkFormat colorFormat, VkFormat depthFormat, VkCommandPool cp, VkQueue q, VkExtent2D ext);
+    void init(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat colorFormat, VkFormat depthFormat);
     void cleanup();
 
-    void addRect(float x, float y, float w, float h, std::array<float,4> color, float z = -999.0f);
-    void addRectPx(int x, int y, int w, int h, std::array<float,4> color, float sw, float sh, float z = -999.0f) {
-        float nx0 = (float(x) / sw) * 2.0f - 1.0f;
-        float ny0 = (float(y) / sh) * 2.0f - 1.0f;
-        float nx1 = (float(x + w) / sw) * 2.0f - 1.0f;
-        float ny1 = (float(y + h) / sh) * 2.0f - 1.0f;
-        addRect(nx0, ny0, nx1 - nx0, ny1 - ny0, color, z);
+    // Głębokość "bieżąca" (setDepth) - domyślna wartość z w addRect / addRectPx.
+    static constexpr float kUseCurrentDepth = -999.0f;
+
+    // Prostokąt w NDC (x, y - lewy górny róg, w, h - rozmiar).
+    void addRect(float x, float y, float w, float h, std::array<float,4> color, float z = kUseCurrentDepth);
+    // Prostokąt w pikselach ekranu o rozmiarze screenW x screenH.
+    void addRectPx(int x, int y, int w, int h, std::array<float,4> color, float screenW, float screenH,
+                   float z = kUseCurrentDepth) {
+        const float x0 = (float(x) / screenW) * 2.0f - 1.0f;
+        const float y0 = (float(y) / screenH) * 2.0f - 1.0f;
+        const float x1 = (float(x + w) / screenW) * 2.0f - 1.0f;
+        const float y1 = (float(y + h) / screenH) * 2.0f - 1.0f;
+        addRect(x0, y0, x1 - x0, y1 - y0, color, z);
     }
     void addText(const std::vector<GuiVertex>& verts);
 
@@ -53,32 +61,32 @@ private:
     float currentDepth_ = 0.0f;
     bool ready_ = false;
     VkDevice device_ = VK_NULL_HANDLE;
-    VkPhysicalDevice pd_ = VK_NULL_HANDLE;
-    VkCommandPool cp_ = VK_NULL_HANDLE;
-    VkQueue q_ = VK_NULL_HANDLE;
+    VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
-    VkDescriptorSetLayout dsl_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout textureSetLayout_ = VK_NULL_HANDLE;   // set 0: jedna tekstura (push descriptor)
     VkSampler sampler_ = VK_NULL_HANDLE;
-    VkImage whiteImage_ = VK_NULL_HANDLE; VkDeviceMemory whiteMem_ = VK_NULL_HANDLE;
+    VkImage whiteImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory whiteMemory_ = VK_NULL_HANDLE;
     VkImageView whiteView_ = VK_NULL_HANDLE;
 
-    std::array<VkBuffer, kGuiMaxFrames> vb_{};
-    std::array<VkDeviceMemory, kGuiMaxFrames> vbm_{};
-    std::array<VkDeviceSize, kGuiMaxFrames> cap_{};
-    uint32_t vc_ = 0;
-    uint32_t rectCount_ = 0;   // wierzchołki prostokątów i tekstu (przed obrazkami)
-    std::vector<GuiVertex> vertices_;
+    // Bufor wierzchołków osobno dla każdej klatki w locie (pamięć hosta, przepisywany co klatkę).
+    std::array<VkBuffer, kGuiMaxFrames> vertexBuffer_{};
+    std::array<VkDeviceMemory, kGuiMaxFrames> vertexMemory_{};
+    std::array<VkDeviceSize, kGuiMaxFrames> vertexCapacity_{};   // rozmiar bufora w bajtach
+    uint32_t vertexCount_ = 0;     // wszystkie wierzchołki klatki
+    uint32_t rectVertexCount_ = 0; // z tego prostokąty i tekst (leżą przed obrazkami)
+    std::vector<GuiVertex> vertices_;   // zbierane w trakcie klatki, wysyłane w build()
 
     struct GuiImage {
         uint32_t width = 0, height = 0;
         std::array<VkImage, kGuiMaxFrames> image{};
         std::array<VkDeviceMemory, kGuiMaxFrames> memory{};
         std::array<VkImageView, kGuiMaxFrames> view{};
-        std::vector<uint8_t> data;
-        uint64_t version = 1;
-        std::array<uint64_t, kGuiMaxFrames> uploaded{};
+        std::vector<uint8_t> data;                     // piksele RGBA po stronie CPU
+        uint64_t version = 1;                          // rośnie przy każdym updateImage
+        std::array<uint64_t, kGuiMaxFrames> uploaded{};   // wersja skopiowana do obrazu danej klatki
         std::vector<GuiVertex> vertices;               // quady tej klatki
         std::array<uint32_t, kGuiMaxFrames> first{}, count{};   // zakres w buforze wierzchołków klatki
     };
@@ -86,7 +94,7 @@ private:
     static constexpr uint32_t kMaxGuiImages = 16;
 
     void createWhiteTexture();
-    void ensureBuffer(VkDeviceSize size, uint32_t frameIndex);
+    void ensureVertexBuffer(VkDeviceSize size, uint32_t frameIndex);
 };
 
 } // namespace engine3d

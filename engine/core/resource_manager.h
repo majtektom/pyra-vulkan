@@ -26,7 +26,7 @@ public:
         resources_[name] = resource;
     }
 
-    // Load if not present, otherwise return existing
+    // Wczytuje, jeśli jeszcze nie ma; inaczej zwraca istniejący
     template <typename Loader>
     std::shared_ptr<T> load(const std::string& name, Loader loader) {
         std::lock_guard<std::mutex> lock(mutex_);

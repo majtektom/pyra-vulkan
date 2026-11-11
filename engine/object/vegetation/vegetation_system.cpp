@@ -94,7 +94,7 @@ void VegetationSystem::generate(Scene& scene, float worldSize, float terrainCent
         int count = static_cast<int>(si.species.density * worldSize * 0.08f);
         count = std::max(count, 1);
 
-        LOG_INFO("Generating {} instances for '{}'", count, si.species.name);
+        LOG_INFO("Tworzenie {} instancji '{}'", count, si.species.name);
 
         for (int i = 0; i < count; ++i) {
             float x = posDist(rng_) + terrainCenterX;
@@ -146,7 +146,7 @@ void VegetationSystem::generatePaired(Scene& scene, float worldSize, float terra
     int density = std::max(static_cast<int>(speciesA.density * worldSize * 0.08f), 1);
     int entityIndex = 0;
 
-    LOG_INFO("Generating {} paired instances for '{}' / '{}'", density, speciesA.name, speciesB.name);
+    LOG_INFO("Tworzenie {} par instancji '{}' / '{}'", density, speciesA.name, speciesB.name);
 
     for (int i = 0; i < density; ++i) {
         float x = posDist(rng_) + terrainCenterX;

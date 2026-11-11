@@ -161,7 +161,7 @@ void World::generateHeightmap(uint32_t seed) {
 
             // Płaskowyże pod bazy
             for (const auto& s : startPos) {
-                const float d = dist2D({x, 0, z}, s);
+                const float d = distanceXZ({x, 0, z}, s);
                 const float w = smoothstep(175.0f, 85.0f, d);
                 h = h + (46.0f + base.fbm(x / 60.0f, z / 60.0f, 2) * 3.0f - h) * w;
             }
@@ -172,7 +172,7 @@ void World::generateHeightmap(uint32_t seed) {
                 const Vec3 toCenter = normalize(Vec3{-s.x, 0.0f, -s.z});
                 const Vec3 dir = rotateY(toCenter, 65.0f * PI / 180.0f);
                 const Vec3 c{s.x + dir.x * 170.0f, 0.0f, s.z + dir.z * 170.0f};
-                const float d = dist2D({x, 0, z}, c);
+                const float d = distanceXZ({x, 0, z}, c);
                 // Szeroki (sigma 110), łagodny masyw: nachylenie zboczy <= ok. 0,55, więc kopalnia zmieści się na zboczu.
                 h = std::max(h, 30.0f + 70.0f * std::exp(-(d * d) / (110.0f * 110.0f)));
             }
@@ -180,7 +180,7 @@ void World::generateHeightmap(uint32_t seed) {
             // Lądowy korytarz między bazami (gwarantuje drogę do wroga)
             float t = std::clamp(((x - a.x) * ab.x + (z - a.z) * ab.z) / abLen2, 0.0f, 1.0f);
             const Vec3 onSeg{a.x + ab.x * t, 0.0f, a.z + ab.z * t};
-            const float ds = dist2D({x, 0, z}, onSeg);
+            const float ds = distanceXZ({x, 0, z}, onSeg);
             const float wc = smoothstep(80.0f, 35.0f, ds);
             const float corridorH = 40.0f + base.fbm(x / 90.0f, z / 90.0f, 2) * 6.0f;
             if (h < corridorH) h = h + (corridorH - h) * wc;
@@ -347,7 +347,7 @@ void World::placeResources() {
         if (!nav_.isWalkableWorld(p.x, p.z)) return false;
         if (heightAt(p.x, p.z) < kWaterLevel + 3.0f) return false;
         for (const auto& s : startPos) {
-            if (dist2D(p, s) < minDistToBase) return false;
+            if (distanceXZ(p, s) < minDistToBase) return false;
         }
         return true;
     };

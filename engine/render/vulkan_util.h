@@ -199,6 +199,13 @@ void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccess
  * wydajnego próbkowania w shaderach). Przejście (transition) informuje GPU o zmianie 
  * przeznaczenia zasobu, aby mogło ono przeorganizować dane w pamięci podręcznej (cache).
  */
+/**
+ * @brief Jednorazowy bufor poleceń (inicjalizacja zasobów): begin -> nagranie -> end (wysyła i CZEKA na GPU).
+ * Tylko poza pętlą klatki - vkQueueWaitIdle zatrzymuje CPU do końca pracy kolejki.
+ */
+VkCommandBuffer beginOneTimeCommands(VkDevice device, VkCommandPool pool);
+void endOneTimeCommands(VkDevice device, VkCommandPool pool, VkQueue queue, VkCommandBuffer cmd);
+
 void transitionImageLayout(
     VkDevice device,
     VkCommandPool commandPool,
@@ -218,7 +225,8 @@ void transitionImageLayout(
 /**
  * @brief Tworzy sampler z ucinaniem krawędzi (CLAMP_TO_EDGE) - przydatny przy fontach i skyboxach.
  */
-[[nodiscard]] VkSampler createClampSampler(VkDevice device);
+// filter: LINEAR (wygładzanie) albo NEAREST (odczyt dokładnie jednego teksela - np. G-Buffer).
+[[nodiscard]] VkSampler createClampSampler(VkDevice device, VkFilter filter = VK_FILTER_LINEAR);
 
 }  // namespace vk
 }  // namespace engine3d

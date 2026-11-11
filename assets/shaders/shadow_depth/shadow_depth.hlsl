@@ -1,13 +1,4 @@
-// Push Constants przekazywane przy rysowaniu obiektów do mapy cieni
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    column_major float4x4 model;         // Macierz transformacji obiektu
-    column_major float4x4 lightViewProj; // Macierz widoku-projekcji światła rzucającego cień
-    float alphaCutoff;                   // Próg przezroczystości (dla odrzucania liści itp.)
-    uint baseColorTextureSet;            // Indeks tekstury albedo w tablicy bindless
-    float2 _pad;
-};
+#include "shared/shadow_push.hlsl"   // blok push constants (układ jak w push_constants.h)
 
 struct VertexInput
 {

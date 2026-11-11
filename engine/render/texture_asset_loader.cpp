@@ -16,6 +16,57 @@
 namespace engine3d {
 namespace {
 
+// Blok koloru BC1 (8 bajtów): dwa kolory bazowe 5:6:5 i 2-bitowy indeks dla każdego z 16 pikseli.
+// Indeksy 2 i 3 to kolory pośrednie (1/3 i 2/3 drogi). Wyjątek: w DXT1, gdy color0 <= color1, indeks 2
+// to połowa drogi, a 3 - przezroczysta czerń. W DXT3/DXT5 alfa jest osobno, więc zawsze 4 kolory.
+void decodeBc1ColorBlock(const std::uint8_t* block, bool dxt1, std::uint8_t out[16][4]) {
+    const std::uint16_t color0 = block[0] | (block[1] << 8);
+    const std::uint16_t color1 = block[2] | (block[3] << 8);
+    const std::uint32_t code = block[4] | (block[5] << 8) | (block[6] << 16) | (static_cast<std::uint32_t>(block[7]) << 24);
+
+    auto expand = [](std::uint16_t c, int rgb[3]) {
+        rgb[0] = ((c >> 11) & 31) * 255 / 31;
+        rgb[1] = ((c >> 5) & 63) * 255 / 63;
+        rgb[2] = (c & 31) * 255 / 31;
+    };
+    int c0[3], c1[3];
+    expand(color0, c0);
+    expand(color1, c1);
+
+    std::uint8_t palette[4][4];
+    const bool fourColors = !dxt1 || color0 > color1;
+    for (int k = 0; k < 3; ++k) {
+        palette[0][k] = static_cast<std::uint8_t>(c0[k]);
+        palette[1][k] = static_cast<std::uint8_t>(c1[k]);
+        palette[2][k] = static_cast<std::uint8_t>(fourColors ? (2 * c0[k] + c1[k]) / 3 : (c0[k] + c1[k]) / 2);
+        palette[3][k] = static_cast<std::uint8_t>(fourColors ? (c0[k] + 2 * c1[k]) / 3 : 0);
+    }
+    palette[0][3] = palette[1][3] = palette[2][3] = 255;
+    palette[3][3] = fourColors ? 255 : 0;
+
+    for (int i = 0; i < 16; ++i) {
+        std::memcpy(out[i], palette[(code >> (2 * i)) & 3], 4);
+    }
+}
+
+// Blok alfy BC4/DXT5 (8 bajtów): dwie wartości bazowe i 3-bitowy indeks na piksel (6 lub 4 wartości pośrednie).
+void decodeBc4AlphaBlock(const std::uint8_t* block, std::uint8_t out[16][4]) {
+    const int a0 = block[0];
+    const int a1 = block[1];
+    std::uint64_t indices = 0;
+    for (int k = 0; k < 6; ++k) indices |= static_cast<std::uint64_t>(block[2 + k]) << (8 * k);
+
+    std::uint8_t alphas[8] = {static_cast<std::uint8_t>(a0), static_cast<std::uint8_t>(a1)};
+    if (a0 > a1) {
+        for (int k = 1; k <= 6; ++k) alphas[k + 1] = static_cast<std::uint8_t>(((7 - k) * a0 + k * a1) / 7);
+    } else {
+        for (int k = 1; k <= 4; ++k) alphas[k + 1] = static_cast<std::uint8_t>(((5 - k) * a0 + k * a1) / 5);
+        alphas[6] = 0;
+        alphas[7] = 255;
+    }
+    for (int i = 0; i < 16; ++i) out[i][3] = alphas[(indices >> (3 * i)) & 7];
+}
+
 /**
  * @brief Odczytuje 32-bitową wartość bez znaku w formacie little-endian z surowej tablicy 4 bajtów.
  * 
@@ -48,7 +99,7 @@ namespace {
 [[nodiscard]] TextureUploadData loadBmpTexture(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        throw std::runtime_error("failed to open BMP texture: " + path);
+        throw std::runtime_error("nie można otworzyć tekstury BMP: " + path);
     }
 
     std::array<char, 14> fileHeader{};
@@ -58,7 +109,7 @@ namespace {
 
     // Sprawdzenie sygnatury pliku BMP (znaki 'B' i 'M' na początku)
     if (!file || fileHeader[0] != 'B' || fileHeader[1] != 'M') {
-        throw std::runtime_error("unsupported BMP signature: " + path);
+        throw std::runtime_error("to nie jest plik BMP (zła sygnatura): " + path);
     }
 
     // Odczytanie ważnych pól nagłówka
@@ -72,7 +123,7 @@ namespace {
 
     // Wspieramy tylko prosty, nieskompresowany format 24-bit BGR
     if (dibHeaderSize < 40 || planes != 1 || bitsPerPixel != 24 || compression != 0) {
-        throw std::runtime_error("only uncompressed 24-bit BMP textures are supported: " + path);
+        throw std::runtime_error("obsługiwane są tylko nieskompresowane 24-bitowe BMP: " + path);
     }
 
     // Wyliczenie stride wiersza (każdy wiersz w pliku musi mieć rozmiar będący wielokrotnością 4 bajtów)
@@ -83,7 +134,7 @@ namespace {
     file.seekg(static_cast<std::streamoff>(pixelOffset), std::ios::beg);
     file.read(reinterpret_cast<char*>(rowData.data()), static_cast<std::streamsize>(rowData.size()));
     if (!file) {
-        throw std::runtime_error("failed to read BMP texture pixels: " + path);
+        throw std::runtime_error("nie udało się odczytać pikseli BMP: " + path);
     }
 
     // Docelowy bufor w standardzie RGBA (4 bajty na piksel)
@@ -119,13 +170,13 @@ namespace {
 [[nodiscard]] TextureUploadData loadTgaTexture(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        throw std::runtime_error("failed to open TGA texture: " + path);
+        throw std::runtime_error("nie można otworzyć tekstury TGA: " + path);
     }
 
     std::array<char, 18> header{};
     file.read(header.data(), static_cast<std::streamsize>(header.size()));
     if (!file) {
-        throw std::runtime_error("failed to read TGA header: " + path);
+        throw std::runtime_error("nie udało się odczytać nagłówka TGA: " + path);
     }
 
     // Pola nagłówka TGA
@@ -140,7 +191,7 @@ namespace {
     // Sprawdzamy czy to obsługiwany format: brak palety (colorMapType == 0),
     // typ obrazu 2 (raw) lub 10 (RLE), głębia 24 lub 32 bity.
     if (colorMapType != 0 || (imageType != 2 && imageType != 10) || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
-        throw std::runtime_error("only true-color 24/32-bit TGA textures are supported: " + path);
+        throw std::runtime_error("obsługiwane są tylko 24/32-bitowe TGA (true-color): " + path);
     }
 
     // Pomiń opcjonalne pole ID na początku pliku
@@ -163,7 +214,7 @@ namespace {
             unsigned char packetHeader = 0;
             file.read(reinterpret_cast<char*>(&packetHeader), 1);
             if (!file) {
-                throw std::runtime_error("failed while decoding TGA RLE stream: " + path);
+                throw std::runtime_error("błąd dekodowania kompresji RLE w TGA: " + path);
             }
 
             const std::size_t packetPixelCount = static_cast<std::size_t>((packetHeader & 0x7Fu) + 1u);
@@ -185,7 +236,7 @@ namespace {
     }
 
     if (!file) {
-        throw std::runtime_error("failed to read TGA texture pixels: " + path);
+        throw std::runtime_error("nie udało się odczytać pikseli TGA: " + path);
     }
 
     // Bit 5 w bajcie imageDescriptor określa kierunek osi Y (tzw. screen origin).
@@ -235,7 +286,7 @@ namespace {
 [[nodiscard]] TextureUploadData loadDdsTexture(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        throw std::runtime_error("failed to open DDS texture: " + path);
+        throw std::runtime_error("nie można otworzyć tekstury DDS: " + path);
     }
 
     std::array<char, 4> magic{};
@@ -245,7 +296,7 @@ namespace {
     file.read(magic.data(), static_cast<std::streamsize>(magic.size()));
     file.read(header.data(), static_cast<std::streamsize>(header.size()));
     if (!file || std::string(magic.data(), magic.size()) != "DDS ") {
-        throw std::runtime_error("unsupported DDS signature: " + path);
+        throw std::runtime_error("to nie jest plik DDS (zła sygnatura): " + path);
     }
 
     const std::uint32_t headerSize = readLittleEndianUInt32({header[0], header[1], header[2], header[3]});
@@ -256,7 +307,7 @@ namespace {
     const std::uint32_t fourCC = readLittleEndianUInt32({header[80], header[81], header[82], header[83]});
 
     if (headerSize != 124 || pixelFormatSize != 32) {
-        throw std::runtime_error("unsupported DDS header layout: " + path);
+        throw std::runtime_error("nieobsługiwany nagłówek DDS: " + path);
     }
 
     TextureUploadData texture;
@@ -290,7 +341,7 @@ namespace {
         texture.format = VK_FORMAT_BC3_UNORM_BLOCK;
         blockSize = 16;
     } else {
-        throw std::runtime_error("unsupported DDS compression format: " + path);
+        throw std::runtime_error("nieobsługiwana kompresja DDS: " + path);
     }
 
     // Wczytanie całości skompresowanych danych pikseli (pomijając 128 bajtów sygnatury i nagłówka)
@@ -301,11 +352,11 @@ namespace {
     texture.pixelBytes.resize(dataSize);
     file.read(reinterpret_cast<char*>(texture.pixelBytes.data()), static_cast<std::streamsize>(dataSize));
     if (!file) {
-        throw std::runtime_error("failed to read DDS pixel data: " + path);
+        throw std::runtime_error("nie udało się odczytać pikseli DDS: " + path);
     }
 
     if (texture.mipLevels <= 1) {
-        // Decompress to RGBA8 on CPU
+        // Plik bez mipmap: dekompresja do RGBA8 na CPU (mipmapy wygeneruje GPU)
         std::vector<std::uint8_t> decompressedPixels(width * height * 4);
         
         uint32_t numBlocksX = (width + 3u) / 4u;
@@ -315,169 +366,32 @@ namespace {
             for (uint32_t bx = 0; bx < numBlocksX; ++bx) {
                 std::size_t fileOffset = (by * numBlocksX + bx) * blockSize;
                 if (fileOffset + blockSize > texture.pixelBytes.size()) {
-                    throw std::runtime_error("DDS file is truncated during decompression: " + path);
+                    throw std::runtime_error("plik DDS jest ucięty (dekompresja): " + path);
                 }
                 const std::uint8_t* blockData = &texture.pixelBytes[fileOffset];
                 
-                // Decode colors and alphas for the 4x4 block
-                std::uint8_t blockColors[4][4]; // 4 colors, RGBA
-                std::uint8_t blockAlphas[16];
-                std::memset(blockAlphas, 255, 16);
-                
+                // Blok 4x4: najpierw kolory (wspólny format BC1 dla DXT1/3/5), potem alfa zależna od formatu.
+                std::uint8_t pixels[16][4];
                 if (fourCC == makeFourCC('D', 'X', 'T', '1')) {
-                    std::uint16_t color0 = blockData[0] | (blockData[1] << 8);
-                    std::uint16_t color1 = blockData[2] | (blockData[3] << 8);
-                    std::uint32_t code = blockData[4] | (blockData[5] << 8) | (blockData[6] << 16) | (blockData[7] << 24);
-                    
-                    std::uint8_t r0 = ((color0 >> 11) & 31) * 255 / 31;
-                    std::uint8_t g0 = ((color0 >> 5) & 63) * 255 / 63;
-                    std::uint8_t b0 = (color0 & 31) * 255 / 31;
-                    
-                    std::uint8_t r1 = ((color1 >> 11) & 31) * 255 / 31;
-                    std::uint8_t g1 = ((color1 >> 5) & 63) * 255 / 63;
-                    std::uint8_t b1 = (color1 & 31) * 255 / 31;
-                    
-                    blockColors[0][0] = r0; blockColors[0][1] = g0; blockColors[0][2] = b0; blockColors[0][3] = 255;
-                    blockColors[1][0] = r1; blockColors[1][1] = g1; blockColors[1][2] = b1; blockColors[1][3] = 255;
-                    
-                    if (color0 > color1) {
-                        blockColors[2][0] = (2 * r0 + r1) / 3;
-                        blockColors[2][1] = (2 * g0 + g1) / 3;
-                        blockColors[2][2] = (2 * b0 + b1) / 3;
-                        blockColors[2][3] = 255;
-                        
-                        blockColors[3][0] = (r0 + 2 * r1) / 3;
-                        blockColors[3][1] = (g0 + 2 * g1) / 3;
-                        blockColors[3][2] = (b0 + 2 * b1) / 3;
-                        blockColors[3][3] = 255;
-                    } else {
-                        blockColors[2][0] = (r0 + r1) / 2;
-                        blockColors[2][1] = (g0 + g1) / 2;
-                        blockColors[2][2] = (b0 + b1) / 2;
-                        blockColors[2][3] = 255;
-                        
-                        blockColors[3][0] = 0;
-                        blockColors[3][1] = 0;
-                        blockColors[3][2] = 0;
-                        blockColors[3][3] = 0;
-                    }
-                    
-                    for (int y_local = 0; y_local < 4; ++y_local) {
-                        for (int x_local = 0; x_local < 4; ++x_local) {
-                            std::uint32_t px = bx * 4 + x_local;
-                            std::uint32_t py = by * 4 + y_local;
-                            if (px < width && py < height) {
-                                int pixel_index = y_local * 4 + x_local;
-                                std::uint8_t color_index = (code >> (2 * pixel_index)) & 3;
-                                std::size_t destOffset = (py * width + px) * 4;
-                                decompressedPixels[destOffset + 0] = blockColors[color_index][0];
-                                decompressedPixels[destOffset + 1] = blockColors[color_index][1];
-                                decompressedPixels[destOffset + 2] = blockColors[color_index][2];
-                                decompressedPixels[destOffset + 3] = blockColors[color_index][3];
-                            }
-                        }
-                    }
+                    decodeBc1ColorBlock(blockData, true, pixels);
                 } else if (fourCC == makeFourCC('D', 'X', 'T', '3')) {
+                    decodeBc1ColorBlock(blockData + 8, false, pixels);
+                    // DXT3: jawna alfa 4-bitowa dla każdego piksela (8 bajtów przed kolorem).
                     for (int i = 0; i < 16; ++i) {
-                        std::uint8_t a = (blockData[i / 2] >> (4 * (i % 2))) & 15;
-                        blockAlphas[i] = a * 17;
+                        pixels[i][3] = static_cast<std::uint8_t>(((blockData[i / 2] >> (4 * (i % 2))) & 15) * 17);
                     }
-                    
-                    const std::uint8_t* colorData = blockData + 8;
-                    std::uint16_t color0 = colorData[0] | (colorData[1] << 8);
-                    std::uint16_t color1 = colorData[2] | (colorData[3] << 8);
-                    std::uint32_t code = colorData[4] | (colorData[5] << 8) | (colorData[6] << 16) | (colorData[7] << 24);
-                    
-                    std::uint8_t r0 = ((color0 >> 11) & 31) * 255 / 31;
-                    std::uint8_t g0 = ((color0 >> 5) & 63) * 255 / 63;
-                    std::uint8_t b0 = (color0 & 31) * 255 / 31;
-                    
-                    std::uint8_t r1 = ((color1 >> 11) & 31) * 255 / 31;
-                    std::uint8_t g1 = ((color1 >> 5) & 63) * 255 / 63;
-                    std::uint8_t b1 = (color1 & 31) * 255 / 31;
-                    
-                    blockColors[0][0] = r0; blockColors[0][1] = g0; blockColors[0][2] = b0;
-                    blockColors[1][0] = r1; blockColors[1][1] = g1; blockColors[1][2] = b1;
-                    blockColors[2][0] = (2 * r0 + r1) / 3; blockColors[2][1] = (2 * g0 + g1) / 3; blockColors[2][2] = (2 * b0 + b1) / 3;
-                    blockColors[3][0] = (r0 + 2 * r1) / 3; blockColors[3][1] = (g0 + 2 * g1) / 3; blockColors[3][2] = (b0 + 2 * b1) / 3;
-                    
-                    for (int y_local = 0; y_local < 4; ++y_local) {
-                        for (int x_local = 0; x_local < 4; ++x_local) {
-                            std::uint32_t px = bx * 4 + x_local;
-                            std::uint32_t py = by * 4 + y_local;
-                            if (px < width && py < height) {
-                                int pixel_index = y_local * 4 + x_local;
-                                std::uint8_t color_index = (code >> (2 * pixel_index)) & 3;
-                                std::size_t destOffset = (py * width + px) * 4;
-                                decompressedPixels[destOffset + 0] = blockColors[color_index][0];
-                                decompressedPixels[destOffset + 1] = blockColors[color_index][1];
-                                decompressedPixels[destOffset + 2] = blockColors[color_index][2];
-                                decompressedPixels[destOffset + 3] = blockAlphas[pixel_index];
-                            }
-                        }
-                    }
-                } else if (fourCC == makeFourCC('D', 'X', 'T', '5')) {
-                    std::uint8_t alpha0 = blockData[0];
-                    std::uint8_t alpha1 = blockData[1];
-                    std::uint64_t alpha_indices = 0;
-                    for (int k = 0; k < 6; ++k) {
-                        alpha_indices |= (static_cast<std::uint64_t>(blockData[2 + k]) << (8 * k));
-                    }
-                    
-                    std::uint8_t alphas[8];
-                    alphas[0] = alpha0;
-                    alphas[1] = alpha1;
-                    if (alpha0 > alpha1) {
-                        alphas[2] = (6 * alpha0 + 1 * alpha1) / 7;
-                        alphas[3] = (5 * alpha0 + 2 * alpha1) / 7;
-                        alphas[4] = (4 * alpha0 + 3 * alpha1) / 7;
-                        alphas[5] = (3 * alpha0 + 4 * alpha1) / 7;
-                        alphas[6] = (2 * alpha0 + 5 * alpha1) / 7;
-                        alphas[7] = (1 * alpha0 + 6 * alpha1) / 7;
-                    } else {
-                        alphas[2] = (4 * alpha0 + 1 * alpha1) / 5;
-                        alphas[3] = (3 * alpha0 + 2 * alpha1) / 5;
-                        alphas[4] = (2 * alpha0 + 3 * alpha1) / 5;
-                        alphas[5] = (1 * alpha0 + 4 * alpha1) / 5;
-                        alphas[6] = 0;
-                        alphas[7] = 255;
-                    }
-                    
-                    for (int i = 0; i < 16; ++i) {
-                        blockAlphas[i] = alphas[(alpha_indices >> (3 * i)) & 7];
-                    }
-                    
-                    const std::uint8_t* colorData = blockData + 8;
-                    std::uint16_t color0 = colorData[0] | (colorData[1] << 8);
-                    std::uint16_t color1 = colorData[2] | (colorData[3] << 8);
-                    std::uint32_t code = colorData[4] | (colorData[5] << 8) | (colorData[6] << 16) | (colorData[7] << 24);
-                    
-                    std::uint8_t r0 = ((color0 >> 11) & 31) * 255 / 31;
-                    std::uint8_t g0 = ((color0 >> 5) & 63) * 255 / 63;
-                    std::uint8_t b0 = (color0 & 31) * 255 / 31;
-                    
-                    std::uint8_t r1 = ((color1 >> 11) & 31) * 255 / 31;
-                    std::uint8_t g1 = ((color1 >> 5) & 63) * 255 / 63;
-                    std::uint8_t b1 = (color1 & 31) * 255 / 31;
-                    
-                    blockColors[0][0] = r0; blockColors[0][1] = g0; blockColors[0][2] = b0;
-                    blockColors[1][0] = r1; blockColors[1][1] = g1; blockColors[1][2] = b1;
-                    blockColors[2][0] = (2 * r0 + r1) / 3; blockColors[2][1] = (2 * g0 + g1) / 3; blockColors[2][2] = (2 * b0 + b1) / 3;
-                    blockColors[3][0] = (r0 + 2 * r1) / 3; blockColors[3][1] = (g0 + 2 * g1) / 3; blockColors[3][2] = (b0 + 2 * b1) / 3;
-                    
-                    for (int y_local = 0; y_local < 4; ++y_local) {
-                        for (int x_local = 0; x_local < 4; ++x_local) {
-                            std::uint32_t px = bx * 4 + x_local;
-                            std::uint32_t py = by * 4 + y_local;
-                            if (px < width && py < height) {
-                                int pixel_index = y_local * 4 + x_local;
-                                std::uint8_t color_index = (code >> (2 * pixel_index)) & 3;
-                                std::size_t destOffset = (py * width + px) * 4;
-                                decompressedPixels[destOffset + 0] = blockColors[color_index][0];
-                                decompressedPixels[destOffset + 1] = blockColors[color_index][1];
-                                decompressedPixels[destOffset + 2] = blockColors[color_index][2];
-                                decompressedPixels[destOffset + 3] = blockAlphas[pixel_index];
-                            }
+                } else {
+                    decodeBc1ColorBlock(blockData + 8, false, pixels);
+                    decodeBc4AlphaBlock(blockData, pixels);   // DXT5: alfa interpolowana jak kolor
+                }
+
+                for (int yLocal = 0; yLocal < 4; ++yLocal) {
+                    for (int xLocal = 0; xLocal < 4; ++xLocal) {
+                        const std::uint32_t px = bx * 4 + xLocal;
+                        const std::uint32_t py = by * 4 + yLocal;
+                        if (px < width && py < height) {
+                            std::memcpy(&decompressedPixels[(static_cast<std::size_t>(py) * width + px) * 4],
+                                        pixels[yLocal * 4 + xLocal], 4);
                         }
                     }
                 }
@@ -513,7 +427,7 @@ namespace {
         const std::size_t mipSize = static_cast<std::size_t>(blockWidth) * blockHeight * blockSize;
         
         if (offset + mipSize > texture.pixelBytes.size()) {
-            throw std::runtime_error("DDS mip data is truncated: " + path);
+            throw std::runtime_error("plik DDS jest ucięty (brak danych mipmap): " + path);
         }
 
         // Definiowanie regionu transferu z bufora staging na obraz
@@ -565,7 +479,7 @@ TextureUploadData TextureAssetLoader::load(const std::string& path) {
     if (extension == ".dds") {
         return loadDdsTexture(path);
     }
-    throw std::runtime_error("unsupported texture extension: " + path);
+    throw std::runtime_error("nieobsługiwane rozszerzenie tekstury: " + path);
 }
 
 TextureUploadData TextureAssetLoader::fromRgbaPixels(

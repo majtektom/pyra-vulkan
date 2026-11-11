@@ -29,8 +29,7 @@ GuiMgr::~GuiMgr() {
 void GuiMgr::init(Renderer* renderer) {
     renderer_ = renderer;
     guiRenderer_.init(renderer_->device(), renderer_->physicalDevice(),
-                      renderer_->colorFormat(), renderer_->depthFormat(),
-                      renderer_->commandPool(), renderer_->graphicsQueue(), renderer_->extent());
+                      renderer_->colorFormat(), renderer_->depthFormat());
 }
 
 void GuiMgr::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) {
@@ -217,7 +216,7 @@ void GuiMgr::renderGui() {
 
         w->render(guiRenderer_, wrappedTextFn, screenW_, screenH_);
     }
-    // Draw cursor on top of everything
+    // Kursor rysujemy na wierzchu
     guiRenderer_.setDepth(0.01f);
     drawCursor();
 }
@@ -275,7 +274,7 @@ void GuiWindow::render(GuiRenderer& r, TextDrawFn textFn, float sw, float sh) co
         }
     }
     if (openWidget) {
-        // Draw the open widget (ComboBox dropdown) even closer so it renders on top
+        // Otwarta lista (ComboBox) jeszcze bliżej - żeby była na wierzchu
         r.setDepth(baseZ - 0.010f);
         openWidget->draw(r, textFn, x_, y_, sw, sh);
     }

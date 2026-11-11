@@ -34,23 +34,4 @@ private:
     bool hostVisible_ = true;
 };
 
-class VulkanImage {
-public:
-    VulkanImage(std::shared_ptr<VulkanContext> context,
-                uint32_t width, uint32_t height,
-                VkFormat format, VkImageUsageFlags usage);
-    ~VulkanImage();
-
-    VkImage handle() const { return image_; }
-    VkImageView view() const { return view_; }
-    VkSampler sampler() const { return sampler_; }
-
-private:
-    std::shared_ptr<VulkanContext> context_;
-    VkImage image_ = VK_NULL_HANDLE;
-    VkDeviceMemory memory_ = VK_NULL_HANDLE;
-    VkImageView view_ = VK_NULL_HANDLE;
-    VkSampler sampler_ = VK_NULL_HANDLE;
-};
-
 } // namespace engine3d

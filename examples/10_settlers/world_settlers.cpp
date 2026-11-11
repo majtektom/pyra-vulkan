@@ -43,7 +43,7 @@ void World::updateSettler(Unit& u, int id, float dt) {
     case UnitState::ReturnHome: settlerReturnHome(u, id, dt); break;
     case UnitState::GoToRoad:
     case UnitState::CarrierWait:
-    case UnitState::CarrierWalk: updateCarrier(u, id, dt); break;
+    case UnitState::CarrierWalk: transport_.updateCarrier(u, id, dt); break;
     default:                    u.state = UnitState::Idle; break;   // stany wojskowe nie dotyczą osadników
     }
 
@@ -238,7 +238,7 @@ void World::settlerGoToWork(Unit& u, int id, float dt) {
         return;
     }
     const Vec3 door = b->door();
-    if (dist2D(u.pos, door) < 2.5f) {
+    if (distanceXZ(u.pos, door) < 2.5f) {
         u.stuckTimer = 0.0f;
         b->accessFailures = 0;
         b->unreachable = false;
@@ -368,7 +368,7 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
 
     if (prod.kind == WorkKind::Forester || prod.kind == WorkKind::Fisher || prod.kind == WorkKind::Hunter) {
         // Marsz na miejsce pracy (zwykła nawigacja). Gdy nie da się dojść - wracamy po nowe miejsce.
-        const float distance = dist2D(u.pos, u.workSpot);
+        const float distance = distanceXZ(u.pos, u.workSpot);
         if (distance < 2.0f || (!u.path.empty() && u.pathIndex >= u.path.size() && distance < 6.0f)) {
             u.state = UnitState::Gathering;
             u.timer = prod.workTime;
@@ -391,7 +391,7 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
 
     if (prod.kind == WorkKind::Farm) {
         // Pole leży wewnątrz obrysu farmy (komórki zablokowane), więc idziemy prosto, bez nawigacji.
-        if (dist2D(u.pos, u.workSpot) < 0.8f) {
+        if (distanceXZ(u.pos, u.workSpot) < 0.8f) {
             u.state = UnitState::Gathering;
             u.timer = prod.workTime;
             return;
@@ -412,7 +412,7 @@ void World::settlerGoGather(Unit& u, int id, float dt) {
     }
 
     const ResourceNode& n = nodes[u.resourceNode];
-    const float distance = dist2D(u.pos, n.pos);
+    const float distance = distanceXZ(u.pos, n.pos);
     const bool pathDone = !u.path.empty() && u.pathIndex >= u.path.size();
     // Skała blokuje siatkę nawigacji, więc ścieżka kończy się na najbliższej wolnej komórce,
     // która może leżeć dalej niż promień skały - koniec ścieżki w pobliżu też oznacza dotarcie.
@@ -531,7 +531,7 @@ void World::settlerReturnHome(Unit& u, int id, float dt) {
     const Vec3 door = b->door();
     const Vec3 target = farm ? add(b->pos, rotateY({0.0f, 0.0f, -2.5f}, b->rotY)) : door;
 
-    if (dist2D(u.pos, target) < 2.5f) {
+    if (distanceXZ(u.pos, target) < 2.5f) {
         if (u.faction == kPlayer) emitSound("deliver", u.pos, 0.3f);
         deliverCarriedResource(u, *b);
         return;

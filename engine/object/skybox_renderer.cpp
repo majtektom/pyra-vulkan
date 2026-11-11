@@ -2,6 +2,7 @@
 #include <vector>
 #include <stdexcept>
 #include "render/renderer.h"
+#include "render/pipeline_builder.h"
 #include "render/vulkan_util.h"
 #include "object/skybox_renderer.h"
 
@@ -37,213 +38,75 @@ void SkyboxRenderer::init(Renderer* renderer) {
     VkPhysicalDevice physicalDevice = renderer_->physicalDevice();
     VkCommandPool commandPool = renderer_->commandPool();
     VkQueue graphicsQueue = renderer_->graphicsQueue();
-    VkExtent2D extent = renderer_->extent();
     VkDescriptorSetLayout descriptorSetLayout = renderer_->descriptorSetLayout();
     VkFormat colorFormat = renderer_->colorFormat();
     VkFormat depthFormat = renderer_->depthFormat();
 
     // ---------------------------------------------------------------
-    // 1. LADOWANIE SHADEROW
+    // 1. POTOK: kostka nieba rysowana od środka (bez cullingu), paski TRIANGLE_STRIP (4 wierzchołki na ścianę),
+    //    głębokość tylko testowana LEQUAL - niebo zawsze zostaje w tle.
     // ---------------------------------------------------------------
-    const auto vertCode = vk::readFile(shaderDir_ + "/skybox.vert.spv");
-    const auto fragCode = vk::readFile(shaderDir_ + "/skybox.frag.spv");
+    const vk::ShaderModule vert(device, shaderDir_ + "/skybox.vert.spv");
+    const vk::ShaderModule frag(device, shaderDir_ + "/skybox.frag.spv");
 
-    const VkShaderModule vertModule = vk::createShaderModule(device, vertCode);
-    const VkShaderModule fragModule = vk::createShaderModule(device, fragCode);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertModule;
-    vertStage.pName = "vertexMain";
-
-    VkPipelineShaderStageCreateInfo fragStage{};
-    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragStage.module = fragModule;
-    fragStage.pName = "fragmentMain";
-
-    const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertStage, fragStage};
+    pipelineLayout_ = vk::createPipelineLayout(device, {descriptorSetLayout}, sizeof(PushConstants),
+                                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, "skybox");
+    pipeline_ = vk::GraphicsPipelineBuilder()
+        .shaders(vert, frag)
+        .vertexInput(Vertex::bindingDescription(), vk::filterVertexAttributes(vert.code(), Vertex::attributeDescriptions()))
+        .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
+        .cull(VK_CULL_MODE_NONE)
+        .depth(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .colorFormat(colorFormat)
+        .depthFormat(depthFormat)
+        .build(device, pipelineLayout_, "skybox");
 
     // ---------------------------------------------------------------
-    // 2. WEJSCIE WIERZCHOLKOW (wspolny Vertex dla wszystkich pipeline'ow)
+    // 2. GEOMETRIA: 5 ścian kostki (bez dna), każda to 4 wierzchołki rysowane jako TRIANGLE_STRIP.
+    //    Tekstura nieba to atlas: ściany Z biorą dolną połowę (v 0.5..1), ściany X górną (v 0..0.5),
+    //    sufit cały obraz.
     // ---------------------------------------------------------------
-    const auto bindingDesc = Vertex::bindingDescription();
-    const auto attribDescs = vk::filterVertexAttributes(vertCode, Vertex::attributeDescriptions());
+    const float half = static_cast<float>(config_.size);             // pół boku kostki
+    const float bottom = -static_cast<float>(config_.verticalOffset); // dolna krawędź (pod horyzontem)
+    const float top = half + bottom;
+    const float inset = 0.002f;   // lekkie odsunięcie UV od krawędzi atlasu - bez prześwitów sąsiednich pikseli
+    const float uMin = inset, uMax = 1.0f - inset;
+    const float lowerVMin = 0.5f + inset, lowerVMax = 1.0f - inset;   // dolna połowa atlasu
+    const float upperVMin = inset, upperVMax = 0.5f - inset;          // górna połowa atlasu
 
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDesc;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribDescs.size());
-    vertexInput.pVertexAttributeDescriptions = attribDescs.data();
-
-    // ---------------------------------------------------------------
-    // 3. TOPOLOGIA: TRIANGLE_STRIP (4 wierzcholki = 2 trojkaty na sciane)
-    // ---------------------------------------------------------------
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-
-    // ---------------------------------------------------------------
-    // 4. VIEWPORT
-    // ---------------------------------------------------------------
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(extent.width);
-    viewport.height = static_cast<float>(extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = extent;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    // ---------------------------------------------------------------
-    // 5. RASTERYZACJA: bez cullingu (jestesmy wewnatrz kostki)
-    // ---------------------------------------------------------------
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    // ---------------------------------------------------------------
-    // 6. TEST GLEBOKOSCI: LEQUAL, bez zapisu (skybox ma byc zawsze w tle)
-    // ---------------------------------------------------------------
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    // ---------------------------------------------------------------
-    // 7. MIESZANIE KOLOROW
-    // ---------------------------------------------------------------
-    VkPipelineColorBlendAttachmentState blendAttach{};
-    blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                 VK_COLOR_COMPONENT_G_BIT |
-                                 VK_COLOR_COMPONENT_B_BIT |
-                                 VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &blendAttach;
-
-    // ---------------------------------------------------------------
-    // 8. LAYOUT PIPELINE'U
-    // ---------------------------------------------------------------
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout;
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(PushConstants);
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushConstantRange;
-
-    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout_) != VK_SUCCESS) {
-        vkDestroyShaderModule(device, fragModule, nullptr);
-        vkDestroyShaderModule(device, vertModule, nullptr);
-        throw std::runtime_error("failed to create skybox pipeline layout");
-    }
-
-    // ---------------------------------------------------------------
-    // 9. TWORZENIE PIPELINE'U Z DYNAMIC RENDERING
-    // ---------------------------------------------------------------
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    std::vector<VkDynamicState> dynStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynStates.size());
-    dynamicState.pDynamicStates = dynStates.data();
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
-    pipelineInfo.pStages = stages.data();
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = pipelineLayout_;
-    pipelineInfo.renderPass = VK_NULL_HANDLE;
-    pipelineInfo.subpass = 0;
-
-    VkPipelineRenderingCreateInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &colorFormat;
-    renderingInfo.depthAttachmentFormat = depthFormat;
-    pipelineInfo.pNext = &renderingInfo;
-
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
-        vkDestroyPipelineLayout(device, pipelineLayout_, nullptr);
-        pipelineLayout_ = VK_NULL_HANDLE;
-        vkDestroyShaderModule(device, fragModule, nullptr);
-        vkDestroyShaderModule(device, vertModule, nullptr);
-        throw std::runtime_error("failed to create skybox pipeline");
-    }
-
-    vkDestroyShaderModule(device, fragModule, nullptr);
-    vkDestroyShaderModule(device, vertModule, nullptr);
-
-    // ---------------------------------------------------------------
-    // 10. TWORZENIE GEOMETRII SKYBOXA (Plazer-style)
-    // ---------------------------------------------------------------
-    const float odl = static_cast<float>(config_.size);
-    const float przes = static_cast<float>(config_.verticalOffset);
-    const float ep = 0.002f;
-
-    std::vector<Vertex> vertices(20);
-    auto setV = [&](std::size_t i, float x, float y, float z, float u, float v) {
-        vertices[i] = {{{x, y, z}}, {{0.0f, 0.0f, 0.0f}}, {{1.0f, 1.0f, 1.0f}}, {{u, v}}};
+    std::vector<Vertex> vertices;
+    vertices.reserve(20);
+    auto vertex = [&](float x, float y, float z, float u, float v) {
+        vertices.push_back({{{x, y, z}}, {{0.0f, 0.0f, 0.0f}}, {{1.0f, 1.0f, 1.0f}}, {{u, v}}});
     };
 
-    setV(0,  -odl, 0 - przes, -odl, 0.0f + ep, 0.5f + ep);
-    setV(1,   odl, 0 - przes, -odl, 1.0f - ep, 0.5f + ep);
-    setV(2,   odl, odl - przes, -odl, 1.0f - ep, 1.0f - ep);
-    setV(3,  -odl, odl - przes, -odl, 0.0f + ep, 1.0f - ep);
+    // Ściana z = -half
+    vertex(-half, bottom, -half, uMin, lowerVMin);
+    vertex( half, bottom, -half, uMax, lowerVMin);
+    vertex( half, top,    -half, uMax, lowerVMax);
+    vertex(-half, top,    -half, uMin, lowerVMax);
+    // Ściana z = +half
+    vertex(-half, bottom,  half, uMax, lowerVMin);
+    vertex( half, bottom,  half, uMin, lowerVMin);
+    vertex( half, top,     half, uMin, lowerVMax);
+    vertex(-half, top,     half, uMax, lowerVMax);
+    // Ściana x = -half
+    vertex(-half, bottom,  half, uMin, upperVMax);
+    vertex(-half, bottom, -half, uMax, upperVMax);
+    vertex(-half, top,    -half, uMax, upperVMin);
+    vertex(-half, top,     half, uMin, upperVMin);
+    // Ściana x = +half
+    vertex( half, bottom,  half, uMax, upperVMax);
+    vertex( half, bottom, -half, uMin, upperVMax);
+    vertex( half, top,    -half, uMin, upperVMin);
+    vertex( half, top,     half, uMax, upperVMin);
+    // Sufit y = top
+    vertex( half, top,    -half, uMax, upperVMin);
+    vertex(-half, top,    -half, uMax, lowerVMax);
+    vertex(-half, top,     half, uMin, lowerVMax);
+    vertex( half, top,     half, uMin, upperVMin);
 
-    setV(4,  -odl, 0 - przes, odl, 1.0f - ep, 0.5f + ep);
-    setV(5,   odl, 0 - przes, odl, 0.0f + ep, 0.5f + ep);
-    setV(6,   odl, odl - przes, odl, 0.0f + ep, 1.0f - ep);
-    setV(7,  -odl, odl - przes, odl, 1.0f - ep, 1.0f - ep);
-
-    setV(8,  -odl, 0 - przes, odl, 0.0f + ep, 0.5f - ep);
-    setV(9,  -odl, 0 - przes, -odl, 1.0f - ep, 0.5f - ep);
-    setV(10, -odl, odl - przes, -odl, 1.0f - ep, 0.0f + ep);
-    setV(11, -odl, odl - przes, odl, 0.0f + ep, 0.0f + ep);
-
-    setV(12, odl, 0 - przes, odl, 1.0f - ep, 0.5f - ep);
-    setV(13, odl, 0 - przes, -odl, 0.0f + ep, 0.5f - ep);
-    setV(14, odl, odl - przes, -odl, 0.0f + ep, 0.0f + ep);
-    setV(15, odl, odl - przes, odl, 1.0f - ep, 0.0f + ep);
-
-    setV(16, odl, odl - przes, -odl, 1.0f - ep, 0.0f + ep);
-    setV(17, -odl, odl - przes, -odl, 1.0f - ep, 1.0f - ep);
-    setV(18, -odl, odl - przes, odl, 0.0f + ep, 1.0f - ep);
-    setV(19, odl, odl - przes, odl, 0.0f + ep, 0.0f + ep);
-
+    // Każda ściana to pasek 4 wierzchołków (kolejność dla TRIANGLE_STRIP).
     std::vector<uint32_t> indices = {
         1, 2, 0, 3,
         5, 4, 6, 7,

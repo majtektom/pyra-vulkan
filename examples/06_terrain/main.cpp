@@ -1,40 +1,69 @@
-#include "core/logger.h"
+/**
+ * 06_terrain - teren z poziomami szczegółowości (LOD), teselacją na GPU i trzema generatorami wysokości.
+ *
+ * Teren to siatka wysokości podzielona na węzły; bliskie węzły mają gęstą siatkę, dalekie rzadką (LOD),
+ * a teselacja na GPU dodaje szczegóły blisko kamery. Tekstury warstw (trawa, skała, piasek...) są mieszane
+ * według masek (texture splatting). Do tego ocean, kopuła nieba z cyklem dnia i mgła w dolinach.
+ * Sterowanie: WASD + mysz, spacja / lewy Ctrl - góra / dół, G - przy ziemi, 1/2/3 - nowy teren (plazma, uskoki,
+ * osypywanie), B - napisy debug, T - teselacja, +/- - poziom teselacji, F1 - kursor, Esc - wyjście.
+ */
 #include <SDL3/SDL.h>
+
 #include <algorithm>
-#include <sstream>
+#include <array>
+#include <cmath>
 #include <iomanip>
+#include <memory>
+#include <sstream>
+
+#include "camera/camera_component.h"
+#include "camera/fly_camera.h"
 #include "core/engine.h"
 #include "core/entity.h"
-#include "render/renderer.h"
-#include "core/types.h"
-#include "core/mesh_component.h"
-#include "camera/camera_component.h"
-#include "object/terrain/terrain.h"
-#include "object/terrain/terrain_component.h"
-#include "object/terrain/terrain_system.h"
-#include "object/terrain/terrain_placement_system.h"
+#include "core/logger.h"
+#include "feature/fog/volumetric_fog_renderer.h"
 #include "object/ocean_renderer.h"
 #include "object/skydome_renderer.h"
-#include "object/skybox_renderer.h"
-#include "feature/fog/volumetric_fog_renderer.h"
+#include "object/terrain/terrain.h"
+#include "object/terrain/terrain_component.h"
+#include "object/terrain/terrain_placement_system.h"
+#include "object/terrain/terrain_system.h"
+#include "render/renderer.h"
 
 using namespace engine3d;
 
 namespace {
 
-// Definicje akcji sterowania terenem
-constexpr const char* kActionMoveForward = "move.forward";
-constexpr const char* kActionMoveBackward = "move.backward";
-constexpr const char* kActionMoveLeft = "move.left";
-constexpr const char* kActionMoveRight = "move.right";
-constexpr const char* kActionMoveUp = "move.up";
-constexpr const char* kActionMoveDown = "move.down";
 constexpr const char* kActionSnapToGround = "terrain.snap_to_ground";
 constexpr const char* kActionTogglePointer = "ui.toggle_pointer";
 constexpr const char* kActionTerrainModePlasma = "terrain.mode_plasma";
 constexpr const char* kActionTerrainModeFault = "terrain.mode_fault";
 constexpr const char* kActionTerrainModeDeposition = "terrain.mode_deposition";
 
+constexpr float kWaterLevel = 60.0f;
+
+enum class TerrainGenerator { Plasma, Fault, Deposition };
+const char* generatorName(TerrainGenerator g) {
+    switch (g) {
+        case TerrainGenerator::Plasma: return "Plazma";
+        case TerrainGenerator::Fault: return "Uskoki";
+        case TerrainGenerator::Deposition: return "Osypywanie";
+    }
+    return "";
+}
+
+void configureBindings(Engine& engine) {
+    auto& map = engine.inputActions();
+    map.clearAll();
+    FlyCamera::bindDefaultKeys(map);
+    map.bindKey(kActionSnapToGround, SDL_SCANCODE_G);
+    map.bindKey(kActionTogglePointer, SDL_SCANCODE_F1);
+    map.bindKey(kActionTerrainModePlasma, SDL_SCANCODE_1);
+    map.bindKey(kActionTerrainModeFault, SDL_SCANCODE_2);
+    map.bindKey(kActionTerrainModeDeposition, SDL_SCANCODE_3);
+}
+
+// Lokalna mgła osiada w trzech najniższych (nad wodą), oddalonych od siebie dolinach.
 std::vector<LocalFogVolume> findValleyFogVolumes(const Terrain& terrain, float waterLevel) {
     struct Candidate {
         Vec3 position;
@@ -80,23 +109,219 @@ std::vector<LocalFogVolume> findValleyFogVolumes(const Terrain& terrain, float w
     return volumes;
 }
 
-/**
- * @brief Mapuje fizyczne klawisze na akcje systemu terenu.
- */
-void configureTerrainBindings(Engine& engine) {
-    auto& map = engine.inputActions();
-    map.clearAll();
-    map.bindKey(kActionMoveForward, SDL_SCANCODE_W);
-    map.bindKey(kActionMoveBackward, SDL_SCANCODE_S);
-    map.bindKey(kActionMoveLeft, SDL_SCANCODE_A);
-    map.bindKey(kActionMoveRight, SDL_SCANCODE_D);
-    map.bindKey(kActionMoveUp, SDL_SCANCODE_SPACE);
-    map.bindKey(kActionMoveDown, SDL_SCANCODE_LCTRL);
-    map.bindKey(kActionSnapToGround, SDL_SCANCODE_G);
-    map.bindKey(kActionTogglePointer, SDL_SCANCODE_F1);
-    map.bindKey(kActionTerrainModePlasma, SDL_SCANCODE_1);
-    map.bindKey(kActionTerrainModeFault, SDL_SCANCODE_2);
-    map.bindKey(kActionTerrainModeDeposition, SDL_SCANCODE_3);
+// --- Niebo i woda ----------------------------------------------------------------------------------------
+
+std::shared_ptr<OceanRenderer> addOcean(Renderer* renderer) {
+    auto ocean = std::make_shared<OceanRenderer>();
+    OceanConfig cfg;
+    cfg.enabled = true;
+    cfg.waterLevel = kWaterLevel;
+    cfg.waveAmplitude = 1.4f;
+    cfg.waveSpeed = 1.0f;
+    cfg.waveFrequency = 10.0f;
+    cfg.foamThreshold = 2.95f;
+    ocean->configure(cfg, "bin/assets/shaders/ocean", "ocean");
+    ocean->setEnabled(true);
+    renderer->addFeature(ocean);
+    return ocean;
+}
+
+// Kopuła nieba z chmurami (zamiast niej można użyć SkyboxRenderer - zob. przykład 03).
+std::shared_ptr<SkydomeRenderer> addSkydome(Renderer* renderer) {
+    auto skydome = std::make_shared<SkydomeRenderer>();
+    SkydomeConfig cfg;
+    cfg.enabled = true;
+    cfg.domeScale = 1.5f;
+    cfg.timeOfDay = 10.0f;
+    cfg.cloudCoverage = 0.4f;
+    cfg.cloudSpeed0 = 0.3f;
+    cfg.cloudSpeed1 = 0.15f;
+    cfg.cloudScale0 = 1200.0f;
+    cfg.cloudScale1 = 800.0f;
+    cfg.sunElevation = 50.0f;
+    skydome->configure(cfg, "bin/assets/shaders/skydome", "skydome");
+    skydome->setEnabled(true);
+    renderer->addFeature(skydome);
+    return skydome;
+}
+
+// Pogoda: pora dnia (0.05 h/s, słońce od 6:00 do 18:00) i zachmurzenie wahające się między 0.15 a 0.7.
+struct Weather {
+    float timeOfDay = 10.0f;
+    float cloudCoverage = 0.4f;
+    float cloudDirection = 1.0f;   // +1 chmur przybywa, -1 ubywa
+
+    void update(SkydomeRenderer& skydome, float dt) {
+        timeOfDay += dt * 0.05f;
+        if (timeOfDay > 24.0f) timeOfDay -= 24.0f;
+        cloudCoverage += dt * 0.02f * cloudDirection;
+        if (cloudCoverage >= 0.7f) { cloudCoverage = 0.7f; cloudDirection = -1.0f; }
+        else if (cloudCoverage <= 0.15f) { cloudCoverage = 0.15f; cloudDirection = 1.0f; }
+
+        const float dayProgress = std::clamp((timeOfDay - 6.0f) / 12.0f, 0.0f, 1.0f);
+        auto cfg = skydome.getConfig();
+        cfg.timeOfDay = timeOfDay;
+        cfg.cloudCoverage = cloudCoverage;
+        cfg.sunElevation = std::sin(dayProgress * PI) * 65.0f;
+        cfg.sunAzimuth = 90.0f + dayProgress * 180.0f;
+        skydome.setConfig(cfg);
+    }
+};
+
+// --- Teren -----------------------------------------------------------------------------------------------
+
+// Teren wczytany z JSON (z warstwami tekstur) albo, gdy pliku brak, wygenerowany fraktalnie (plazma).
+std::shared_ptr<Terrain> loadOrGenerateTerrain(Engine& engine) {
+    auto terrain = std::make_shared<Terrain>();
+    const bool fromJson = terrain->loadFromJson("assets/teren/demo/terrain.json");
+    if (!fromJson) {
+        terrain->generatePlasma(256, 1.2f);   // rozmiar siatki 256x256, chropowatość 1.2
+        terrain->smoothEdges();               // brzegi do zera - teren płynnie schodzi do wody
+    }
+    terrain->buildMesh();
+    terrain->uploadTo(*engine.getMeshManager());
+    // Skala: jednostki świata na piksel mapy wysokości (XZ), mnożnik wysokości, LOD.
+    if (!fromJson) terrain->setScale(5.0f, 2.0f, 20.0f, 6);
+    LOG_INFO("Teren ({}): {}x{}, warstw {}, siatka {}", fromJson ? "JSON" : "plazma", terrain->sizeX, terrain->sizeZ,
+             terrain->layers.size(), terrain->meshName());
+    return terrain;
+}
+
+// Encja terenu. Shader "terrain" miesza wiele tekstur (trawa, skała, piasek) według masek kolejnych warstw
+// (texture splatting); mapa wysokości jako tekstura pozwala teselacji podnosić wierzchołki na GPU.
+TerrainComponent* createTerrainEntity(Engine& engine, Scene* scene, const std::shared_ptr<Terrain>& terrain) {
+    Renderer* renderer = engine.getRenderer();
+    Material material;
+    material.name = "terrain_scene_mat";
+    material.shaderProgram = "terrain";
+    material.cullMode = CullMode::Back;
+    material.depthWrite = true;
+    material.depthTest = true;
+    if (!terrain->layers.empty() && !terrain->layers[0].texturePath.empty()) {
+        material.textureHandle = renderer->loadTexture("terrain_scene_mat_tex", terrain->layers[0].texturePath);
+    }
+
+    Entity* entity = scene->createEntity("terrain_mesh_entity");
+    entity->transform().position = terrain->worldOffset();
+    auto* tc = entity->addComponent<TerrainComponent>(terrain);
+    tc->materialHandle = engine.getMaterialManager()->add(material);
+    tc->castShadows = true;
+    tc->layerBlendEnabled = true;
+    tc->layerCount = std::min<uint32_t>(static_cast<uint32_t>(terrain->layers.size()), kMaxTerrainLayers);
+    tc->layerWorldSize = terrain->worldSizeXZ();
+    for (uint32_t i = 0; i < tc->layerCount; ++i) {
+        tc->layerTextureHandles[i] = renderer->loadTexture("terrain_layer_06_tex_" + std::to_string(i), terrain->layers[i].texturePath);
+        if (i > 0 && !terrain->layers[i].maskPath.empty()) {
+            tc->layerMaskHandles[i] = renderer->loadTexture("terrain_layer_06_mask_" + std::to_string(i), terrain->layers[i].maskPath);
+        }
+    }
+    tc->heightmapTextureHandle = renderer->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(),
+                                                                 terrain->getHeightmapSize(), terrain->getHeightmapSize());
+    tc->heightmapEnabled = true;
+    return tc;
+}
+
+// Nowy teren wybranym algorytmem: przebudowa siatki, mapy wysokości na GPU i mgły w dolinach.
+void regenerateTerrain(Engine& engine, Terrain& terrain, TerrainComponent& tc, VolumetricFogRenderer& fog,
+                       TerrainGenerator generator) {
+    switch (generator) {
+        case TerrainGenerator::Plasma:
+            // Plazma (midpoint displacement) - fraktalny szum tworzący naturalne góry.
+            terrain.generatePlasma(256, 1.2f);
+            terrain.setScale(15.0f, 7.0f, 20.0f, 6);
+            break;
+        case TerrainGenerator::Fault:
+            // Uskoki (fault formation) - losowe linie przecinają teren i podnoszą jedną stronę:
+            // strome zbocza i doliny.
+            terrain.generateFault(256, 160, 100, 1, 5, 0.5f);
+            terrain.setScale(15.0f, 2.0f, 20.0f, 6);
+            break;
+        case TerrainGenerator::Deposition:
+            // Osypywanie (particle deposition) - cząstki ziemi spływają ze wzniesień i wygładzają szczyty.
+            terrain.generateDeposition(256, 100, 30, 10, 20, 0.8f);
+            terrain.setScale(15.0f, 7.0f, 20.0f, 6);
+            break;
+    }
+    terrain.smoothEdges();
+    terrain.buildMesh();
+    terrain.uploadTo(*engine.getMeshManager());
+    tc.heightmapTextureHandle = engine.getRenderer()->loadTextureFromMemory(
+        "terrain_heightmap", terrain.getHeightmapData(), terrain.getHeightmapSize(), terrain.getHeightmapSize());
+    tc.layerWorldSize = terrain.worldSizeXZ();
+    tc.getOwner()->transform().position = terrain.worldOffset();
+    fog.setLocalVolumes(findValleyFogVolumes(terrain, kWaterLevel));
+    LOG_INFO("Nowy teren: {}", generatorName(generator));
+}
+
+// Kamera nad powierzchnią terenu (wysokość interpolowana z siatki + 3 jednostki "oczu").
+void snapCameraToGround(Engine& engine, const Terrain& terrain) {
+    CameraComponent* camera = engine.getSceneManager()->activeScene()->activeCamera();
+    if (!camera) return;
+    Vec3& p = camera->getOwner()->transform().position;
+    p.y = terrain.getHeight(p.x, p.z) + 3.0f;
+}
+
+// Kamera startuje nad środkiem mapy, 40 jednostek nad terenem (stała wysokość mogła wypaść wewnątrz góry).
+void setupCamera(Engine& engine, Scene* scene, const Terrain& terrain) {
+    auto* camera = scene->createEntity("main_camera")->addComponent<CameraComponent>();
+    camera->getOwner()->transform().position = {0.0f, std::max(120.0f, terrain.getHeight(0.0f, 0.0f) + 40.0f), 0.0f};
+    // Patrzymy przed siebie i lekko w dół (na krajobraz, nie pionowo pod nogi).
+    const Vec3 start = camera->getOwner()->transform().position;
+    camera->target = {start.x + 100.0f, start.y - 25.0f, start.z + 100.0f};
+    camera->fieldOfViewDegrees = 60.0f;
+    camera->nearPlane = 0.5f;
+    camera->farPlane = 18000.0f;
+    scene->setActiveCamera(camera);
+    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
+}
+
+// Klawisze teselacji: T - włącz/wyłącz, +/- - poziom (0..32, krok 2).
+void handleTessellationKeys(Engine& e) {
+    if (e.keyPressed(SDL_SCANCODE_T)) {
+        const bool enabled = !e.isTessellationEnabled();
+        e.setTessellationEnabled(enabled);
+        LOG_INFO("Teselacja terenu: {}", enabled ? "WŁĄCZONA" : "WYŁĄCZONA");
+    }
+    float level = e.getTessellationLevel();
+    if (e.keyPressed(SDL_SCANCODE_EQUALS)) level = std::min(level + 2.0f, 32.0f);
+    if (e.keyPressed(SDL_SCANCODE_MINUS)) level = std::max(level - 2.0f, 0.0f);
+    if (level != e.getTessellationLevel()) {
+        e.setTessellationLevel(level);
+        LOG_INFO("Poziom teselacji: {}", level);
+    }
+}
+
+void drawHud(Engine& e, const Terrain& terrain, TerrainGenerator generator, bool showDebug) {
+    const std::array<float, 4> lightBlue{0.7f, 0.7f, 1.0f, 1.0f};
+    e.setTextLabel("FPS: " + std::to_string(static_cast<int>(e.getCurrentFPS())), "times", 10, 20, 0.7f, {1, 1, 0.3f, 1});
+    e.setTextLabel("1 - plazma, 2 - uskoki, 3 - osypywanie | B - debug | T - teselacja | +/- - poziom", "times", 10, 50,
+                   0.45f, {0.5f, 0.9f, 0.5f, 1.0f});
+
+    if (showDebug) {
+        // Liczba widocznych węzłów na każdym poziomie LOD.
+        std::array<int, 6> lodCounts{};
+        for (const auto* node : terrain.getVisibleNodes()) lodCounts[std::clamp(node->lodLevel, 0, 5)]++;
+        std::ostringstream info;
+        info << "[" << generatorName(generator) << "]  węzłów: " << terrain.getTotalLeafCount()
+             << "  widocznych: " << terrain.visibleCount << " (";
+        for (int lod = 0; lod < 6; ++lod) info << (lod ? " " : "") << "LOD" << lod << ":" << lodCounts[lod];
+        info << ") | teselacja: ";
+        if (!e.isTessellationSupported()) {
+            info << "BRAK";
+        } else {
+            info << (e.isTessellationEnabled() ? "WŁ" : "WYŁ") << " (poziom " << std::fixed << std::setprecision(1)
+                 << e.getTessellationLevel() << ")";
+        }
+        e.setTextLabel(info.str(), "times", 10, 72, 0.45f, lightBlue);
+    }
+
+    CameraComponent* camera = e.getSceneManager()->activeScene()->activeCamera();
+    if (!camera) return;
+    const Vec3 p = camera->getOwner()->transform().position;
+    std::ostringstream pos;
+    pos << "pos: " << std::fixed << std::setprecision(0) << p.x << " " << p.y << " " << p.z << "  h: "
+        << std::setprecision(1) << terrain.getHeight(p.x, p.z);
+    e.setTextLabel(pos.str(), "times", 10, 95, 0.5f, lightBlue);
 }
 
 } // namespace
@@ -104,353 +329,75 @@ void configureTerrainBindings(Engine& engine) {
 int main() {
     Engine engine;
     if (!engine.initialize("engine3d: terrain LOD", 1280, 800)) return 1;
+    Scene* scene = engine.getSceneManager()->activeScene();
+    if (!scene) return 1;
 
-    configureTerrainBindings(engine);
+    configureBindings(engine);
     engine.setWireframeEnabled(false);
     engine.setTessellationEnabled(true);
     engine.setTessellationLevel(2.0f);
+    engine.loadFont("times", "assets/fonts/times.ttf", 28);
+    engine.getRenderer()->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-    auto* scene = engine.getSceneManager()->activeScene();
-    if (!scene) return 1;
-
-    scene->addSystem(std::make_unique<TerrainSystem>(*engine.getMeshManager(), *engine.getMaterialManager(), *engine.getMaterialSystem()));
+    // Systemy terenu: siatki węzłów LOD i przyklejanie obiektów do powierzchni.
+    scene->addSystem(std::make_unique<TerrainSystem>(*engine.getMeshManager(), *engine.getMaterialManager(),
+                                                     *engine.getMaterialSystem()));
     scene->addSystem(std::make_unique<TerrainPlacementSystem>());
 
-    auto* renderer = engine.getRenderer();
-    renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    engine.loadFont("times", "assets/fonts/times.ttf", 28);
-    auto* mats = engine.getMaterialManager();
+    auto ocean = addOcean(engine.getRenderer());
+    auto skydome = addSkydome(engine.getRenderer());
+    const std::shared_ptr<Terrain> terrain = loadOrGenerateTerrain(engine);
+    TerrainComponent* terrainComponent = createTerrainEntity(engine, scene, terrain);
 
-    // KROK 1: DODANIE OCEANU
-    auto ocean = std::make_shared<OceanRenderer>();
-    OceanConfig oceanCfg;
-    oceanCfg.enabled = true;
-    oceanCfg.waterLevel = 60.0f;
-    oceanCfg.waveAmplitude = 1.4f;
-    oceanCfg.waveSpeed = 1.0f;
-    oceanCfg.waveFrequency = 10.0f;
-    oceanCfg.foamThreshold = 2.95f;
-    ocean->configure(oceanCfg, "bin/assets/shaders/ocean", "ocean");
-    ocean->setEnabled(true);
-    renderer->addFeature(ocean);
-
-    // KROK 2: DODANIE KOPUŁY NIEBA (Skydome)
-    auto skydome = std::make_shared<SkydomeRenderer>();
-    SkydomeConfig skydomeCfg;
-    skydomeCfg.enabled = true;
-    skydomeCfg.domeScale = 1.5f;
-    skydomeCfg.timeOfDay = 10.0f;
-    skydomeCfg.cloudCoverage = 0.4f;
-    skydomeCfg.cloudSpeed0 = 0.3f;
-    skydomeCfg.cloudSpeed1 = 0.15f;
-    skydomeCfg.cloudScale0 = 1200.0f;
-    skydomeCfg.cloudScale1 = 800.0f;
-    skydomeCfg.sunElevation = 50.0f;
-    skydome->configure(skydomeCfg, "bin/assets/shaders/skydome", "skydome");
-    skydome->setEnabled(true);
-    renderer->addFeature(skydome);
-
-    //alternatywnie  skybox
-     // KROK 1: ŁADOWANIE SKYBOXA (Nieba otaczającego scenę)
-    // Ładujemy 3 tekstury w formacie DDS (box_12 to bok 1 i 2, box_34 to 3 i 4, box_5 to góra)
-    // const std::string skyboxDir = "assets/skybox/noc";
-    // const auto skyboxFbHandle = renderer->loadTexture("skybox_fb", skyboxDir + "/box_12.dds");
-    // const auto skyboxLrHandle = renderer->loadTexture("skybox_lr", skyboxDir + "/box_34.dds");
-    // const auto skyboxTopHandle = renderer->loadTexture("skybox_top", skyboxDir + "/box_5.dds");
-
-    // auto skybox = std::make_shared<SkyboxRenderer>();
-    // SkyboxConfig skyboxCfg;
-    // skyboxCfg.enabled = true;
-    // skyboxCfg.directory = skyboxDir;
-    // skyboxCfg.size = 3500;
-    // skyboxCfg.verticalOffset = 100;
-    // skybox->configure(skyboxCfg, "bin/assets/shaders/skybox");
-    // skybox->setTextureHandles(skyboxFbHandle, skyboxLrHandle, skyboxTopHandle);
-    // skybox->setEnabled(true);
-    // skybox->setExposure(0.5f);
-    // renderer->addFeature(skybox); // Dodanie skyboxa do potoku renderowania
-
-    // KROK 3: ŁADOWANIE LUB GENEROWANIE DANYCH TERENU
-    // Klasa Terrain reprezentuje siatkę wysokościową (Heightfield).
-    // Może zostać wczytana z konfiguracji JSON (wraz z warstwami tekstur) lub
-    // wygenerowana proceduralnie bezpośrednio w pamięci RAM.
-    auto terrain = std::make_shared<Terrain>();
-    bool useJson = terrain->loadFromJson("assets/teren/demo/terrain.json");
-    
-    if (useJson) {
-        // Parametry: rozmiar komórki siatki (10.0), maksymalna wysokość (2.0), podział LOD (20.0)
-        // terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
-        terrain->buildMesh();
-        terrain->uploadTo(*engine.getMeshManager());
-        LOG_INFO("Terrain (JSON): {}x{} layers={} mesh={}", terrain->sizeX, terrain->sizeZ, terrain->layers.size(), terrain->meshName());
-    } else {
-        // Proceduralny algorytm fraktalny Plasma (Midpoint Displacement).
-        // Parametry: rozmiar siatki (256x256), współczynnik chropowatości (1.2).
-        terrain->generatePlasma(256, 1.2f);
-        terrain->smoothEdges(); // Wygładzenie krawędzi do poziomu 0, aby teren płynnie przechodził w wodę
-        terrain->buildMesh();
-        terrain->uploadTo(*engine.getMeshManager());
-        terrain->setScale(5.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
-        LOG_INFO("Terrain (plasma): {}x{} layers={} mesh={}", terrain->sizeX, terrain->sizeZ, terrain->layers.size(), terrain->meshName());
-    }
-
-    // KROK 4: REJESTROWANIE SPECJALNEGO MATERIAŁU TERENU
-    // Potok terenu (Shader "terrain") różni się od domyślnego. Wspiera tzw. Texture Splatting.
-    // Zamiast jednej tekstury, shader miesza ze sobą wiele tekstur (np. trawa, skała, piasek)
-    // na podstawie masek wagowych (Splat Maps) przesłanych jako kolejne warstwy.
-    Material terrainMaterial;
-    terrainMaterial.name = "terrain_scene_mat";
-    terrainMaterial.shaderProgram = "terrain";
-    terrainMaterial.cullMode = CullMode::Back;
-    terrainMaterial.depthWrite = true;
-    terrainMaterial.depthTest = true;
-    if (!terrain->layers.empty() && !terrain->layers[0].texturePath.empty()) {
-        TextureHandle texture = renderer->loadTexture("terrain_scene_mat_tex", terrain->layers[0].texturePath);
-        terrainMaterial.textureHandle = texture;
-    }
-    const MaterialHandle terrainMaterialHandle = mats->add(terrainMaterial);
-
-    Entity* terrainEntity = scene->createEntity("terrain_mesh_entity");
-    terrainEntity->transform().position = terrain->worldOffset();
-    auto* terrainComp = terrainEntity->addComponent<TerrainComponent>(terrain);
-    terrainComp->materialHandle = terrainMaterialHandle;
-    terrainComp->castShadows = true;
-    
-    // Konfiguracja mieszania warstw (Texture Splatting) na komponencie siatki
-    terrainComp->layerBlendEnabled = true;
-    terrainComp->layerCount = std::min<uint32_t>(
-        static_cast<uint32_t>(terrain->layers.size()), kMaxTerrainLayers);
-    terrainComp->layerWorldSize = terrain->worldSizeXZ();
-    
-    // Ładowanie tekstur warstwowych i opcjonalnych masek przejść
-    for (uint32_t i = 0; i < terrainComp->layerCount; ++i) {
-        const std::string texName = "terrain_layer_06_tex_" + std::to_string(i);
-        terrainComp->layerTextureHandles[i] = renderer->loadTexture(texName, terrain->layers[i].texturePath);
-        if (i > 0 && !terrain->layers[i].maskPath.empty()) {
-            const std::string maskName = "terrain_layer_06_mask_" + std::to_string(i);
-            terrainComp->layerMaskHandles[i] = renderer->loadTexture(maskName, terrain->layers[i].maskPath);
-        }
-    }
-    
-    // Ładowanie mapy wysokości bezpośrednio z pamięci na GPU dla potrzeb teselacji
-    terrainComp->heightmapTextureHandle = renderer->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
-    terrainComp->heightmapEnabled = true;
-
-    // Lokalna mgła osiada w trzech najniższych, oddalonych od siebie dolinach.
     auto valleyFog = std::make_shared<VolumetricFogRenderer>();
     valleyFog->configure("bin/assets/shaders/fog");
     valleyFog->setFogRadius(2200.0f);
-    valleyFog->setLocalVolumes(findValleyFogVolumes(*terrain, oceanCfg.waterLevel));
+    valleyFog->setLocalVolumes(findValleyFogVolumes(*terrain, kWaterLevel));
     valleyFog->setEnabled(true);
-    renderer->addFeature(valleyFog);
+    engine.getRenderer()->addFeature(valleyFog);
 
-    // Kamera startująca nad terenem
-    auto* camera = scene->createEntity("main_camera")->addComponent<CameraComponent>();
-    camera->getOwner()->transform().position = {0.0f, 120.0f, 0.0f};
-    camera->target = {1.0f, 0.0f, 0.0f};
-    camera->fieldOfViewDegrees = 60.0f;
-    camera->nearPlane = 0.5f;
-    camera->farPlane = 18000.0f;
-    scene->setActiveCamera(camera);
-    engine.getCameraController()->setPositionAndTarget(camera->getOwner()->transform().position, camera->target);
+    setupCamera(engine, scene, *terrain);
     engine.enableShaderHotReload(true);
 
     bool cursorGrabbed = true;
-    int generatorMode = 0; // 0 = Plasma, 1 = Fault Formation, 2 = Particle Deposition
-    static const char* modeNames[] = {"Plasma", "Fault", "Deposition"};
+    bool showDebug = true;
+    TerrainGenerator generator = TerrainGenerator::Plasma;
+    Weather weather;
+    float animTime = 0.0f;
 
-    // PĘTLA UPDATE
     engine.onUpdate = [&](float dt, Engine& e) {
-        static float animTime = 0.0f;
+        if (e.keyPressed(SDL_SCANCODE_ESCAPE)) e.requestQuit();
+
         animTime += dt;
         skydome->setTime(animTime);
         ocean->setTime(animTime);
+        weather.update(*skydome, dt);
 
-        // Zmiana zachmurzenia i czasu dobowego (dynamiczne chmury)
-        static float timeOfDay = 10.0f;
-        static float cloudCov = 0.4f;
-        static float cloudDir = 1.0f;
-        const float dayNightSpeed = 0.05f; // prędkość cyklu dobowego
-        const float weatherSpeed = 0.02f;  // prędkość zmian zachmurzenia
+        FlyCamera::update(e, dt, 150.0f);
+        if (e.actionDown(kActionSnapToGround)) snapCameraToGround(e, *terrain);
 
-        timeOfDay += dt * dayNightSpeed;
-        if (timeOfDay > 24.0f) timeOfDay -= 24.0f;
-
-        cloudCov += dt * weatherSpeed * cloudDir;
-        if (cloudCov >= 0.7f) { cloudCov = 0.7f; cloudDir = -1.0f; }
-        else if (cloudCov <= 0.15f) { cloudCov = 0.15f; cloudDir = 1.0f; }
-
-        float dayProgress = (timeOfDay - 6.0f) / 12.0f;
-        dayProgress = std::max(0.0f, std::min(1.0f, dayProgress));
-        float sunEl = std::sin(dayProgress * PI) * 65.0f;
-        float sunAz = 90.0f + dayProgress * 180.0f;
-
-        auto cfg = skydome->getConfig();
-        cfg.timeOfDay = timeOfDay;
-        cfg.cloudCoverage = cloudCov;
-        cfg.sunElevation = sunEl;
-        cfg.sunAzimuth = sunAz;
-        skydome->setConfig(cfg);
-        
-        auto* cc = e.getCameraController();
-        auto* activeScene = e.getSceneManager()->activeScene();
-        auto* cam = activeScene ? activeScene->activeCamera() : nullptr;
-        const auto& snap = e.input();
-        
-        static bool escWasDown = false;
-        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
-        if (escDown && !escWasDown) {
-            SDL_Event event{};
-            event.type = SDL_EVENT_QUIT;
-            SDL_PushEvent(&event);
+        if (e.keyPressed(SDL_SCANCODE_B)) {
+            showDebug = !showDebug;
+            LOG_INFO("Napisy debug terenu: {}", showDebug);
         }
-        escWasDown = escDown;
+        handleTessellationKeys(e);
 
-        if (cc && cam) {
-            cc->moveSpeed = 150.0f;
-            float ts = cc->mouseSensitivity;
-            cc->rotateYaw(-static_cast<float>(snap.mouseDeltaX) * ts);
-            cc->rotatePitch(-static_cast<float>(snap.mouseDeltaY) * ts);
-            float vel = cc->moveSpeed * dt;
-            if (e.actionDown(kActionMoveForward)) cc->moveForward(vel);
-            if (e.actionDown(kActionMoveBackward)) cc->moveForward(-vel);
-            if (e.actionDown(kActionMoveLeft)) cc->moveRight(-vel);
-            if (e.actionDown(kActionMoveRight)) cc->moveRight(vel);
-            if (e.actionDown(kActionMoveUp)) cc->moveUp(vel);
-            if (e.actionDown(kActionMoveDown)) cc->moveUp(-vel);
-            cc->update(dt, *cam);
-            
-            // Przyklejenie kamery do powierzchni terenu po kliknięciu klawisza 'G'.
-            // Funkcja terrain->getHeight(x, z) interpoluje biliniowo wysokość siatki
-            // pod współrzędnymi świata kamery i dodaje offset oczu gracza (+3.0f).
-            if (e.actionDown(kActionSnapToGround))
-                cam->getOwner()->transform().position.y = terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
+        // Klawisze 1/2/3: nowy teren wybranym algorytmem, kamera ląduje na jego powierzchni.
+        const bool regenerate = e.actionPressed(kActionTerrainModePlasma) || e.actionPressed(kActionTerrainModeFault) ||
+                                e.actionPressed(kActionTerrainModeDeposition);
+        if (e.actionPressed(kActionTerrainModePlasma)) generator = TerrainGenerator::Plasma;
+        if (e.actionPressed(kActionTerrainModeFault)) generator = TerrainGenerator::Fault;
+        if (e.actionPressed(kActionTerrainModeDeposition)) generator = TerrainGenerator::Deposition;
+        if (regenerate) {
+            regenerateTerrain(e, *terrain, *terrainComponent, *valleyFog, generator);
+            snapCameraToGround(e, *terrain);
         }
 
-        // KROK 5: Przełączanie tekstu debugującego za pomocą klawisza 'B'
-        static bool bWasDown = false;
-        static bool showDebugText = true;
-        const bool bDown = snap.keys[SDL_SCANCODE_B];
-        if (bDown && !bWasDown) {
-            showDebugText = !showDebugText;
-            LOG_INFO("Toggled terrain debug text: {}", showDebugText);
-        }
-        bWasDown = bDown;
-
-        // KROK 5b: Przełączanie teselacji za pomocą klawisza 'T'
-        static bool tWasDown = false;
-        const bool tDown = snap.keys[SDL_SCANCODE_T];
-        if (tDown && !tWasDown) {
-            bool current = engine.isTessellationEnabled();
-            engine.setTessellationEnabled(!current);
-            LOG_INFO("Toggled terrain tessellation: {}", !current ? "ENABLED" : "DISABLED");
-        }
-        tWasDown = tDown;
-
-        // KROK 5c: Zmiana poziomu teselacji += / -= 
-        static bool eqWasDown = false;
-        const bool eqDown = snap.keys[SDL_SCANCODE_EQUALS];
-        if (eqDown && !eqWasDown) {
-            float level = engine.getTessellationLevel();
-            level = std::min(level + 2.0f, 32.0f);
-            engine.setTessellationLevel(level);
-            LOG_INFO("Tessellation level: {}", level);
-        }
-        eqWasDown = eqDown;
-
-        static bool minusWasDown = false;
-        const bool minusDown = snap.keys[SDL_SCANCODE_MINUS];
-        if (minusDown && !minusWasDown) {
-            float level = engine.getTessellationLevel();
-            level = std::max(level - 2.0f, 0.0f);
-            engine.setTessellationLevel(level);
-            LOG_INFO("Tessellation level: {}", level);
-        }
-        minusWasDown = minusDown;
-
-        // KROK 6: PROCEDURALNE GENEROWANIE NOWEGO TERENU (Klawisze 1, 2, 3)
-        bool regen = false;
-        if (e.actionPressed(kActionTerrainModePlasma)) { generatorMode = 0; regen = true; }
-        if (e.actionPressed(kActionTerrainModeFault)) { generatorMode = 1; regen = true; }
-        if (e.actionPressed(kActionTerrainModeDeposition)) { generatorMode = 2; regen = true; }
-        
-        if (regen) {
-            if (generatorMode == 0) {
-                // Algorytm 1: Osocze (Plasma/Midpoint displacement) – fraktalny szum tworzący naturalne góry.
-                terrain->generatePlasma(256, 1.2f);
-                terrain->setScale(15.0f, 7.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
-            }
-            else if (generatorMode == 1) {
-                // Algorytm 2: Uskoki tektoniczne (Fault Formation) – przecina teren losowymi liniami 
-                // i podnosi jedną ze stron uskoku, tworząc strome zbocza i doliny.
-                terrain->generateFault(256, 160, 100, 1, 5, 0.5f);
-                terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
-            }
-            else {
-                // Algorytm 3: Erozja/Depozycja (Particle Deposition) – symuluje spływanie cząsteczek
-                // piasku/ziemi ze wzniesień, co naturalnie wygładza strome szczyty.
-                terrain->generateDeposition(256, 100, 30, 10, 20, 0.8f);
-                terrain->setScale(15.0f, 7.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
-            }
-            
-            terrain->smoothEdges();
-            terrain->buildMesh();
-            terrain->uploadTo(*engine.getMeshManager());
-            terrainComp->heightmapTextureHandle = e.getRenderer()->loadTextureFromMemory("terrain_heightmap", terrain->getHeightmapData(), terrain->getHeightmapSize(), terrain->getHeightmapSize());
-            terrainComp->layerWorldSize = terrain->worldSizeXZ();
-            terrainEntity->transform().position = terrain->worldOffset();
-            valleyFog->setLocalVolumes(findValleyFogVolumes(*terrain, oceanCfg.waterLevel));
-            if (cam) {
-                cam->getOwner()->transform().position.y = terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z) + 3.0f;
-            }
-            LOG_INFO("Regenerated: {}", modeNames[generatorMode]);
-        }
- 
         if (e.actionPressed(kActionTogglePointer)) {
             cursorGrabbed = !cursorGrabbed;
             e.getPlatform()->grabPointer(cursorGrabbed);
         }
-
-        // HUD i wyświetlanie danych diagnostycznych terenu
-        std::ostringstream oss;
-        oss << "FPS: " << static_cast<int>(e.getCurrentFPS());
-        e.setTextLabel(oss.str(), "times", 10, 20, 0.7f, {1, 1, 0.3f, 1});
-        
-        std::ostringstream controls;
-        controls << "1=Plasma 2=Fault 3=Deposition | B=Debug | T=Tess | +/-=Level";
-        e.setTextLabel(controls.str(), "times", 10, 50, 0.45f, {0.5f, 0.9f, 0.5f, 1.0f});
-        
-        if (showDebugText) {
-            // Obliczamy liczbę węzłów na każdym poziomie LOD
-            std::array<int, 6> lodCounts{};
-            for (const auto* node : terrain->getVisibleNodes()) {
-                int lod = std::max(0, std::min(5, node->lodLevel));
-                lodCounts[lod]++;
-            }
-            
-            std::ostringstream mode;
-            mode << "[" << modeNames[generatorMode] << "]  Total Boxes: " << terrain->getTotalLeafCount()
-                 << "  Visible: " << terrain->visibleCount
-                 << " (LOD0:" << lodCounts[0] << " LOD1:" << lodCounts[1]
-                 << " LOD2:" << lodCounts[2] << " LOD3:" << lodCounts[3]
-                 << " LOD4:" << lodCounts[4] << " LOD5:" << lodCounts[5] << ")";
-            mode << " | Tessellation: ";
-            if (!engine.isTessellationSupported()) {
-                mode << "UNSUPPORTED";
-            } else {
-                mode << (engine.isTessellationEnabled() ? "ACTIVE" : "DISABLED")
-                     << " (level=" << std::fixed << std::setprecision(1) << engine.getTessellationLevel() << ")";
-            }
-            e.setTextLabel(mode.str(), "times", 10, 72, 0.45f, {0.7f, 0.7f, 1.0f, 1.0f});
-        }
-        
-        if (cam) {
-            std::ostringstream pos;
-            pos << "pos: " << std::fixed << std::setprecision(0)
-                << cam->getOwner()->transform().position.x << " " << cam->getOwner()->transform().position.y << " " << cam->getOwner()->transform().position.z
-                << "  h: " << std::setprecision(1) << terrain->getHeight(cam->getOwner()->transform().position.x, cam->getOwner()->transform().position.z);
-            e.setTextLabel(pos.str(), "times", 10, 95, 0.5f, {0.7f, 0.7f, 1.0f, 1.0f});
-        }
+        drawHud(e, *terrain, generator, showDebug);
     };
 
     engine.run();

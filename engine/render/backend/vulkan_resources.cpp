@@ -32,13 +32,13 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanContext> context,
 
     VkResult res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
     if (res != VK_SUCCESS) {
-        LOG_WARN("[VulkanBuffer] First attempt to create buffer failed, retrying without MAPPED flag");
+        LOG_WARN("[VulkanBuffer] nie udało się utworzyć bufora - ponowna próba bez flagi MAPPED");
         allocInfo.flags = 0;
         res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
     }
     if (res != VK_SUCCESS) {
-        LOG_ERROR("[VulkanBuffer] Failed to create VMA buffer of size {}", size);
-        throw std::runtime_error("failed to create VMA buffer");
+        LOG_ERROR("[VulkanBuffer] nie udało się utworzyć bufora VMA o rozmiarze {} B", size);
+        throw std::runtime_error("nie udało się utworzyć bufora VMA");
     }
 }
 
@@ -53,7 +53,7 @@ void* VulkanBuffer::map() {
     void* data;
     VkResult res = vmaMapMemory(context_->allocator(), allocation_, &data);
     if (res != VK_SUCCESS) {
-        LOG_ERROR("[VulkanBuffer] Failed to map memory");
+        LOG_ERROR("[VulkanBuffer] nie udało się zmapować pamięci");
         return nullptr;
     }
     return data;
@@ -69,7 +69,7 @@ void VulkanBuffer::upload(const void* data, VkDeviceSize size) {
         return;
     }
     if (size > size_) {
-        LOG_ERROR("[VulkanBuffer] Upload size ({}) exceeds buffer size ({})", size, size_);
+        LOG_ERROR("[VulkanBuffer] dane do wysłania ({} B) są większe niż bufor ({} B)", size, size_);
         return;
     }
     VmaAllocationInfo info;
@@ -84,12 +84,5 @@ void VulkanBuffer::upload(const void* data, VkDeviceSize size) {
         }
     }
 }
-
-VulkanImage::VulkanImage(std::shared_ptr<VulkanContext> context,
-            uint32_t width, uint32_t height,
-            VkFormat format, VkImageUsageFlags usage) : context_(context) {
-    LOG_WARN("[VulkanImage] Constructor not fully implemented yet");
-}
-VulkanImage::~VulkanImage() {}
 
 } // namespace engine3d

@@ -73,6 +73,10 @@ private:
     RecyclingArray<Particle>* particles_ = nullptr;
     int lastActiveCount_ = -1;
     std::vector<int> activeIdx_;   // indeksy żywych cząsteczek (fillInstanceDataParallel)
+    void stepParticle(Particle* par, float time, const Vec3& grav) const;
+    void stepRange(size_t begin, size_t end, float time);
+    void removeExpired();
+    void spawn(float time);
 };
 
 } // namespace engine3d::particles

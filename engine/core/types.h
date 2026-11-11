@@ -80,6 +80,29 @@ struct Vertex {
 };
 
 /**
+ * @brief Dane skórowania wierzchołka (animacja szkieletowa) - drugi bufor wierzchołków (binding 1).
+ *
+ * Każdy wierzchołek podąża za maks. 4 kośćmi: indeksy kości i ich wagi (suma wag = 1).
+ * Shadery animowanych siatek czytają je z lokacji 4 (indeksy) i 5 (wagi).
+ */
+struct SkinVertex {
+    std::array<uint32_t, 4> joints;
+    std::array<float, 4> weights;
+
+    [[nodiscard]] static VkVertexInputBindingDescription bindingDescription() {
+        return {1, sizeof(SkinVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+    }
+
+    [[nodiscard]] static std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions() {
+        return {{
+            {4, 1, VK_FORMAT_R32G32B32A32_UINT, offsetof(SkinVertex, joints)},
+            {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(SkinVertex, weights)},
+        }};
+    }
+};
+static_assert(sizeof(SkinVertex) == 32, "układ jak w buforze kości (4 x uint + 4 x float)");
+
+/**
  * @brief Kompletne dane siatki geometrycznej (Mesh) przechowywane w pamięci CPU przed wysłaniem na GPU.
  */
 struct MeshData {

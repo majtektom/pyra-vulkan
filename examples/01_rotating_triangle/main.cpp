@@ -73,31 +73,18 @@ int main() {
     camera->fieldOfViewDegrees = 45.0f;
     
     // Ustawiamy tę kamerę jako aktywną kamerę sceny.
+    // Kamera patrzy na środek układu współrzędnych, oś Y w górę.
+    camera->target = {0.0f, 0.0f, 0.0f};
+    camera->up = {0.0f, 1.0f, 0.0f};
     scene->setActiveCamera(camera);
 
     // 7. Definiowanie zachowania w każdej klatce (Update Loop).
     // Przekazujemy lambdę, która wywoła się w każdym cyklu głównej pętli.
     engine.onUpdate = [](float dt, Engine& e) {
-        const auto& snap = e.input();
-        
-        // Obsługa klawisza Escape w celu zamknięcia aplikacji.
-        static bool escWasDown = false;
-        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
-        if (escDown && !escWasDown) {
-            SDL_Event event{};
-            event.type = SDL_EVENT_QUIT;
-            SDL_PushEvent(&event);
-        }
-        escWasDown = escDown;
+        // Escape zamyka aplikację (pętla silnika kończy się po tej klatce).
+        if (e.keyPressed(SDL_SCANCODE_ESCAPE)) e.requestQuit();
 
-        // Pobieramy aktywną kamerę i upewniamy się, że patrzy na środek układu współrzędnych {0,0,0}.
         auto* activeScene = e.getSceneManager()->activeScene();
-        auto* cam = activeScene ? activeScene->activeCamera() : nullptr;
-        if (cam) {
-            cam->getOwner()->transform().position = {0.0f, 0.0f, 2.0f};
-            cam->target = {0.0f, 0.0f, 0.0f};
-            cam->up = {0.0f, 1.0f, 0.0f};
-        }
         
         // Obracamy trójkąt wokół osi Z.
         // Wykorzystujemy Delta Time (dt), aby prędkość obrotu była stała (0.5 radiana na sekundę)

@@ -28,7 +28,7 @@ struct RasterizedGlyph {
 FontAtlasData FontAtlasLoader::load(const FontAsset& fontAsset, const std::vector<std::uint32_t>& glyphCodepoints) {
     TTF_Font* font = TTF_OpenFont(fontAsset.path.c_str(), static_cast<float>(fontAsset.pixelHeight));
     if (!font) {
-        throw std::runtime_error("failed to open TTF font: " + fontAsset.path + " — " + SDL_GetError());
+        throw std::runtime_error("nie można otworzyć czcionki TTF: " + fontAsset.path + " — " + SDL_GetError());
     }
 
     const auto cleanup = [&]() { TTF_CloseFont(font); };

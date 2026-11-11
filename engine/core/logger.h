@@ -64,7 +64,7 @@ public:
     void setLevel(LogLevel level);
     void setBackend(std::unique_ptr<LogBackend> backend);
     
-    // Convenient way to set common backends
+    // Wygodne ustawienie typowych wyjść logu
     void useConsoleBackend();
     void useFileBackend(const std::string& filename);
     void useBothBackends(const std::string& filename);
@@ -80,7 +80,7 @@ public:
                     backend_->log(level, message);
                 }
             } catch (const std::format_error& e) {
-                // Fallback if formatting fails
+                // Gdy formatowanie się nie uda - zapisujemy surowy tekst
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (backend_) {
                     backend_->log(LogLevel::Error, std::string("Log format error: ") + e.what());

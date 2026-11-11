@@ -1,20 +1,6 @@
 #include "shared/globals.hlsl"   // UBO klatki, tablica tekstur bindless i jej sampler (wspólne dla wszystkich shaderów)
 
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    column_major float4x4 model;
-    float4 baseColorFactor;
-    float metallicFactor;
-    float roughnessFactor;
-    float bumpIntensity;
-    uint baseColorTextureSet;
-    uint physicalDescriptorTextureSet;
-    uint normalTextureSet;
-    uint occlusionTextureSet;
-    uint emissiveTextureSet;
-    float alphaMaskCutoff;
-};
+#include "shared/material_push.hlsl"   // blok push constants (układ jak w push_constants.h)
 
 
 struct VertexInput

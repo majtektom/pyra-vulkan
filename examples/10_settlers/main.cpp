@@ -17,7 +17,8 @@
  *     world_update.cpp        -   krok symulacji: frakcje, przydział prac, budynki, efekty, wizualizacja
  *     world_settlers.cpp      -   zachowanie osadników (automat stanów: budowa, praca, transport)
  *     world_combat.cpp        -   walka: żołnierze, strzały, obrażenia, rozkazy wojskowe
- *     world_ai.cpp            -   komputerowy przeciwnik
+ *     ai_planner.cpp/.h       -   komputerowy przeciwnik (klasa AiPlanner)
+ *     transport.cpp/.h        -   przewóz towarów: trasy, zlecenia, tragarze (klasa Transport)
  *     world_roads.cpp         -   drogi, flagi, tragarze, magazyny (transport towarów)
  *   settlers_app.h            - SETTLERSAPP: silnik, sterowanie, interfejs, dźwięk (opis w nagłówku)
  *     app_*.cpp               -   poszczególne części aplikacji

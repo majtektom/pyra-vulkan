@@ -81,6 +81,36 @@ vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
 
 ---
 
+## Tworzenie potoków graficznych (`render/pipeline_builder.h`)
+
+Potok graficzny (`VkPipeline`) to "zamrożony" komplet ustawień rysowania: shadery, układ wierzchołków, topologia,
+rasteryzacja, głębokość, mieszanie kolorów i formaty celów. W czystym Vulkanie to ~120 linii struktur na potok.
+Silnik ma do tego budowniczego, który podaje tylko różnice od ustawień domyślnych:
+
+```cpp
+const vk::ShaderModule vert(device, dir + "skybox.vert.spv");   // RAII: moduł zwalniany na końcu funkcji
+const vk::ShaderModule frag(device, dir + "skybox.frag.spv");
+
+layout_ = vk::createPipelineLayout(device, {descriptorSetLayout}, sizeof(PushConstants),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, "skybox");
+pipeline_ = vk::GraphicsPipelineBuilder()
+    .shaders(vert, frag)                                   // vertexMain / fragmentMain
+    .vertexInput(Vertex::bindingDescription(),
+                 vk::filterVertexAttributes(vert.code(), Vertex::attributeDescriptions()))
+    .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
+    .cull(VK_CULL_MODE_NONE)                               // jesteśmy wewnątrz kostki nieba
+    .depth(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)       // test bez zapisu - niebo zostaje w tle
+    .colorFormat(colorFormat)                              // kolejne wywołanie = kolejny cel (G-Buffer ma 4)
+    .depthFormat(depthFormat)
+    .build(device, layout_, "skybox");
+```
+
+Ustawienia domyślne: trójkąty, wypełnianie, cull BACK z przodem CCW, test i zapis głębokości (LESS), brak
+mieszania, viewport i scissor jako stan dynamiczny. Mieszanie kolorów: `vk::BlendMode::Alpha`, `Premultiplied`
+(mgła), `Additive` (ogień); nietypowe przez `customBlend`. Teselacja: `.patches(3)` + etapy hull/domain przez
+`.shader(...)`. Drugi bufor wierzchołków (kości `SkinVertex`, dane instancji cząsteczek) - kolejne `vertexInput`.
+Ten sam builder można zbudować dwa razy (mapy cieni: wariant światła lokalnego i słońca z `depthClamp`).
+
 ## Double Buffering i Dynamic State
 
 Dla zapewnienia płynności, zasoby takie jak Uniform Buffery i obrazy G-Buffera są duplikowane (`kMaxFrames = 2`). Stan taki jak **Viewport** i **Scissor** jest ustawiany dynamicznie w każdej klatce, co pozwala na bezproblemową zmianę rozmiaru okna bez niszczenia pipeline'ów.

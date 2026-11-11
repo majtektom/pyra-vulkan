@@ -23,14 +23,14 @@ MaterialHandle MaterialManager::add(const Material& material) {
         return handle;
     }
     
-    LOG_WARN("[MaterialManager] AssetRegistry not set, material registration may be incomplete: {}", material.name);
+    LOG_WARN("[MaterialManager] brak AssetRegistry - rejestracja materiału może być niepełna: {}", material.name);
     return {};
 }
 
 const Material* MaterialManager::get(const std::string& name) const {
     const auto it = materials_.find(name);
     if (it == materials_.end()) {
-        LOG_WARN("[MaterialManager] Material not found by name: {}", name);
+        LOG_WARN("[MaterialManager] nie znaleziono materiału o nazwie: {}", name);
         return nullptr;
     }
     return &it->second;
@@ -48,14 +48,14 @@ const Material* MaterialManager::get(MaterialHandle handle) const {
     }
 
     if (!assetRegistry_) {
-        LOG_ERROR("[MaterialManager] AssetRegistry not set while getting material by handle");
+        LOG_ERROR("[MaterialManager] brak AssetRegistry przy pobieraniu materiału po uchwycie");
         return nullptr;
     }
 
     // Tłumaczymy uchwyt MaterialHandle z powrotem na nazwę materiału za pomocą rejestru zasobów.
     const auto name = assetRegistry_->materialName(handle);
     if (!name.has_value()) {
-        LOG_WARN("[MaterialManager] Material name not found in registry for handle: {}", handle.value);
+        LOG_WARN("[MaterialManager] brak nazwy materiału w rejestrze dla uchwytu: {}", handle.value);
         return nullptr;
     }
     
@@ -66,7 +66,7 @@ const Material* MaterialManager::get(MaterialHandle handle) const {
 const Material& MaterialManager::require(const std::string& name) const {
     const auto it = materials_.find(name);
     if (it == materials_.end()) {
-        throw std::runtime_error("material not found: " + name);
+        throw std::runtime_error("nie znaleziono materiału: " + name);
     }
     return it->second;
 }

@@ -28,6 +28,12 @@ constexpr float kWaterLevel = 26.0f;     // poziom wody (morze wokół wyspy i j
 constexpr float kMountainLevel = 62.0f;  // od tej wysokości teren to góry (tu stawia się kopalnie)
 constexpr float kSnowLine = 98.0f;       // powyżej - ośnieżone szczyty, niedostępne dla ludzi i budynków
 constexpr float kTreeGrowSeconds = 120.0f; // ile rośnie sadzonka posadzona przez leśniczego
+// Walka i naprawy: ile sekund bez obrażeń, zanim jednostka zacznie się leczyć, a budynek dostanie naprawiacza.
+constexpr float kRecoveryDelay = 8.0f;
+// Budynek wymaga naprawy poniżej tej części życia (drobne zadrapania się nie liczą).
+constexpr float kRepairBelowHp = 0.97f;
+// Jak długo po trafieniu widać pasek życia nad jednostką / budynkiem (HUD).
+constexpr float kHpBarAfterHitSeconds = 4.0f;
 constexpr float kNavCell = 4.0f;         // rozmiar komórki siatki nawigacji
 
 enum class Difficulty { Easy = 0, Normal = 1, Hard = 2 };

@@ -82,6 +82,7 @@ public:
 private:
     void ensureGlyphs();
     void deleteVertexBuffer(uint32_t frameIndex);
+    void uploadFontAtlas();
     void releaseFontResources();
 
     bool ready_ = false;
@@ -91,8 +92,6 @@ private:
 
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
-    VkCommandPool commandPool_ = VK_NULL_HANDLE;
-    VkQueue graphicsQueue_ = VK_NULL_HANDLE;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;

@@ -4,31 +4,7 @@
 #include "shared/terrain_height.hlsl"
 #include "shared/gbuffer_output.hlsl"   // teren zapisuje G-Buffer - oświetlenie, cienie i mgłę liczy deferred
 
-// Parametry push constants dla terenu (w tym tablice indeksów warstw i masek)
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    column_major float4x4 model;
-    float4 baseColorFactor;
-    float metallicFactor;
-    float roughnessFactor;
-    float bumpIntensity;
-    uint baseColorTextureSet;
-    uint physicalDescriptorTextureSet;
-    uint normalTextureSet;
-    uint occlusionTextureSet;
-    uint emissiveTextureSet;
-    float alphaMaskCutoff;
-    uint layerBlendEnabled;                 // Czy mieszanie warstw teksturowych jest włączone
-    uint layerCount;                        // Liczba warstw terenu (maksymalnie 12)
-    float layerWorldSize;                   // Szerokość świata terenu (używana przy skalingu UV masek)
-    uint4 layerBaseTextureSets[3];          // Spakowane indeksy tekstur warstwowych (3 * 4 = 12 warstw)
-    uint4 layerMaskTextureSets[3];          // Spakowane indeksy tekstur masek przejść (12 masek)
-    uint heightmapTextureSet;
-    float scaleY;
-    float tessellationFactor;
-    uint heightmapEnabled;
-};
+#include "shared/material_push.hlsl"   // blok push constants (układ jak w push_constants.h)
 
 
 

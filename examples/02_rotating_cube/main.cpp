@@ -116,30 +116,17 @@ int main() {
     auto* camera = camEntity->addComponent<CameraComponent>();
     camEntity->transform().position = {0.0f, 0.0f, 5.5f};
     camera->fieldOfViewDegrees = 45.0f;
+    // Kamera patrzy na środek układu współrzędnych, oś Y w górę.
+    camera->target = {0.0f, 0.0f, 0.0f};
+    camera->up = {0.0f, 1.0f, 0.0f};
     scene->setActiveCamera(camera);
 
     // Definiujemy logikę klatki gry.
     engine.onUpdate = [](float dt, Engine& e) {
-        const auto& snap = e.input();
-        
-        // Obsługa wyjścia (Escape).
-        static bool escWasDown = false;
-        const bool escDown = snap.keys[SDL_SCANCODE_ESCAPE];
-        if (escDown && !escWasDown) {
-            SDL_Event event{};
-            event.type = SDL_EVENT_QUIT;
-            SDL_PushEvent(&event);
-        }
-        escWasDown = escDown;
+        // Escape zamyka aplikację (pętla silnika kończy się po tej klatce).
+        if (e.keyPressed(SDL_SCANCODE_ESCAPE)) e.requestQuit();
 
-        // Resetowanie pozycji i punktu patrzenia kamery w każdej klatce.
         auto* activeScene = e.getSceneManager()->activeScene();
-        auto* cam = activeScene ? activeScene->activeCamera() : nullptr;
-        if (cam) {
-            cam->getOwner()->transform().position = {0.0f, 0.0f, 5.5f};
-            cam->target = {0.0f, 0.0f, 0.0f};
-            cam->up = {0.0f, 1.0f, 0.0f};
-        }
         
         // Funkcja pomocnicza do rotacji zadanej encji wokół jej lokalnych osi X, Y, Z.
         auto rotate = [&](const std::string& name, float rx, float ry, float rz) {

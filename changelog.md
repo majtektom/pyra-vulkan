@@ -4,6 +4,38 @@
 
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
+Czytelność kodu:
+ - Komunikaty logów i wyjątków silnika oraz komentarze po polsku (ok. 120 komunikatów, 45 komentarzy); usunięta
+   niedokończona klasa `VulkanImage`; poprawiony komunikat cząsteczek z pojedynczym `{` (błąd formatu w `std::vformat`)
+ - Przykłady 03-07 i 09: zamiast jednego długiego `main` (do 460 linii) kroki-funkcje (niebo, teren, modele,
+   kamera, HUD); wspólne `FlyCamera` (engine/camera/fly_camera.h - WASD + mysz) oraz `Engine::keyPressed` /
+   `requestQuit` zamiast powtarzanej obsługi Esc przez `SDL_EVENT_QUIT`. 06 i 09: kamera startuje nad terenem
+   (wcześniej w środku góry - szary ekran)
+ - `Engine::loadMap` (495 linii) podzielone na sekcje pliku mapy w `engine/core/engine_map.cpp`
+ - `loadGltfModel`, `ParticleSystem::load` (opis formatu .particle), `recordShadowPass`, `recordGBufferPass`
+   podzielone na kroki (glTF sprawdzony: wynik identyczny dla 11 modeli)
+ - Osadnicy: planista AI (`aiBuildNext`) jako reguły `aiChoose*` z `AiChoice`; panel zaznaczenia na flagę /
+   budynek / jednostkę / grupę; tragarz (`updateCarrier`) według stanów; nazwane stałe leczenia i napraw
+   wspólne dla symulacji i HUD (`kRecoveryDelay`, `kRepairBelowHp`)
+ - `GuiRenderer` i skybox: czytelne nazwy zmiennych zamiast skrótów (`vb_`, `odl`, `przes`...)
+
+Usunięte duplikaty (ok. 1800 linii kodu mniej; zachowanie bez zmian, sprawdzone walidacją i testami):
+ - `vk::GraphicsPipelineBuilder` + `vk::createPipelineLayout` + `vk::ShaderModule` (RAII) - 17 potoków w 11 plikach
+   (G-Buffer, cienie, deferred, materiały, niebo, ocean, siatka, GUI, tekst, mgła) bez ręcznych struktur Vulkana;
+   wspólne ustawienia potoków cieni (`buildShadowPipelinePair`) i G-Buffera (`gbufferPipelineBase`)
+ - shadery: jeden blok push constants materiału `shared/material_push.hlsl` (był skopiowany w 6 shaderach)
+   i cieni `shared/shadow_push.hlsl` (2 shadery) - układ zgodny z `push_constants.h` w jednym miejscu
+ - `SkinVertex` (core/types.h): opis danych kości był powtórzony w G-Buffer, cieniach, materiałach i glTF
+ - generator indeksów terenu: 15 ręcznie rozpisanych przypadków zszywania krawędzi (745 linii) zastąpione jedną
+   regułą "wachlarza" na krawędź (115 linii); wynik identyczny dla wszystkich rozmiarów siatki, LOD i konfiguracji
+ - dekoder DXT1/3/5: wspólne `decodeBc1ColorBlock` / `decodeBc4AlphaBlock` zamiast trzech kopii
+ - tekstury: 4 funkcje domyślnych tekstur 1x1 -> `createSolidTexture` (kopiowanie z CPU, bez bufora pośredniego);
+   `loadTexture` i `loadTextureFromMemory` dzielą `uploadTexture`; atlas czcionki wgrywany jedną funkcją
+   (był skopiowany przy przebudowie atlasu) przez hostImageCopy
+ - jedno `vk::beginOneTimeCommands/endOneTimeCommands` zamiast 4 kopii; samplery G-Buffera i mgły przez
+   `vk::createClampSampler(device, filtr)`
+ - cząsteczki: wspólny krok symulacji dla wersji jednowątkowej i równoległej; Osadnicy: `dist2D` -> `distanceXZ`
+
 Vulkan 1.4 jako minimum (bez ścieżek dla 1.3):
  - Wymagany Vulkan 1.4 z push descriptors i hostImageCopy (wybór karty sprawdza też formaty R8/RGBA8); usunięte
    `apiVersion()`, `ENGINE_VULKAN_API`, rozszerzenie KHR dla push descriptors

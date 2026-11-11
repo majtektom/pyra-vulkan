@@ -1,15 +1,6 @@
 #define MAX_BONES 64
 
-// Push Constants dla cieniowania obiektu animowanego szkieletowo
-[[vk::push_constant]]
-cbuffer PushConstants
-{
-    column_major float4x4 model;
-    column_major float4x4 lightViewProj;
-    float alphaCutoff;
-    uint baseColorTextureSet;
-    float2 _pad;
-};
+#include "shared/shadow_push.hlsl"   // blok push constants (układ jak w push_constants.h)
 
 // Bufor macierzy transformacji kości (Set 1 / space1)
 cbuffer BoneBuffer : register(b0, space1)

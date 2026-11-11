@@ -28,7 +28,17 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
   vulkan_util.h), nie `vkCmdPipelineBarrier`. Deskryptory zmieniane przy rysowaniu: push descriptors
   (`vk::pushImageSamplers`, set z `VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT`) zamiast puli i setów na klatkę.
   Obrazy aktualizowane z CPU (mgła wojny, obrazki GUI): `VK_IMAGE_USAGE_HOST_TRANSFER_BIT` + `vk::hostCopyToImage`
-  po fence klatki, układ `vk::hostCopyLayout()` (także w deskryptorze).
+  po fence klatki, układ `vk::hostCopyLayout()` (także w deskryptorze). Jednorazowe obrazy (tekstury 1x1, atlas
+  czcionki) też z CPU: `hostTransitionToCopyLayout` + `hostCopyToImage`, bez bufora pośredniego.
+- Nowy potok graficzny: `vk::GraphicsPipelineBuilder` + `vk::createPipelineLayout` + `vk::ShaderModule` (RAII, plik
+  .spv) z `render/pipeline_builder.h` - podaje się tylko różnice od ustawień domyślnych (TRIANGLE_LIST, cull BACK,
+  depth LESS z zapisem, bez mieszania, viewport/scissor dynamiczne). Nie pisać ręcznie `VkGraphicsPipelineCreateInfo`.
+  Mieszanie: `vk::BlendMode` (Opaque/Alpha/Premultiplied/Additive), inne przez `customBlend`. Jednorazowe polecenia
+  GPU przy tworzeniu zasobów: `vk::beginOneTimeCommands/endOneTimeCommands`. Sampler: `vk::createSampler` /
+  `vk::createClampSampler(device, filtr)`. Dane kości animacji (binding 1): `SkinVertex` (core/types.h).
+- Przykłady: kamera swobodna `FlyCamera::bindDefaultKeys` + `FlyCamera::update(engine, dt, prędkość)`
+  (camera/fly_camera.h), wyjście `if (e.keyPressed(SDL_SCANCODE_ESCAPE)) e.requestQuit();`. Budowa sceny jako
+  osobne funkcje-kroki wołane z `main`, nie jedno długie `main`. Mapa JSON: `engine_map.cpp` (sekcja = funkcja).
 - Walidacja Vulkan jest WYŁĄCZONA w buildzie Release (zjadała ~90% czasu klatki na CPU) - po zmianach w renderze
   uruchomić z `ENGINE_VALIDATION=1` i sprawdzić log pod kątem `Validation`.
 - Profiler klatki: `ENGINE_PROFILE=1` (co 3 s `[profil]` - czasy sekcji: update gry, sekcje świata, nagrywanie
@@ -47,7 +57,7 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
 | `object/` | teren (`Terrain::raycast/getNormal/setHeightmap`), ocean, skydome, roślinność, modele 3ds/md2/gltf |
 | `platform/` | SDL3: okno, zdarzenia, rozmiar ekranu |
 
-Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Historia zmian: `changelog.md`.
+Dokumentacja architektury: `doc/README.md` … `doc/24_rozwiazywanie_problemow.md`. Historia zmian: `changelog.md`.
 
 ## Pułapki (już raz rozwiązane)
 
@@ -81,7 +91,8 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
 - Podmiana tekstury / samplera, który mogą czytać klatki w locie: `retireTexture` + `queueDescriptorWrite`
   (renderer_textures.cpp), nie `vkDeviceWaitIdle`. Feature czytający kopię koloru sceny: `needsSceneColor() = true`.
 - Push constants: struktury w `render/push_constants.h` (static_assert na rozmiar) muszą mieć ten sam układ co blok
-  `[[vk::push_constant]]` w shaderze - nowe pole dopisać w obu miejscach.
+  w shaderze - materiał: `shared/material_push.hlsl`, cienie: `shared/shadow_push.hlsl` (include, nie kopiować
+  bloku do shadera); nowe pole dopisać w obu miejscach.
 - Dane terenu w paczce to `RenderPacket::terrain` (`TerrainSurface`, wspólny dla paczek jednego terenu); indeksy
   tekstur warstw ustala `resolveTerrainSurfaces` w `render()` (jeden wątek) - nie zmieniać go w `prepareRenderPacket`
   (wołane równolegle).

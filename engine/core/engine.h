@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include "camera/camera_component.h"
 #include "camera/camera_controller.h"
 #include "render/material_manager.h"
@@ -96,6 +98,10 @@ public:
     const InputSnapshot& input() const { return currentInput_; }
     bool actionDown(std::string_view action) const;
     bool actionPressed(std::string_view action) const;
+    // Klawisz (SDL_Scancode) wciśnięty w tej klatce - bez akcji, np. Esc w małych przykładach.
+    bool keyPressed(int scancode) const;
+    // Kończy pętlę run() po bieżącej klatce (np. Esc w grze).
+    void requestQuit() { running = false; }
 
     // Stan przycisków myszy: 0 = lewy, 1 = prawy, 2 = środkowy.
     bool mouseDown(int button) const;
@@ -165,6 +171,7 @@ public:
     void setWindStrength(float strength);
     float getWindStrength() const;
 
+    // Wczytuje mapę z pliku JSON (opis sekcji: engine_map.cpp). Usuwa elementy poprzedniej mapy.
     bool loadMap(const std::string& path, Scene* scene);
     std::shared_ptr<SkydomeRenderer> getSkydome() const { return currentSkydome_; }
     std::shared_ptr<OceanRenderer> getOcean() const { return currentOcean_; }
@@ -206,6 +213,17 @@ private:
 
     void update(TimeDelta deltaTime);
     void renderFrame();
+
+    // Sekcje pliku mapy (engine_map.cpp).
+    void clearMapFeatures();
+    void loadMapAtmosphere(const nlohmann::json& root);
+    void loadMapSkyAndOcean(const nlohmann::json& root);
+    void loadMapVolumetricFog(const nlohmann::json& root);
+    void loadMapCamera(const nlohmann::json& root, Scene* scene);
+    void loadMap3dsModels(const nlohmann::json& root, Scene* scene);
+    void loadMapMd2Characters(const nlohmann::json& root, Scene* scene);
+    void loadMapGltfModels(const nlohmann::json& root, Scene* scene);
+    void loadMapSkinnedModels(const nlohmann::json& root, Scene* scene);
     TimeDelta calculateDeltaTimeMs();
 
     CameraController cameraController;

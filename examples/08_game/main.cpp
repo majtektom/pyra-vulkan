@@ -346,7 +346,7 @@ private:
             }
             currentMapPath_ = "assets/maps/" + selected;
             if (!ensureGameScene(currentMapPath_)) {
-                LOG_ERROR("Nie udalo sie wczytac mapy: {}", currentMapPath_);
+                LOG_ERROR("Nie udało się wczytać mapy: {}", currentMapPath_);
                 return;
             }
             enterGame();
@@ -500,7 +500,7 @@ private:
 
         gameTerrain_ = nullptr;
 
-        // Manually load Terrain from the map config before loading other map elements
+        // Teren wczytujemy ręcznie z konfiguracji mapy, przed resztą jej elementów
         std::ifstream file(mapPath);
         if (file.is_open()) {
             nlohmann::json root;
@@ -516,7 +516,7 @@ private:
                             // terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
                             terrain->buildMesh();
                         } else {
-                            LOG_WARN("Could not load terrain, generating plasma");
+                            LOG_WARN("Nie udało się wczytać terenu - generuję teren plazmą");
                             terrain->generatePlasma(256, 1.2f);
                             terrain->setScale(15.0f, 2.0f, 20.0f, 6); // Skala w płaszczyźnie XZ - ile jednostek świata na 1 piksel heightmapy
                             terrain->smoothEdges();
@@ -560,12 +560,12 @@ private:
                     }
                 }
             } catch (const std::exception& e) {
-                LOG_ERROR("Failed to parse map file JSON for terrain in ensureGameScene: {}", e.what());
+                LOG_ERROR("Błąd w pliku mapy (JSON) przy wczytywaniu terenu: {}", e.what());
             }
         }
 
         if (!engine_.loadMap(mapPath, gameScene_)) {
-            LOG_ERROR("Nie udalo sie wczytac mapy: {}", mapPath);
+            LOG_ERROR("Nie udało się wczytać mapy: {}", mapPath);
             return false;
         }
 
@@ -760,7 +760,7 @@ private:
                 engine_.setAmbientStrength(ambientStrength);
                 engine_.setAmbientColor(ambientColor.x, ambientColor.y, ambientColor.z);
 
-                // Dynamic fog color linked to ambient light intensity (almost black at night)
+                // Kolor mgły zależy od światła otoczenia (w nocy prawie czarny)
                 float t = std::clamp((ambientStrength - 0.065f) / (0.28f - 0.065f), 0.0f, 1.0f);
                 float fogR = 0.005f + (0.575f - 0.005f) * t;
                 float fogG = 0.006f + (0.68f - 0.006f) * t;
@@ -870,8 +870,6 @@ private:
         if (gameTerrain_) {
             line2 << " size=" << gameTerrain_->sizeX << "x" << gameTerrain_->sizeZ;
         }
-        line2 << " tree_roots=" << treeRoots_.size()
-              << " car_roots=" << carRoots_.size();
         line2 << " skydome=" << (skydome_ ? "yes" : "no")
               << " ocean=" << (ocean_ ? "yes" : "no");
         e.setTextLabel(line2.str(), "times", 12.0f, 142.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
@@ -904,13 +902,6 @@ private:
             e.setTextLabel(line3.str(), "times", 12.0f, 164.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
         }
 
-        if (gameScene_ && !carRoots_.empty()) {
-            std::ostringstream line4;
-            line4 << "hierarchy children(car0)=" << gameScene_->childrenOf(carRoots_[0]).size()
-                  << " parent_ok=" << parentLinkSuccessCount_
-                  << " parent_fail=" << parentLinkFailCount_;
-            e.setTextLabel(line4.str(), "times", 12.0f, 186.0f, 0.46f, {0.7f, 0.85f, 1.0f, 1.0f});
-        }
     }
 
     Vec3 vec3FromJson(const nlohmann::json& node, const Vec3& fallback) {
@@ -925,7 +916,7 @@ private:
 
     bool saveGameScene(const std::string& filePath) {
         if (!gameSceneReady_ || !gameScene_) {
-            LOG_ERROR("Gra nie zostala jeszcze uruchomiona.");
+            LOG_ERROR("Gra nie została jeszcze uruchomiona.");
             return false;
         }
 
@@ -960,7 +951,7 @@ private:
 
         std::ofstream out(filePath);
         if (!out.is_open()) {
-            LOG_ERROR("Nie udalo sie otworzyc pliku do zapisu: {}", filePath);
+            LOG_ERROR("Nie udało się otworzyć pliku do zapisu: {}", filePath);
             return false;
         }
         out << root.dump(2);
@@ -970,7 +961,7 @@ private:
     bool loadGameScene(const std::string& filePath) {
         std::ifstream in(filePath);
         if (!in.is_open()) {
-            LOG_ERROR("Nie udalo sie otworzyc pliku do odczytu: {}", filePath);
+            LOG_ERROR("Nie udało się otworzyć pliku do odczytu: {}", filePath);
             return false;
         }
 
@@ -984,7 +975,7 @@ private:
 
         currentMapPath_ = root.value("mapPath", "assets/maps/demo.map");
         if (!ensureGameScene(currentMapPath_)) {
-            LOG_ERROR("Nie udalo sie zainicjalizowac sceny gry.");
+            LOG_ERROR("Nie udało się zainicjalizować sceny gry.");
             return false;
         }
 
@@ -1029,7 +1020,7 @@ private:
             }
         }
 
-        LOG_INFO("Pomyslnie wczytano stan sceny z pliku: {}", filePath);
+        LOG_INFO("Wczytano stan sceny z pliku: {}", filePath);
         return true;
     }
 
@@ -1082,12 +1073,8 @@ private:
     std::shared_ptr<Md2AnimationState> md2Anim_;
     GltfSkinnedModel brainModel_;
     std::vector<GltfSkinnedInstance> brainInstances_;
-    std::vector<Entity*> treeRoots_;
-    std::vector<Entity*> carRoots_;
     std::vector<Entity*> terrainRoots_;
     std::vector<float> terrainRootOffsets_;
-    int parentLinkSuccessCount_ = 0;
-    int parentLinkFailCount_ = 0;
 
     UiMode uiMode_ = UiMode::MenuMain;
     UiMode modeBeforeSettings_ = UiMode::MenuMain;

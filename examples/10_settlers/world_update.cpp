@@ -34,7 +34,7 @@ void World::checkWorkResources(Building& b) {
     bool forester = false;
     if (tree) {
         for (const auto& o : buildings) {
-            forester |= o.alive && o.faction == b.faction && o.type == BuildingType::Forester && dist2D(o.pos, b.pos) < def.workRadius * 0.6f;
+            forester |= o.alive && o.faction == b.faction && o.type == BuildingType::Forester && distanceXZ(o.pos, b.pos) < def.workRadius * 0.6f;
         }
     }
     // Ostrzeżenie, gdy surowiec się kończy (drwal bez leśniczego: od 10 drzew, inaczej od 2)
@@ -90,12 +90,12 @@ void World::updateHealing(Unit& u, float dt) {
     const float maxHp = unitDef(u.type).maxHp;
     if (u.hp >= maxHp) return;
     // Leczenie dopiero po 8 s bez obrażeń i poza walką
-    if (gameTime - u.lastDamagedTime < 8.0f || u.state == UnitState::Attack) return;
+    if (gameTime - u.lastDamagedTime < kRecoveryDelay || u.state == UnitState::Attack) return;
     float rate = u.state == UnitState::Garrison ? 0.06f : 0.015f;   // załoga wieży leczy się jak przy zamku
     for (const auto& b : buildings) {
         if (!b.alive || !b.constructed || b.faction != u.faction) continue;
         if (b.type != BuildingType::Castle && b.type != BuildingType::Barracks) continue;
-        if (dist2D(u.pos, b.pos) < 70.0f) {
+        if (distanceXZ(u.pos, b.pos) < 70.0f) {
             rate = 0.06f;  // przy zamku lub koszarach 6% PŻ/s
             break;
         }
@@ -158,8 +158,8 @@ void World::simulate(float dt) {
     }
     {
         PROFILE_SCOPE("świat.AI");
-        if (aiEnabled && winner < 0) updateAI(kEnemy, dt);
-        if (aiControlsPlayer && winner < 0) updateAI(kPlayer, dt);
+        if (aiEnabled && winner < 0) ai_.update(kEnemy, dt);
+        if (aiControlsPlayer && winner < 0) ai_.update(kPlayer, dt);
     }
     {
         PROFILE_SCOPE("świat.terytorium/regiony");
@@ -223,7 +223,7 @@ void World::updateFactions(float dt) {
                 if (!b.alive || b.faction != f) continue;
                 if (!b.constructed) jobs += b.delivered.total() > 0 || buildingDef(b.type).cost.total() == 0 ? 1 : 0;
                 else if (buildingDef(b.type).needsWorker && b.worker < 0) jobs += 1;
-                else if (needsRepair(b) && gameTime - b.lastDamagedTime > 8.0f && !b.repairBlocked) jobs += 1;
+                else if (needsRepair(b) && gameTime - b.lastDamagedTime > kRecoveryDelay && !b.repairBlocked) jobs += 1;
             }
             int carriers = 0;
             for (const auto& u : units) {
@@ -280,7 +280,7 @@ int World::takeSettlerForJob(int f, const Vec3& near) {
         if (!u.alive || u.faction != f || !isCarrierState(u.state)) continue;
         ++carriers;
         if (u.state != UnitState::CarrierWait) continue;
-        const float d = dist2D(u.pos, near);
+        const float d = distanceXZ(u.pos, near);
         if (d < bestD) {
             bestD = d;
             best = static_cast<int>(i);
@@ -299,7 +299,7 @@ int World::takeSettlerForJob(int f, const Vec3& near) {
 //  5. naprawy budynków, przy których od 8 s nie ma walki.
 // Przed wysłaniem sprawdzamy, czy do budynku w ogóle da się dojść.
 void World::dispatchJobs(int f) {
-    manageCarriers(f, 2);
+    transport_.manageCarriers(f, 2);
     for (size_t bi = 0; bi < buildings.size(); ++bi) {
         Building& b = buildings[bi];
         if (!b.alive || b.faction != f) continue;
@@ -345,12 +345,12 @@ void World::dispatchJobs(int f) {
         }
     }
 
-    manageCarriers(f, 1000);
+    transport_.manageCarriers(f, 1000);
 
     // Naprawy: uszkodzone budynki, przy których od 8 s nie ma walki (budowa i pracownicy mają pierwszeństwo)
     for (size_t bi = 0; bi < buildings.size(); ++bi) {
         Building& b = buildings[bi];
-        if (b.faction != f || !needsRepair(b) || gameTime - b.lastDamagedTime < 8.0f) continue;
+        if (b.faction != f || !needsRepair(b) || gameTime - b.lastDamagedTime < kRecoveryDelay) continue;
         if (b.repairBlocked) {
             if (factions[f].res[CarryType::Planks] < 1) continue;
             b.repairBlocked = false;
@@ -379,7 +379,7 @@ void World::updateUnit(int id, float dt) {
     if (u.pathIndex < u.path.size()) {
         u.progressTimer += dt;
         if (u.progressTimer >= 1.5f) {
-            if (dist2D(u.pos, u.progressPos) < 2.0f) u.ghostTimer = 3.0f;
+            if (distanceXZ(u.pos, u.progressPos) < 2.0f) u.ghostTimer = 3.0f;
             u.progressTimer = 0.0f;
             u.progressPos = u.pos;
         }
@@ -390,7 +390,7 @@ void World::updateUnit(int id, float dt) {
 
     // Wykrywanie zawieszeń: jednostka "w drodze", która nie zmienia położenia
     if (isTravelState(u.state)) {
-        if (dist2D(u.pos, u.stallPos) > 2.0f) {
+        if (distanceXZ(u.pos, u.stallPos) > 2.0f) {
             u.stallPos = u.pos;
             u.stallTime = 0.0f;
         } else {
@@ -731,7 +731,7 @@ void World::rebuildTerritoryMesh() {
                 const Vec3 p{s.p.x + std::cos(a) * s.r, 0.0f, s.p.z + std::sin(a) * s.r};
                 bool inside = false;
                 for (size_t j = 0; j < sources.size() && !inside; ++j) {
-                    if (j != i && dist2D(p, sources[j].p) < sources[j].r - 2.0f) inside = true;
+                    if (j != i && distanceXZ(p, sources[j].p) < sources[j].r - 2.0f) inside = true;
                 }
                 if (!inside) addPost(p.x, p.z);
             }

@@ -12,7 +12,7 @@ namespace engine3d {
 Platform::Platform(const std::string& title, uint32_t width, uint32_t height)
     : width_(width), height_(height) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
-        throw std::runtime_error(std::string("SDL3 init failed: ") + SDL_GetError());
+        throw std::runtime_error(std::string("nie udało się uruchomić SDL3: ") + SDL_GetError());
     }
 #if ENGINE3D_HAS_TTF
     TTF_Init();
@@ -22,7 +22,7 @@ Platform::Platform(const std::string& title, uint32_t width, uint32_t height)
                                 SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
         SDL_Quit();
-        throw std::runtime_error(std::string("SDL3 window creation failed: ") + SDL_GetError());
+        throw std::runtime_error(std::string("nie udało się utworzyć okna SDL3: ") + SDL_GetError());
     }
 
     SDL_SetWindowRelativeMouseMode(window_, false);

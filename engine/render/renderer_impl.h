@@ -19,6 +19,7 @@
 #include "core/profiler.h"
 #include "render/material_compiler.h"
 #include "render/packet_draw.h"
+#include "render/pipeline_builder.h"
 #include "render/push_constants.h"
 #include <algorithm>
 #include <array>
@@ -151,10 +152,27 @@ public:
     VkRect2D swapchainScissor() const { return VkRect2D{{0, 0}, swapchain_->extent()}; }
 
     // Mapy cieni: 4 kaskady słońca (warstwy 0-3) i atlas 2x2 świateł lokalnych (warstwa 4).
+    // Rodzaj potoku cienia (kolejność = kolejność rysowania po sortowaniu).
+    enum class ShadowDrawKind { TessellatedTerrain = 0, Mesh = 1, Skinned = 2 };
+    struct ShadowDraw {
+        const RenderPacket* packet = nullptr;
+        ShadowDrawKind kind = ShadowDrawKind::Mesh;
+        Vec3 center{}, extent{};                // granice paczki (świat): środek i połowa rozmiaru
+    };
     void recordShadowPass(VkCommandBuffer cmd, const RenderScene& scene);
+    void sortShadowDraws(const RenderScene& scene);
+    void drawShadowCasters(VkCommandBuffer cmd, const Matrix4& lightViewProj, const Vec3& cullCenter, float cullRadius,
+                           bool sun);
+    void drawShadowCaster(VkCommandBuffer cmd, DrawBindCache& bound, const ShadowDraw& draw, const Matrix4& lightViewProj,
+                          bool sun);
+    void beginShadowLayer(VkCommandBuffer cmd, uint32_t layer);
+    void setShadowViewport(VkCommandBuffer cmd, int atlasSlot);
 
     // G-Buffer: obiekty nieprzezroczyste zapisują albedo, normalne, materiał i pozycję (oświetlenie - deferred).
     void recordGBufferPass(VkCommandBuffer cmd, const RenderScene& scene, uint32_t imageIndex);
+    void beginGBufferRendering(VkCommandBuffer cmd, uint32_t imageIndex);
+    void sortGBufferDraws(const RenderScene& scene);
+    void drawGBufferPacket(VkCommandBuffer cmd, DrawBindCache& bound, const RenderPacket& packet);
 
     // Część 1 na obrazie swapchaina: oświetlenie deferred (pełny ekran), obiekty forward, wstępna głębokość przezroczystych.
     void recordLightingPass(VkCommandBuffer cmd, const RenderScene& scene, const RenderView& view, uint32_t imageIndex);
@@ -174,6 +192,10 @@ public:
     TextureHandle loadTexture(const std::string& name, const std::string& path, bool mirroredRepeat, bool disableAlpha = false);
 
     TextureHandle loadTextureFromMemory(const std::string& name, const std::vector<float>& data, uint32_t width, uint32_t height, bool mirroredRepeat);
+
+    TextureHandle uploadTexture(const std::string& name, TextureUploadData& uploadData, bool mirroredRepeat,
+
+                                bool disableAlpha);
 
     // layout: układ obrazu w chwili próbkowania (tekstury: SHADER_READ_ONLY; obrazy kopiowane z CPU: vk::hostCopyLayout()).
     void registerTextureInBindless(const std::string& name, VkImageView imageView, VkSampler sampler,
@@ -201,7 +223,7 @@ public:
     void destroyRetired(const RetiredTexture& r);
 
 
-    // Getters for sub-renderers
+    // Dostęp dla pod-rendererów
     VkDevice device() const { return vulkanContext_->device(); }
     VkPhysicalDevice physicalDevice() const { return vulkanContext_->physicalDevice(); }
     VkFormat colorFormat() const { return swapchain_ ? swapchain_->imageFormat() : VK_FORMAT_UNDEFINED; }
@@ -434,13 +456,17 @@ private:
 
     void updateUniformBuffer(const RenderView& view);
 
-    void createDefaultTexture();
-
-    void createDefaultNormalTexture();
-
-    void createDefaultOrmTexture();
-
-    void createDefaultBlackTexture();
+    // Domyślne tekstury 1x1 (biała, płaska normalna, ORM, czarna) - podstawiane, gdy materiał nie ma własnej.
+    struct SolidTexture {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+    };
+    SolidTexture createSolidTexture(const uint8_t rgba[4], VkSampler sampler);
+    void destroySolidTexture(SolidTexture& t);
+    // Tworzy cztery domyślne tekstury i rejestruje je w tablicy bindless ("default", "default_normal", ...).
+    void createDefaultTextures();
 
     void createDescriptorResources();
 
@@ -462,12 +488,16 @@ private:
     void createTerrainShadowPipeline();
 
     void createShadowPipeline();
+    void buildShadowPipelinePair(vk::GraphicsPipelineBuilder& builder, VkPipelineLayout layout,
+                                 VkPipeline& localPipeline, VkPipeline& sunPipeline, const std::string& name);
 
     void createShadowSkinnedPipeline();
 
     void createGBufferResources();
 
     void createGBufferPipeline();
+    vk::GraphicsPipelineBuilder gbufferPipelineBase() const;
+    VkPipelineLayout createGBufferPipelineLayout(const std::string& name);
 
     void createGBufferSkinnedPipeline();
 
@@ -516,25 +546,10 @@ private:
     std::vector<VkDeviceMemory> uniformBuffersMemory_;
     std::vector<void*> uniformBuffersMapped_;
 
-    VkImage defaultImage_ = VK_NULL_HANDLE;
-    VkDeviceMemory defaultImageMemory_ = VK_NULL_HANDLE;
-    VkImageView defaultImageView_ = VK_NULL_HANDLE;
-    VkSampler defaultSampler_ = VK_NULL_HANDLE;
-
-    VkImage defaultNormalImage_ = VK_NULL_HANDLE;
-    VkDeviceMemory defaultNormalImageMemory_ = VK_NULL_HANDLE;
-    VkImageView defaultNormalImageView_ = VK_NULL_HANDLE;
-    VkSampler defaultNormalSampler_ = VK_NULL_HANDLE;
-
-    VkImage defaultOrmImage_ = VK_NULL_HANDLE;
-    VkDeviceMemory defaultOrmImageMemory_ = VK_NULL_HANDLE;
-    VkImageView defaultOrmImageView_ = VK_NULL_HANDLE;
-    VkSampler defaultOrmSampler_ = VK_NULL_HANDLE;
-
-    VkImage defaultBlackImage_ = VK_NULL_HANDLE;
-    VkDeviceMemory defaultBlackImageMemory_ = VK_NULL_HANDLE;
-    VkImageView defaultBlackImageView_ = VK_NULL_HANDLE;
-    VkSampler defaultBlackSampler_ = VK_NULL_HANDLE;
+    SolidTexture defaultTex_;
+    SolidTexture defaultNormalTex_;
+    SolidTexture defaultOrmTex_;
+    SolidTexture defaultBlackTex_;
 
     std::unordered_map<std::string, TextureResources> textures_;
     std::unordered_map<std::string, uint32_t> textureNameToIndex_;
@@ -634,11 +649,6 @@ private:
         int ring = 0;                           // pierścień odległości od kamery
     };
     std::vector<GBufferDraw> gbufferOrder_;
-    struct ShadowDraw {
-        const RenderPacket* packet = nullptr;
-        int kind = 1;                           // 0 teren teselowany, 1 zwykłe, 2 animowane
-        Vec3 center{}, extent{};                // granice paczki (świat): środek i połowa rozmiaru
-    };
     std::vector<ShadowDraw> shadowOrder_;
     std::vector<const RenderPacket*> shadowPacketPtrs_;
     std::vector<std::pair<uint32_t, float>> shadowCandidates_;   // assignShadowSlots - bez alokacji co klatkę

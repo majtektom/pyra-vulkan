@@ -6,7 +6,7 @@
  *   - odkryte (explored): kiedykolwiek widoczne - zostaje na zawsze (i trafia do zapisu gry).
  * Gracz: z jego mapy powstaje tekstura dla renderera (0 nieodkryte, 128 odkryte, 255 widoczne) - shader deferred
  * przyciemnia teren, roślinność i budynki (engine: Renderer::setFogOfWar / updateFogOfWar), minimapa tak samo.
- * AI: jego mapa to wiedza komputera - zna tylko odkryte surowce, góry i budynki gracza (aiKnows w world_ai.cpp),
+ * AI: jego mapa to wiedza komputera - zna tylko odkryte surowce, góry i budynki gracza (AiPlanner::knows w ai_planner.cpp),
  * więc musi wysyłać zwiadowców i rozbudowywać się w stronę nieznanego terenu.
  *
  * Co widać z wroga: jego jednostki - tylko w zasięgu wzroku; budynki, flagi, drogi i granice - na odkrytym terenie

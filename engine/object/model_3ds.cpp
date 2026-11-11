@@ -356,9 +356,8 @@ bool Model3ds::unload() {
 
 bool Model3ds::load(const std::string& name) {
     ray = 1.0f;
-    // this->name = name;
     if (name.empty()) {
-        LOG_ERROR("[Model3ds] No file name provided");
+        LOG_ERROR("[Model3ds] nie podano nazwy pliku");
         return false;
     }
     if (modelLoaded)
@@ -373,13 +372,13 @@ bool Model3ds::load(const std::string& name) {
 
     filePointer = fopen(name.c_str(), "rb");
     if (!filePointer) {
-        LOG_ERROR("[Model3ds] Cannot open file: {}", name);
+        LOG_ERROR("[Model3ds] nie można otworzyć pliku: {}", name);
         return false;
     }
 
     readChunk(currentChunk);
     if (currentChunk->ID != M3DMAGIC) {
-        LOG_ERROR("[Model3ds] Not a valid 3DS file: {}", name);
+        LOG_ERROR("[Model3ds] to nie jest poprawny plik 3DS: {}", name);
         return false;
     }
 
@@ -541,7 +540,7 @@ void Model3ds::processNextChunk(tChunk* previousChunk) {
         case VERSION:
             currentChunk->bytesRead += fread(&version, 1, currentChunk->length - currentChunk->bytesRead, filePointer);
             if (version > 0x03)
-                LOG_WARN("[Model3ds] Warning: file version > 3 (found version {})", version);
+                LOG_WARN("[Model3ds] wersja pliku > 3 (jest {}) - może wczytać się niepoprawnie", version);
             break;
 
         case OBJECTINFO:
@@ -1096,7 +1095,7 @@ void Model3ds::setCurrentObject(char* strObjectName) {
         }
     }
 
-    LOG_WARN("[Model3ds] Unknown object: {}", strObjectName);
+    LOG_WARN("[Model3ds] nieznany obiekt: {}", strObjectName);
     currentObject = nullptr;
 }
 

@@ -196,14 +196,14 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
             size_t k = 0;
             float bestD = 1e9f;
             for (size_t i = 0; i < r.points.size(); ++i) {
-                const float d = dist2D(r.points[i], door);
+                const float d = distanceXZ(r.points[i], door);
                 if (d < bestD) {
                     bestD = d;
                     k = i;
                 }
             }
-            if (bestD < 2.5f && k > 0 && k + 1 < r.points.size() && dist2D(r.points[k], flags[r.flagA].pos) >= 3.0f &&
-                dist2D(r.points[k], flags[r.flagB].pos) >= 3.0f) {
+            if (bestD < 2.5f && k > 0 && k + 1 < r.points.size() && distanceXZ(r.points[k], flags[r.flagA].pos) >= 3.0f &&
+                distanceXZ(r.points[k], flags[r.flagB].pos) >= 3.0f) {
                 flag = splitRoad(road, k);
             }
         }
@@ -252,7 +252,7 @@ void World::becomeIdleSettler(Unit& u) {
         if (b.worker >= 0 && &units[b.worker] == &u) b.worker = -1;
     }
     // Tragarz porzuca zlecenie (rezerwacje są zwalniane, niesiony towar zostaje na fladze).
-    if (isCarrierState(u.state)) releaseCarrierJob(u);
+    if (isCarrierState(u.state)) transport_.releaseCarrierJob(u);
     u.atFlag = -1;
     u.jobFlag = -1;
     u.jobOrder = -1;

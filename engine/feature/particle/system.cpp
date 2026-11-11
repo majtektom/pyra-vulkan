@@ -212,125 +212,68 @@ ParticleEmitter* ParticleSystem::getEmitter(int index) {
     return emitters_[index];
 }
 
+// Następna niepusta linia pliku (bez komentarzy i białych znaków na brzegach).
+static bool nextContentLine(std::istream& in, std::string& out) {
+    while (std::getline(in, out)) {
+        out = stripLineComments(out);
+        out.erase(0, out.find_first_not_of(" \t\r\n"));
+        out.erase(out.find_last_not_of(" \t\r\n") + 1);
+        if (!out.empty()) return true;
+    }
+    return false;
+}
+
+/*
+ * Format pliku .particle:
+ *
+ *   ParticleSystem 1.0 nazwa
+ *   particles "ogien" {
+ *       numparticles = 200          liczba cząsteczek
+ *       emitrate = 30               nowych cząsteczek na sekundę
+ *       texture = "plik.dds"
+ *       gravity = (0, -2, 0)
+ *       position = (x,y,z), (x,y,z) losowo między min a max (podobnie size, velocity, lifeTime, mass, color)
+ *       fade 2 at 1 color = ...     zdarzenie: od 1. sekundy życia przez 2 s płynnie zmieniaj kolor
+ *   }
+ *
+ * Każdy blok "particles" to jeden emiter.
+ */
 bool ParticleSystem::load(const std::string& file) {
-    std::ifstream f(file);
-    if (!f.is_open()) {
-        LOG_ERROR("[ParticleSystem] Cannot open file: {}", file);
+    std::ifstream in(file);
+    if (!in.is_open()) {
+        LOG_ERROR("[ParticleSystem] nie można otworzyć pliku: {}", file);
         return false;
     }
 
-    auto nextLine = [&](std::string& out) -> bool {
-        while (std::getline(f, out)) {
-            out = stripLineComments(out);
-            out.erase(0, out.find_first_not_of(" \t\r\n"));
-            out.erase(out.find_last_not_of(" \t\r\n") + 1);
-            if (!out.empty()) return true;
-        }
-        return false;
-    };
-
     std::string line;
-    if (!nextLine(line)) return false;
+    if (!nextContentLine(in, line)) return false;
     std::stringstream header(line);
     std::string magic;
-    float version;
-    std::string sysName;
-    header >> magic >> version >> sysName;
+    header >> magic;
     if (magic != "ParticleSystem") {
-        LOG_ERROR("[ParticleSystem] Not a particle system file: {}", file);
+        LOG_ERROR("[ParticleSystem] to nie jest plik systemu cząsteczek: {}", file);
         return false;
     }
 
     destroy();
-
-    while (nextLine(line)) {
+    while (nextContentLine(in, line)) {
         std::stringstream ss(line);
-        std::string keyword;
-        ss >> keyword;
-
+        std::string keyword, name;
+        ss >> keyword >> name;
         if (keyword != "particles") continue;
+        // Nazwa w cudzysłowie: "ogien" -> ogien
+        if (!name.empty() && name.front() == '"') name.erase(0, 1);
+        if (!name.empty() && name.back() == '"') name.pop_back();
 
-        std::string name;
-        ss >> name;
-        if (!name.empty() && name[0] == '"') {
-            name = name.substr(1);
-            if (!name.empty() && name.back() == '"') name.pop_back();
-        }
-
-        if (!nextLine(line) || line != "{") {
-            LOG_ERROR("[ParticleSystem] Expected '{' after particles name in {}", file);
+        if (!nextContentLine(in, line) || line != "{") {
+            LOG_ERROR("[ParticleSystem] brak '{{' po nazwie cząsteczek w {}", file);
             return false;
         }
-
-        ParticleEmitter* emitter = new ParticleEmitter();
+        auto* emitter = new ParticleEmitter();
         emitter->name_ = name;
-
-        float fadeMin = 0, fadeMax = 0;
-        bool inFade = false;
-
-        while (nextLine(line)) {
-            if (line == "}") break;
-
-            std::stringstream ls(line);
-            std::string varName;
-            ls >> varName;
-
-            std::string lineVal;
-            size_t eqPos = line.find('=');
-            if (eqPos != std::string::npos) {
-                lineVal = line.substr(eqPos + 1);
-                lineVal.erase(0, lineVal.find_first_not_of(" \t"));
-            }
-
-            size_t eqInVar = varName.find('=');
-            if (eqInVar != std::string::npos) {
-                if (lineVal.empty()) lineVal = varName.substr(eqInVar + 1);
-                varName = varName.substr(0, eqInVar);
-            }
-
-            auto getVal = [&]() -> std::string {
-                if (!lineVal.empty()) return lineVal;
-                size_t e = line.find('=');
-                if (e == std::string::npos) return "";
-                std::string v = line.substr(e + 1);
-                v.erase(0, v.find_first_not_of(" \t"));
-                return v;
-            };
-
-            if (varName == "fade") {
-                std::string rest = line.substr(line.find("fade") + 4);
-                rest.erase(0, rest.find_first_not_of(" \t"));
-                std::stringstream fs(rest);
-                float fadeTime;
-                fs >> fadeTime;
-                fadeMin = fadeMax = fadeTime;
-                inFade = true;
-                size_t atPos = rest.find("at");
-                if (atPos != std::string::npos) {
-                    processEvent(emitter, fadeMin, fadeMax, rest.substr(atPos + 2));
-                    inFade = false;
-                }
-            } else if (varName == "at") {
-                processEvent(emitter, inFade ? fadeMin : 0, inFade ? fadeMax : 0,
-                            line.substr(line.find("at") + 2));
-                inFade = false;
-            } else if (varName == "numparticles") { emitter->numParticles_ = processIntNumber(getVal()).min; }
-            else if (varName == "emitrate")   { emitter->emitRate_ = processIntNumber(getVal()).min; }
-            else if (varName == "gravity")    { emitter->gravity_ = processVector3(getVal()).min; }
-            else if (varName == "texture")    { std::string v = getVal();
-                v.erase(0, v.find_first_not_of(" \t\""));
-                v.erase(v.find_last_not_of(" \t\"") + 1);
-                emitter->texturePath_ = v; }
-            else if (varName == "size")       { auto n = processRealNumber(getVal()); emitter->minSize_ = n.min; emitter->maxSize_ = n.max; }
-            else if (varName == "position")   { auto n = processVector3(getVal()); emitter->minPos_ = n.min; emitter->maxPos_ = n.max; }
-            else if (varName == "velocity")   { auto n = processVector3(getVal()); emitter->minVel_ = n.min; emitter->maxVel_ = n.max; }
-            else if (varName == "lifeTime")   { auto n = processRealNumber(getVal()); emitter->minLife_ = n.min; emitter->maxLife_ = n.max; }
-            else if (varName == "mass")       { auto n = processRealNumber(getVal()); emitter->minMass_ = n.min; emitter->maxMass_ = n.max; }
-            else if (varName == "color")      { auto n = processVector4(getVal()); emitter->minColor_ = n.min; emitter->maxColor_ = n.max; }
-        }
-
+        readEmitterBlock(in, emitter);
         if (!emitter->createParticles()) {
-            LOG_ERROR("[ParticleSystem] Error creating particles for emitter {} in {}", name, file);
+            LOG_ERROR("[ParticleSystem] błąd tworzenia cząsteczek emitera {} w {}", name, file);
             delete emitter;
             return false;
         }
@@ -340,6 +283,76 @@ bool ParticleSystem::load(const std::string& file) {
     emittersBegin_ = emitters_.begin();
     emittersEnd_ = emitters_.end();
     return true;
+}
+
+// Linie emitera aż do "}": właściwości "nazwa = wartość" oraz zdarzenia "fade ... at ..." / "at ...".
+void ParticleSystem::readEmitterBlock(std::istream& in, ParticleEmitter* emitter) {
+    float fadeTime = 0.0f;   // czas przejścia z ostatniego "fade" (dla następnego "at")
+    bool pendingFade = false;
+    std::string line;
+    while (nextContentLine(in, line) && line != "}") {
+        std::string name;
+        std::stringstream(line) >> name;
+        // "nazwa=wartość" bez spacji: nazwa kończy się na '='.
+        if (const size_t eq = name.find('='); eq != std::string::npos) name.erase(eq);
+        std::string value;
+        if (const size_t eq = line.find('='); eq != std::string::npos) {
+            value = line.substr(eq + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+        }
+
+        if (name == "fade") {
+            // "fade <czas> [at <zdarzenie>]" - płynna zmiana trwająca <czas> sekund.
+            std::string rest = line.substr(line.find("fade") + 4);
+            rest.erase(0, rest.find_first_not_of(" \t"));
+            std::stringstream(rest) >> fadeTime;
+            pendingFade = true;
+            if (const size_t at = rest.find("at"); at != std::string::npos) {
+                processEvent(emitter, fadeTime, fadeTime, rest.substr(at + 2));
+                pendingFade = false;
+            }
+        } else if (name == "at") {
+            // "at <czas> <właściwość> = ..." - zmiana w danej chwili życia cząsteczki (płynna po "fade").
+            const float t = pendingFade ? fadeTime : 0.0f;
+            processEvent(emitter, t, t, line.substr(line.find("at") + 2));
+            pendingFade = false;
+        } else {
+            applyEmitterProperty(emitter, name, value);
+        }
+    }
+}
+
+void ParticleSystem::applyEmitterProperty(ParticleEmitter* e, const std::string& name, const std::string& value) {
+    if (name == "numparticles") {
+        e->numParticles_ = processIntNumber(value).min;
+    } else if (name == "emitrate") {
+        e->emitRate_ = processIntNumber(value).min;
+    } else if (name == "gravity") {
+        e->gravity_ = processVector3(value).min;
+    } else if (name == "texture") {
+        std::string path = value;
+        path.erase(0, path.find_first_not_of(" \t\""));
+        path.erase(path.find_last_not_of(" \t\"") + 1);
+        e->texturePath_ = path;
+    } else if (name == "size") {
+        const auto n = processRealNumber(value);
+        e->setSize(n.min, n.max);
+    } else if (name == "position") {
+        const auto n = processVector3(value);
+        e->setPosition(n.min, n.max);
+    } else if (name == "velocity") {
+        const auto n = processVector3(value);
+        e->setVelocity(n.min, n.max);
+    } else if (name == "lifeTime") {
+        const auto n = processRealNumber(value);
+        e->setLifeTime(n.min, n.max);
+    } else if (name == "mass") {
+        const auto n = processRealNumber(value);
+        e->setMass(n.min, n.max);
+    } else if (name == "color") {
+        const auto n = processVector4(value);
+        e->setColor(n.min, n.max);
+    }
 }
 
 void ParticleSystem::initialize(Scene& scene,
