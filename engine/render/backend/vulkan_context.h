@@ -75,6 +75,7 @@ private:
     bool validationLayersEnabled_ = true;
     bool tessellationSupported_ = false;
     bool depthClampSupported_ = false;
+    uint32_t instanceApiVersion_ = VK_API_VERSION_1_4;   // co obsługuje loader (vkEnumerateInstanceVersion)
 };
 
 } // namespace engine3d

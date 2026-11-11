@@ -92,7 +92,7 @@ public:
     int createImage(uint32_t width, uint32_t height) { return guiRenderer_.createImage(width, height); }
     void updateImage(int id, const std::vector<uint8_t>& rgba) { guiRenderer_.updateImage(id, rgba); }
     void addOverlayImage(int id, float x, float y, float w, float h, float depth);
-    void preRender(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) override { guiRenderer_.uploadImages(cmd, frameIndex); }
+    void preRender(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) override { guiRenderer_.uploadImages(frameIndex); (void)cmd; }
     void addOverlayRect(float x, float y, float w, float h, std::array<float, 4> color, float depth = 0.95f);
     // Ramka (obrys) prostokąta o grubości thickness.
     void addOverlayFrame(float x, float y, float w, float h, float thickness, std::array<float, 4> color, float depth = 0.95f);

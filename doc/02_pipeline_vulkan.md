@@ -1,6 +1,6 @@
 # Pipeline Vulkan — Inicjalizacja i Nowoczesny Rendering
 
-Silnik `engine3d` wykorzystuje nowoczesne podejście do API Vulkan (wersja 1.4), rezygnując z klasycznych Render Passów i Framebufferów na rzecz **Dynamic Renderingu** oraz **Bindless Textures**.
+Silnik `engine3d` wykorzystuje nowoczesne podejście do API Vulkan (wymagana wersja 1.4), rezygnując z klasycznych Render Passów i Framebufferów na rzecz **Dynamic Renderingu** oraz **Bindless Textures**.
 
 ## Inicjalizacja Vulkan 1.4
 
@@ -8,10 +8,19 @@ Proces startu silnika konfiguruje zaawansowane funkcje urządzenia:
 
 ```
 VulkanContext::initialize()
-├─ createInstance()         # Żądanie Vulkan 1.4, Debug Messenger
-├─ pickPhysicalDevice()     # Wybór GPU wspierającego Dynamic Rendering
-└─ createLogicalDevice()    # Aktywacja cech: dynamicRendering, timelineSemaphore, descriptorIndexing
+├─ createInstance()         # Vulkan 1.4 (starszy loader -> czytelny błąd), Debug Messenger
+├─ pickPhysicalDevice()     # GPU z Vulkan 1.4 i wymaganymi cechami; karta dedykowana ma pierwszeństwo
+│                           # wybór układu dla obrazów kopiowanych z CPU (vk::hostCopyLayout)
+└─ createLogicalDevice()    # Cechy: dynamicRendering, synchronization2, timelineSemaphore, descriptorIndexing,
+                            # pushDescriptor, hostImageCopy (+ maintenance5/6 i inne z 1.4, gdy są)
 ```
+
+Z Vulkana 1.4 silnik korzysta wprost, bez wersji zapasowych dla starszych sterowników:
+- **Synchronizacja 2** (`vk::imageBarriers`): każda bariera ma etapy i dostępy przy swoim obrazie.
+- **Push descriptors** (`vk::pushImageSamplers`): deskryptory zmieniane przy każdym rysowaniu (G-Buffer dla
+  oświetlenia, obrazki GUI) podaje się wprost w buforze poleceń - bez puli i setów osobnych na każdą klatkę.
+- **Kopiowanie obrazów z CPU** (`vk::hostCopyToImage`, hostImageCopy): mgła wojny i obrazki GUI (minimapa) trafiają
+  do obrazu bez bufora pośredniego, poleceń GPU i barier.
 
 ### Nowoczesne Funkcje (Features)
 - **Dynamic Rendering**: Pozwala na używanie `vkCmdBeginRendering` zamiast predefiniowanych obiektów `VkRenderPass`.

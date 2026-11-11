@@ -356,42 +356,23 @@ void transitionImageLayout(
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
-    // Tworzenie bariery pamięciowej obrazu (Image Memory Barrier)
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = oldLayout;
-    barrier.newLayout = newLayout;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; // Nie zmieniamy rodziny kolejek
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = mipLevels;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-
-    VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-    VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-
-    // Definiowanie masek dostępu (Access Masks) i etapów potoku (Pipeline Stages) w zależności od typu zmiany układu:
+    // Bariera: zmiana układu obrazu. Etapy i dostępy zależą od rodzaju przejścia.
+    ImageBarrier barrier{.image = image, .oldLayout = oldLayout, .newLayout = newLayout, .mipCount = mipLevels, .layerCount = 1};
     if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-        // Z nieokreślonego układu do celu zapisu transferu (np. przed wgraniem pikseli)
-        barrier.srcAccessMask = 0; // Brak zależności zapisu/odczytu przed barierą
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; // Czekamy na zakończenie operacji zapisu transferu
+        // Przed wgraniem pikseli: poprzednia zawartość nieważna, czeka tylko zapis transferu.
+        barrier.dstStage = VK_PIPELINE_STAGE_2_COPY_BIT;
+        barrier.dstAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT;
     } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        // Z układu zapisu transferu do układu odczytu przez shader (próbkowanie tekstury)
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; // Czekamy na zapis transferu
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;     // Blokujemy odczyt shadera, dopóki zapis się nie skończy
-        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; // Odczyt następuje w shaderze pikseli (Fragment Shader)
+        // Po wgraniu: zapis transferu musi być widoczny dla odczytu w shaderze pikseli.
+        barrier.srcStage = VK_PIPELINE_STAGE_2_COPY_BIT;
+        barrier.srcAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        barrier.dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        barrier.dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+    } else {
+        barrier.dstStage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;   // inne przejścia (rzadkie): pełna bariera
+        barrier.dstAccess = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
     }
-
-    // Wstawienie bariery do bufora poleceń
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        sourceStage, destinationStage,
-        0, 0, nullptr, 0, nullptr, 1, &barrier
-    );
+    imageBarrier(commandBuffer, barrier);
 
     vkEndCommandBuffer(commandBuffer);
 
@@ -557,6 +538,137 @@ VkSampler createClampSampler(VkDevice device) {
         throw std::runtime_error("failed to create clamp sampler");
     }
     return sampler;
+}
+
+void imageBarriers(VkCommandBuffer cmd, const ImageBarrier* barriers, uint32_t count) {
+    VkImageMemoryBarrier2 out[16];
+    uint32_t n = 0;
+    auto flush = [&]() {
+        if (n == 0) return;
+        VkDependencyInfo dep{};
+        dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dep.imageMemoryBarrierCount = n;
+        dep.pImageMemoryBarriers = out;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        n = 0;
+    };
+    for (uint32_t i = 0; i < count; ++i) {
+        const ImageBarrier& b = barriers[i];
+        VkImageMemoryBarrier2& o = out[n++];
+        o = {};
+        o.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        o.srcStageMask = b.srcStage;
+        o.srcAccessMask = b.srcAccess;
+        o.dstStageMask = b.dstStage;
+        o.dstAccessMask = b.dstAccess;
+        o.oldLayout = b.oldLayout;
+        o.newLayout = b.newLayout;
+        o.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        o.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        o.image = b.image;
+        o.subresourceRange = {b.aspect, b.baseMip, b.mipCount, b.baseLayer, b.layerCount};
+        if (n == 16) flush();
+    }
+    flush();
+}
+
+void generateMipmaps(VkCommandBuffer cmd, VkImage image, uint32_t width, uint32_t height, uint32_t mipLevels) {
+    int32_t w = static_cast<int32_t>(width), h = static_cast<int32_t>(height);
+    for (uint32_t i = 1; i < mipLevels; i++) {
+        // Poziom i-1 gotowy (zapisany kopią albo poprzednim blitem) -> źródło blitu.
+        imageBarrier(cmd, {.image = image, .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .srcAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                           .dstStage = VK_PIPELINE_STAGE_2_BLIT_BIT, .dstAccess = VK_ACCESS_2_TRANSFER_READ_BIT,
+                           .baseMip = i - 1, .mipCount = 1, .layerCount = 1});
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1};
+        blit.srcOffsets[1] = {w, h, 1};
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+        blit.dstOffsets[1] = {w > 1 ? w / 2 : 1, h > 1 ? h / 2 : 1, 1};
+        vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_LINEAR);
+        // Poziom i-1 już niepotrzebny do blitów -> odczyt w shaderze.
+        imageBarrier(cmd, {.image = image, .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_BLIT_BIT, .srcAccess = VK_ACCESS_2_NONE,
+                           .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                           .baseMip = i - 1, .mipCount = 1, .layerCount = 1});
+        if (w > 1) w /= 2;
+        if (h > 1) h /= 2;
+    }
+    // Ostatni poziom (zapisany ostatnim blitem albo jedyny) -> odczyt w shaderze.
+    imageBarrier(cmd, {.image = image, .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       .srcStage = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .srcAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                       .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                       .baseMip = mipLevels - 1, .mipCount = 1, .layerCount = 1});
+}
+
+void pushDescriptorSet(VkCommandBuffer cmd, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, uint32_t set,
+                       uint32_t count, const VkWriteDescriptorSet* writes) {
+    vkCmdPushDescriptorSet(cmd, bindPoint, layout, set, count, writes);
+}
+
+namespace {
+VkImageLayout g_hostCopyLayout = VK_IMAGE_LAYOUT_GENERAL;
+}
+
+void setHostCopyLayout(VkImageLayout layout) { g_hostCopyLayout = layout; }
+VkImageLayout hostCopyLayout() { return g_hostCopyLayout; }
+
+void hostTransitionToCopyLayout(VkDevice device, VkImage image, uint32_t mipLevels) {
+    VkHostImageLayoutTransitionInfo t{};
+    t.sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO;
+    t.image = image;
+    t.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    t.newLayout = g_hostCopyLayout;
+    t.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, 1};
+    vkTransitionImageLayout(device, 1, &t);
+}
+
+void hostCopyToImage(VkDevice device, VkImage image, const void* pixels, uint32_t width, uint32_t height, uint32_t mip) {
+    VkMemoryToImageCopy region{};
+    region.sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY;
+    region.pHostPointer = pixels;
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
+    region.imageExtent = {width, height, 1};
+    VkCopyMemoryToImageInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO;
+    info.dstImage = image;
+    info.dstImageLayout = g_hostCopyLayout;
+    info.regionCount = 1;
+    info.pRegions = &region;
+    vkCopyMemoryToImage(device, &info);
+}
+
+void pushImageSamplers(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t set, const VkDescriptorImageInfo* images,
+                       uint32_t count) {
+    VkWriteDescriptorSet writes[8];
+    for (uint32_t i = 0; i < count && i < 8; ++i) {
+        writes[i] = {};
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstBinding = i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].pImageInfo = &images[i];
+    }
+    pushDescriptorSet(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, set, count < 8 ? count : 8, writes);
+}
+
+void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
+    VkMemoryBarrier2 b{};
+    b.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    b.srcStageMask = srcStage;
+    b.srcAccessMask = srcAccess;
+    b.dstStageMask = dstStage;
+    b.dstAccessMask = dstAccess;
+    VkDependencyInfo dep{};
+    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
 }
 
 }  // namespace vk

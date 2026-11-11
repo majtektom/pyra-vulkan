@@ -7,39 +7,26 @@ void Renderer::RendererImpl::recordGBufferPass(VkCommandBuffer cmd, const Render
     const VkViewport viewport = swapchainViewport();
     const VkRect2D scissor = swapchainScissor();
     // === GBUFFER PASS ===
-    // Transition GBuffer from SHADER_READ to COLOR_ATTACHMENT
-    VkImageMemoryBarrier gbToColorBarriers[4] = {};
+    // Bariery przed G-Buffer: 4 tekstury G-Buffera (czytane w poprzedniej klatce przez oświetlenie) stają się celem
+    // rysowania, a głębia swapchaina - z UNDEFINED (loadOp = CLEAR, stara zawartość niepotrzebna; obsługuje też
+    // pierwsze użycie obrazu po odtworzeniu swapchaina).
+    vk::ImageBarrier toDraw[kGBufferAttachments + 1];
     for (int a = 0; a < kGBufferAttachments; a++) {
-        gbToColorBarriers[a].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        gbToColorBarriers[a].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        gbToColorBarriers[a].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        gbToColorBarriers[a].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        gbToColorBarriers[a].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        gbToColorBarriers[a].image = gbufferImages_[a][currentFrame_];
-        gbToColorBarriers[a].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        gbToColorBarriers[a].subresourceRange.levelCount = 1;
-        gbToColorBarriers[a].subresourceRange.layerCount = 1;
+        toDraw[a] = {.image = gbufferImages_[a][currentFrame_],
+                     .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     .srcStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .srcAccess = VK_ACCESS_2_NONE,
+                     .dstStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT};
     }
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         0, 0, nullptr, 0, nullptr, 4, gbToColorBarriers);
-
-    // Depth swapchaina: zawartość z poprzedniego użycia nie jest potrzebna (loadOp = CLEAR),
-    // więc przechodzimy z UNDEFINED. Obsługuje to też pierwsze użycie obrazu po (re)kreacji.
-    VkImageMemoryBarrier depthInitBarrier{};
-    depthInitBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    depthInitBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    depthInitBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    depthInitBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthInitBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthInitBarrier.image = swapchain_->depthImage(imageIndex);
-    depthInitBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    depthInitBarrier.subresourceRange.levelCount = 1;
-    depthInitBarrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &depthInitBarrier);
+    toDraw[kGBufferAttachments] = {.image = swapchain_->depthImage(imageIndex),
+                                   .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                   .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                   .srcStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                   .srcAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                   .dstStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                   .dstAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                   .aspect = VK_IMAGE_ASPECT_DEPTH_BIT};
+    vk::imageBarriers(cmd, toDraw, kGBufferAttachments + 1);
 
     VkRenderingAttachmentInfo gbColorAttachments[4] = {};
     for (int a = 0; a < kGBufferAttachments; a++) {
@@ -142,22 +129,16 @@ void Renderer::RendererImpl::recordGBufferPass(VkCommandBuffer cmd, const Render
     vkCmdEndRendering(cmd);
     Profiler::get().count("pominięte bindowania G-Buffer", static_cast<double>(bound.skipped));
 
-    // Barrier: GBuffer color → SHADER_READ, depth stays as DEPTH_ATTACHMENT for swapchain
-    VkImageMemoryBarrier gbToReadBarriers[4] = {};
+    // G-Buffer gotowy: zapisy rysowania widoczne dla odczytu w shaderze oświetlenia (głębia zostaje celem rysowania).
+    vk::ImageBarrier toRead[kGBufferAttachments];
     for (int a = 0; a < kGBufferAttachments; a++) {
-        gbToReadBarriers[a].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        gbToReadBarriers[a].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        gbToReadBarriers[a].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        gbToReadBarriers[a].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        gbToReadBarriers[a].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        gbToReadBarriers[a].image = gbufferImages_[a][currentFrame_];
-        gbToReadBarriers[a].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        gbToReadBarriers[a].subresourceRange.levelCount = 1;
-        gbToReadBarriers[a].subresourceRange.layerCount = 1;
+        toRead[a] = {.image = gbufferImages_[a][currentFrame_],
+                     .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     .srcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
     }
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 4, gbToReadBarriers);
+    vk::imageBarriers(cmd, toRead, kGBufferAttachments);
 
 }
 
@@ -178,7 +159,6 @@ void Renderer::RendererImpl::cleanupGBuffer() {
     if (deferredPipeline_) { vkDestroyPipeline(device, deferredPipeline_, nullptr); deferredPipeline_ = VK_NULL_HANDLE; }
     if (deferredPipelineLayout_) { vkDestroyPipelineLayout(device, deferredPipelineLayout_, nullptr); deferredPipelineLayout_ = VK_NULL_HANDLE; }
     if (deferredDescriptorSetLayout_) { vkDestroyDescriptorSetLayout(device, deferredDescriptorSetLayout_, nullptr); deferredDescriptorSetLayout_ = VK_NULL_HANDLE; }
-    if (deferredDescriptorPool_) { vkDestroyDescriptorPool(device, deferredDescriptorPool_, nullptr); deferredDescriptorPool_ = VK_NULL_HANDLE; }
 }
 
 void Renderer::RendererImpl::createGBufferResources() {

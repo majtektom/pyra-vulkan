@@ -51,7 +51,7 @@ Skrypt buduje Osadników w kontenerze Ubuntu 25.04 (podman) z `-DENGINE3D_PORTAB
   (dlatego budujemy w starszym Ubuntu, a nie na najnowszej Fedorze); wymagane glibc 2.38+,
 - w paczce są tylko assety używane przez grę (~40 MB) i skrypt `uruchom.sh`.
 
-U odbiorcy: sterownik Vulkan 1.3 oraz SDL3, SDL3_ttf i SDL3_image
+U odbiorcy: sterownik Vulkan 1.4 (NVIDIA 550+, Mesa 25+) oraz SDL3, SDL3_ttf i SDL3_image
 (Ubuntu 25.04+: `sudo apt install libsdl3-0 libsdl3-ttf0 libsdl3-image0 libvulkan1 mesa-vulkan-drivers`).
 
 Binaria lądują w `bin/`:
@@ -150,7 +150,7 @@ cd bin
 
 ## Funkcje silnika
 
-- Vulkan 1.3, swapchain, depth buffer
+- Vulkan 1.4 (wymagany): synchronizacja 2, push descriptors, kopiowanie obrazów z CPU (hostImageCopy), swapchain, depth buffer
 - VMA (Vulkan Memory Allocator) do zarządzania pamięcią GPU
 - System materiałów z cache pipeline'ów
 - Normal mapping (binding 2 w descriptor layout)

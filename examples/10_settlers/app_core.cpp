@@ -39,6 +39,9 @@ bool SettlersApp::initialize() {
     setupGui();
     setupAudio();
     applySettings(true);
+    // SETTLERS_NOVSYNC=1 - bez synchronizacji pionowej (FPS nie jest ograniczony do odświeżania monitora); pomiary
+    // wydajności w każdym trybie, niezależnie od ustawień gracza.
+    if (std::getenv("SETTLERS_NOVSYNC")) engine_.setPresentMode(PresentMode::Immediate);
 
     newWorld(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()), Difficulty::Normal);
     world_->aiEnabled = false;
@@ -53,9 +56,7 @@ bool SettlersApp::initialize() {
         gameSpeed_ = autoplaySpeed_;
         // Pomiar wydajności dużej osady: SETTLERS_SLOWAT=<s> - od tej chwili gry autoplay zwalnia do x1
         // (z ENGINE_PROFILE=1 widać wtedy czasy klatki bez wielokrotnych kroków symulacji),
-        // SETTLERS_NOVSYNC=1 - bez synchronizacji pionowej (FPS nie jest ograniczony do odświeżania monitora).
         if (const char* sa = std::getenv("SETTLERS_SLOWAT")) slowAt_ = static_cast<float>(std::atof(sa));
-        if (std::getenv("SETTLERS_NOVSYNC")) engine_.setPresentMode(PresentMode::Immediate);
         LOG_INFO("[autoplay] start: {} s czasu gry, przyspieszenie x{}", autoplaySeconds_, autoplaySpeed_);
     }
 

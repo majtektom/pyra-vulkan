@@ -56,36 +56,24 @@ void Renderer::RendererImpl::recordOverlayPass(VkCommandBuffer cmd, const Render
     // Część 2 ma depth w layoucie READ_ONLY (próbkowany przez ocean), więc nie wolno w niej
     // ani czyścić depth, ani do niego pisać.
     if (hasActiveFeature(IRenderFeature::Stage::Overlay)) {
-        VkImageMemoryBarrier overlayDepthBarrier{};
-        overlayDepthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        overlayDepthBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        overlayDepthBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        overlayDepthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        overlayDepthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        overlayDepthBarrier.image = swapchain_->depthImage(imageIndex);
-        overlayDepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        overlayDepthBarrier.subresourceRange.levelCount = 1;
-        overlayDepthBarrier.subresourceRange.layerCount = 1;
-        // Kolor: zapisy części 2 muszą być widoczne dla loadOp = LOAD części 3.
-        VkImageMemoryBarrier overlayColorBarrier{};
-        overlayColorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        overlayColorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        overlayColorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        overlayColorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        overlayColorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        overlayColorBarrier.image = swapchain_->images()[imageIndex];
-        overlayColorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        overlayColorBarrier.subresourceRange.levelCount = 1;
-        overlayColorBarrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &overlayColorBarrier);
-
-        vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &overlayDepthBarrier);
+        // Kolor: zapisy części 2 widoczne dla loadOp = LOAD części 3. Głębia: z "tylko do odczytu" (próbkował ją ocean)
+        // znowu zapisywalna - nakładka czyści ją i rysuje GUI z testem głębokości.
+        const vk::ImageBarrier toOverlay[2] = {
+            {.image = swapchain_->images()[imageIndex],
+             .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+             .srcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+             .dstStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+             .dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT},
+            {.image = swapchain_->depthImage(imageIndex),
+             .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+             .srcStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                         VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+             .srcAccess = VK_ACCESS_2_NONE,
+             .dstStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+             .dstAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+             .aspect = VK_IMAGE_ASPECT_DEPTH_BIT},
+        };
+        vk::imageBarriers(cmd, toOverlay, 2);
 
         VkRenderingAttachmentInfo overlayDepthAttachment{};
         overlayDepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;

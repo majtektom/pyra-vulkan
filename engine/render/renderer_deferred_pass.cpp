@@ -7,21 +7,13 @@ void Renderer::RendererImpl::recordLightingPass(VkCommandBuffer cmd, const Rende
     const VkViewport viewport = swapchainViewport();
     const VkRect2D scissor = swapchainScissor();
     // === SWAPCHAIN RENDERING ===
-    // Transition swapchain color image
-    VkImageMemoryBarrier colorBarrier{};
-    colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    colorBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorBarrier.srcAccessMask = 0;
-    colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    colorBarrier.image = swapchain_->images()[imageIndex];
-    colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    colorBarrier.subresourceRange.levelCount = 1;
-    colorBarrier.subresourceRange.layerCount = 1;
-    // srcStage musi być COLOR_ATTACHMENT_OUTPUT (etap, na którym czeka semafor acquire),
-    // inaczej przejście layoutu może się wykonać, zanim silnik prezentacji zwolni obraz.
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+    // Obraz swapchaina staje się celem rysowania. srcStage musi być COLOR_ATTACHMENT_OUTPUT (etap, na którym czeka
+    // semafor acquire), inaczej przejście układu może się wykonać, zanim silnik prezentacji zwolni obraz.
+    vk::imageBarrier(cmd, {.image = swapchain_->images()[imageIndex],
+                           .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                           .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccess = VK_ACCESS_2_NONE,
+                           .dstStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT});
 
     // During GBuffer pass, depth was written (from clear=1.0, then opaque depths < 1.0).
     // The depth attachment stays in DEPTH_ATTACHMENT layout — no barrier needed.
@@ -60,7 +52,13 @@ void Renderer::RendererImpl::recordLightingPass(VkCommandBuffer cmd, const Rende
     // Deferred lighting pass (fullscreen, reads GBuffer)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipelineLayout_, 1, 1, &deferredDescriptorSets_[currentFrame_], 0, nullptr);
+    // Set 1 (push descriptors): G-Buffer tej klatki i mapa cieni - podane wprost, bez puli i setów na każdą klatkę.
+    VkDescriptorImageInfo inputs[kGBufferAttachments + 1];
+    for (int a = 0; a < kGBufferAttachments; a++) {
+        inputs[a] = {gbufferSampler_, gbufferViews_[a][currentFrame_], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    }
+    inputs[kGBufferAttachments] = {shadowSampler_, shadowMapView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    vk::pushImageSamplers(cmd, deferredPipelineLayout_, 1, inputs, kGBufferAttachments + 1);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     for (auto& pass : passes_) {
@@ -162,50 +160,10 @@ void Renderer::RendererImpl::createDeferredPipeline() {
 
     VkDescriptorSetLayoutCreateInfo dslInfo{};
     dslInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT;   // wypełniany przy rysowaniu (push descriptors)
     dslInfo.bindingCount = 5;
     dslInfo.pBindings = gbufferBindings;
     vkCreateDescriptorSetLayout(device, &dslInfo, nullptr, &deferredDescriptorSetLayout_);
-
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * static_cast<uint32_t>(kMaxFrames)};
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = kMaxFrames;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-    vkCreateDescriptorPool(device, &poolInfo, nullptr, &deferredDescriptorPool_);
-
-    for (int f = 0; f < kMaxFrames; f++) {
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = deferredDescriptorPool_;
-        allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &deferredDescriptorSetLayout_;
-        vkAllocateDescriptorSets(device, &allocInfo, &deferredDescriptorSets_[f]);
-
-        VkWriteDescriptorSet writes[5] = {};
-        VkDescriptorImageInfo imageInfos[5] = {};
-        for (int a = 0; a < 4; a++) {
-            imageInfos[a].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfos[a].imageView = gbufferViews_[a][f];
-            imageInfos[a].sampler = gbufferSampler_;
-            writes[a].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[a].dstSet = deferredDescriptorSets_[f];
-            writes[a].dstBinding = a;
-            writes[a].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[a].descriptorCount = 1;
-            writes[a].pImageInfo = &imageInfos[a];
-        }
-        imageInfos[4].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfos[4].imageView = shadowMapView_;
-        imageInfos[4].sampler = shadowSampler_;
-        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[4].dstSet = deferredDescriptorSets_[f];
-        writes[4].dstBinding = 4;
-        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[4].descriptorCount = 1;
-        writes[4].pImageInfo = &imageInfos[4];
-        vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
-    }
 
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

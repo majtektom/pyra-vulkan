@@ -1,6 +1,6 @@
 # pyra-vulkan (engine3d) — wskazówki dla agenta
 
-Silnik 3D w C++20 na Vulkan 1.3 (dynamic rendering, deferred PBR) + SDL3, z przykładami-grami.
+Silnik 3D w C++20 na Vulkan 1.4 (wymagany - bez ścieżek dla 1.3; dynamic rendering, deferred PBR) + SDL3, z przykładami-grami.
 Komentarze w kodzie i komunikaty gry piszemy **po polsku**, z myślą o osobie, która się uczy.
 
 ## Budowanie i uruchamianie
@@ -23,6 +23,12 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
 - Awaria programu: raport w `crash/<program>_<data>.log` (miejsce awarii plik:linia, stos, ostatnie wpisy logu) -
   zacznij od niego; test raportu: `ENGINE_CRASH_TEST=segv|abort|throw`. `-Werror=format`: argumenty printf muszą
   pasować do formatu (`Ref<T>` -> `.get()`).
+- Vulkan 1.4 wymagany (wybór karty sprawdza też pushDescriptor, hostImageCopy, synchronization2) - funkcji rdzenia
+  1.4 używamy wprost, bez wersji zapasowych. Bariery: `vk::imageBarrier(s)` / `vk::memoryBarrier` (synchronizacja 2,
+  vulkan_util.h), nie `vkCmdPipelineBarrier`. Deskryptory zmieniane przy rysowaniu: push descriptors
+  (`vk::pushImageSamplers`, set z `VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT`) zamiast puli i setów na klatkę.
+  Obrazy aktualizowane z CPU (mgła wojny, obrazki GUI): `VK_IMAGE_USAGE_HOST_TRANSFER_BIT` + `vk::hostCopyToImage`
+  po fence klatki, układ `vk::hostCopyLayout()` (także w deskryptorze).
 - Walidacja Vulkan jest WYŁĄCZONA w buildzie Release (zjadała ~90% czasu klatki na CPU) - po zmianach w renderze
   uruchomić z `ENGINE_VALIDATION=1` i sprawdzić log pod kątem `Validation`.
 - Profiler klatki: `ENGINE_PROFILE=1` (co 3 s `[profil]` - czasy sekcji: update gry, sekcje świata, nagrywanie

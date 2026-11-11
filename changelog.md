@@ -4,6 +4,24 @@
 
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
+Vulkan 1.4 jako minimum (bez ścieżek dla 1.3):
+ - Wymagany Vulkan 1.4 z push descriptors i hostImageCopy (wybór karty sprawdza też formaty R8/RGBA8); usunięte
+   `apiVersion()`, `ENGINE_VULKAN_API`, rozszerzenie KHR dla push descriptors
+ - Synchronizacja 2: wszystkie 31 `vkCmdPipelineBarrier` zastąpione `vk::imageBarrier(s)/memoryBarrier`
+   (pola z nazwami, etapy przy każdym obrazie); jedno `vk::generateMipmaps` zamiast dwóch kopii generowania mipmap
+ - Push descriptors: oświetlenie deferred (G-Buffer + mapa cieni) i GUI (biała tekstura, obrazki) bez pul i setów
+   osobnych na każdą klatkę
+ - Kopiowanie obrazów z CPU (hostImageCopy): mgła wojny, obrazki GUI (minimapa) i biała tekstura GUI bez buforów
+   pośrednich, poleceń GPU i `vkQueueWaitIdle` - aktualizacja minimapy i mgły to jedno `vkCopyMemoryToImage`
+
+Vulkan 1.4 (wcześniejszy etap - zastąpiony powyżej):
+ - Silnik naprawdę korzysta z Vulkan 1.4, gdy jest dostępny (minimum 1.3): wersja API = min(loader, sterownik karty,
+   1.4) - wcześniej instancja prosiła o 1.4, ale urządzenie dostawało tylko cechy 1.2/1.3, a VMA miało wpisane 1.4 na
+   sztywno (na sterowniku 1.3 wołałoby nieistniejące funkcje). Przy 1.4 włączane są obsługiwane cechy rdzenia 1.4
+   (maintenance5/6, pushDescriptor, dynamicRenderingLocalRead, indexTypeUint8). Wybór GPU sprawdza wersję, wymagane
+   cechy i swapchain, karta dedykowana ma pierwszeństwo (nie "pierwsza z listy"); log podaje używaną wersję i powód
+   pominięcia innych kart. `ENGINE_VULKAN_API=1.3` - wymuszenie 1.3
+
 Usunięty martwy kod (ok. 1100 linii; wszystko jest w historii git):
  - nieużywane zmienne i funkcje z -Wall -Wextra (m.in. model_3ds, model_gltf, sprite, skydome, przykłady 03/06/07/08)
  - całe podsystemy bez użytkowników: `LayerManager` (silnik aktualizował pustą listę warstw), zapis/wczytanie scen

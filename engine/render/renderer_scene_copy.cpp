@@ -9,18 +9,12 @@ void Renderer::RendererImpl::copySceneColor(VkCommandBuffer cmd, uint32_t imageI
     if (!sceneColorNeeded) {
         // Nikt nie czyta kopii koloru (brak oceanu) - bez kopii. Część 2 wczytuje obraz (loadOp = LOAD),
         // więc zapisy części 1 muszą być dla niej widoczne.
-        VkImageMemoryBarrier colorBarrier{};
-        colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        colorBarrier.image = swapchain_->images()[imageIndex];
-        colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        colorBarrier.subresourceRange.levelCount = 1;
-        colorBarrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+        vk::imageBarrier(cmd, {.image = swapchain_->images()[imageIndex],
+                               .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                               .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                               .srcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                               .dstStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               .dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT});
     } else {
         copySceneColorImage(cmd, imageIndex);
     }
@@ -29,34 +23,19 @@ void Renderer::RendererImpl::copySceneColor(VkCommandBuffer cmd, uint32_t imageI
 
 // Kopia obrazu ekranu do tekstury koloru sceny (ocean: odbicia i załamanie).
 void Renderer::RendererImpl::copySceneColorImage(VkCommandBuffer cmd, uint32_t imageIndex) {
-    VkImageMemoryBarrier sceneBarriers[4] = {};
-
-    // Swapchain: COLOR_ATTACHMENT → TRANSFER_SRC
-    sceneBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    sceneBarriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    sceneBarriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    sceneBarriers[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    sceneBarriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    sceneBarriers[0].image = swapchain_->images()[imageIndex];
-    sceneBarriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    sceneBarriers[0].subresourceRange.levelCount = 1;
-    sceneBarriers[0].subresourceRange.layerCount = 1;
-
-    // Scene color: SHADER_READ_ONLY → TRANSFER_DST
-    sceneBarriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    sceneBarriers[1].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    sceneBarriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    sceneBarriers[1].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    sceneBarriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    sceneBarriers[1].image = sceneColorImages_[currentFrame_];
-    sceneBarriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    sceneBarriers[1].subresourceRange.levelCount = 1;
-    sceneBarriers[1].subresourceRange.layerCount = 1;
-
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, 0, nullptr, 0, nullptr, 2, sceneBarriers);
+    // Przed kopią: obraz ekranu (po rysowaniu) -> źródło kopii, kopia koloru sceny (czytana w poprzedniej klatce przez
+    // ocean) -> cel kopii.
+    const vk::ImageBarrier beforeCopy[2] = {
+        {.image = swapchain_->images()[imageIndex],
+         .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+         .srcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+         .dstStage = VK_PIPELINE_STAGE_2_COPY_BIT, .dstAccess = VK_ACCESS_2_TRANSFER_READ_BIT},
+        {.image = sceneColorImages_[currentFrame_],
+         .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+         .srcStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .srcAccess = VK_ACCESS_2_NONE,
+         .dstStage = VK_PIPELINE_STAGE_2_COPY_BIT, .dstAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT},
+    };
+    vk::imageBarriers(cmd, beforeCopy, 2);
 
     // Copy swapchain → scene color
     VkImageCopy copyRegion{};
@@ -70,33 +49,20 @@ void Renderer::RendererImpl::copySceneColorImage(VkCommandBuffer cmd, uint32_t i
         sceneColorImages_[currentFrame_], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         1, &copyRegion);
 
-    // Scene color: TRANSFER_DST → SHADER_READ_ONLY
-    sceneBarriers[2].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    sceneBarriers[2].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    sceneBarriers[2].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    sceneBarriers[2].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    sceneBarriers[2].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    sceneBarriers[2].image = sceneColorImages_[currentFrame_];
-    sceneBarriers[2].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    sceneBarriers[2].subresourceRange.levelCount = 1;
-    sceneBarriers[2].subresourceRange.layerCount = 1;
-
-    // Swapchain: TRANSFER_SRC → COLOR_ATTACHMENT
-    sceneBarriers[3].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    sceneBarriers[3].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    // Część 2 wczytuje kolor (loadOp = LOAD) i blenduje, więc potrzebny jest też odczyt.
-    sceneBarriers[3].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    sceneBarriers[3].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    sceneBarriers[3].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    sceneBarriers[3].image = swapchain_->images()[imageIndex];
-    sceneBarriers[3].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    sceneBarriers[3].subresourceRange.levelCount = 1;
-    sceneBarriers[3].subresourceRange.layerCount = 1;
-
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        0, 0, nullptr, 0, nullptr, 2, &sceneBarriers[2]);
+    // Po kopii: kopia koloru -> odczyt w shaderze (ocean), obraz ekranu -> znowu cel rysowania (część 2 wczytuje go
+    // przez loadOp = LOAD i blenduje, więc potrzebny jest też odczyt).
+    const vk::ImageBarrier afterCopy[2] = {
+        {.image = sceneColorImages_[currentFrame_],
+         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+         .srcStage = VK_PIPELINE_STAGE_2_COPY_BIT, .srcAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+         .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT},
+        {.image = swapchain_->images()[imageIndex],
+         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         .srcStage = VK_PIPELINE_STAGE_2_COPY_BIT, .srcAccess = VK_ACCESS_2_NONE,
+         .dstStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+         .dstAccess = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT},
+    };
+    vk::imageBarriers(cmd, afterCopy, 2);
 
     // Update bindless descriptors for this frame
     registerSceneColorForFrame(currentFrame_);
@@ -104,22 +70,16 @@ void Renderer::RendererImpl::copySceneColorImage(VkCommandBuffer cmd, uint32_t i
 
 // Głębokość: ATTACHMENT -> READ_ONLY (część 2 próbkuje ją w shaderach i dalej testuje głębokość).
 void Renderer::RendererImpl::transitionDepthForSampling(VkCommandBuffer cmd, uint32_t imageIndex) {
-    // Transition swapchain depth from ATTACHMENT to READ_ONLY for SSR sampling
-    VkImageMemoryBarrier depthReadBarrier{};
-    depthReadBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    depthReadBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    // Depth jest w części 2 próbkowany przez shadery ORAZ używany do testu głębi (loadOp = LOAD).
-    depthReadBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-    depthReadBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthReadBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    depthReadBarrier.image = swapchain_->depthImage(imageIndex);
-    depthReadBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    depthReadBarrier.subresourceRange.levelCount = 1;
-    depthReadBarrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &depthReadBarrier);
+    // Głębia jest w części 2 próbkowana przez shadery (ocean) ORAZ używana do testu głębokości (loadOp = LOAD).
+    vk::imageBarrier(cmd, {.image = swapchain_->depthImage(imageIndex),
+                           .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                           .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                           .srcAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                           .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                       VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                           .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                           .aspect = VK_IMAGE_ASPECT_DEPTH_BIT});
 
     registerSceneDepthForFrame(currentFrame_, imageIndex);
     registerGBufferWorldPosForFrame(currentFrame_);

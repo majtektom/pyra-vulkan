@@ -35,12 +35,12 @@ public:
     void addText(const std::vector<GuiVertex>& verts);
 
     // Obrazki RGBA (np. minimapa): jedna tekstura zamiast tysięcy prostokątów. Osobna kopia na każdą klatkę
-    // w locie - updateImage zapisuje dane, uploadImages (przed rysowaniem, poza przebiegiem renderowania)
-    // kopiuje je do obrazu bieżącej klatki tylko po zmianie.
+    // w locie - updateImage zapisuje dane, uploadImages (przed rysowaniem klatki) kopiuje je z CPU prosto do obrazu
+    // tej klatki (Vulkan 1.4 hostImageCopy) tylko po zmianie.
     int createImage(uint32_t width, uint32_t height);
     void updateImage(int id, const std::vector<uint8_t>& rgba);
     void addImage(int id, float x, float y, float w, float h, float z);   // NDC jak addRect
-    void uploadImages(VkCommandBuffer cmd, uint32_t frameIndex);
+    void uploadImages(uint32_t frameIndex);
 
     void build(uint32_t frameIndex);
     void recordDrawCommands(VkCommandBuffer cmd, uint32_t frameIndex);
@@ -60,8 +60,6 @@ private:
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout dsl_ = VK_NULL_HANDLE;
-    VkDescriptorPool dp_ = VK_NULL_HANDLE;
-    VkDescriptorSet ds_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkImage whiteImage_ = VK_NULL_HANDLE; VkDeviceMemory whiteMem_ = VK_NULL_HANDLE;
     VkImageView whiteView_ = VK_NULL_HANDLE;
@@ -78,10 +76,6 @@ private:
         std::array<VkImage, kGuiMaxFrames> image{};
         std::array<VkDeviceMemory, kGuiMaxFrames> memory{};
         std::array<VkImageView, kGuiMaxFrames> view{};
-        std::array<VkDescriptorSet, kGuiMaxFrames> set{};
-        std::array<VkBuffer, kGuiMaxFrames> staging{};
-        std::array<VkDeviceMemory, kGuiMaxFrames> stagingMemory{};
-        std::array<void*, kGuiMaxFrames> stagingPtr{};
         std::vector<uint8_t> data;
         uint64_t version = 1;
         std::array<uint64_t, kGuiMaxFrames> uploaded{};
@@ -89,12 +83,9 @@ private:
         std::array<uint32_t, kGuiMaxFrames> first{}, count{};   // zakres w buforze wierzchołków klatki
     };
     std::vector<GuiImage> images_;
-    VkDescriptorPool imagePool_ = VK_NULL_HANDLE;
     static constexpr uint32_t kMaxGuiImages = 16;
-    void recordImageCopy(VkCommandBuffer cmd, GuiImage& img, uint32_t fi, bool fromShaderRead);
 
     void createWhiteTexture();
-    void createDescriptorSet();
     void ensureBuffer(VkDeviceSize size, uint32_t frameIndex);
 };
 

@@ -175,7 +175,9 @@ public:
 
     TextureHandle loadTextureFromMemory(const std::string& name, const std::vector<float>& data, uint32_t width, uint32_t height, bool mirroredRepeat);
 
-    void registerTextureInBindless(const std::string& name, VkImageView imageView, VkSampler sampler);
+    // layout: układ obrazu w chwili próbkowania (tekstury: SHADER_READ_ONLY; obrazy kopiowane z CPU: vk::hostCopyLayout()).
+    void registerTextureInBindless(const std::string& name, VkImageView imageView, VkSampler sampler,
+                                   VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     // Bez vkDeviceWaitIdle: podmiana deskryptorów per klatka i opóźnione niszczenie (renderer_textures.cpp).
     struct PendingDescriptorWrite {
         uint32_t index;
@@ -254,18 +256,15 @@ public:
     void cleanupGBuffer();
 
     // ---------------------------------------------------------------------------------
-    // Mgła wojny: tekstura widoczności R8 kFogOfWarSize^2, osobna na każdą klatkę w locie (CPU nadpisuje bufor
-    // przejściowy swojej klatki i kopiuje go do jej obrazu na początku klatki - bez czekania na GPU i bez
-    // wyścigu z klatką, która jeszcze czyta poprzednią wersję). Shadery czytają ją z tablicy bindless
+    // Mgła wojny: tekstura widoczności R8 kFogOfWarSize^2, osobna na każdą klatkę w locie (na początku klatki, po jej
+    // fence, CPU kopiuje dane prosto do jej obrazu - hostImageCopy; bez wyścigu z klatką, która jeszcze czyta
+    // poprzednią wersję). Shadery czytają ją z tablicy bindless
     // (indeks bieżącej klatki w UBO: fowTextureIndex) - shared/surface_lighting.hlsl, applyAtmosphere().
     // ---------------------------------------------------------------------------------
     static constexpr uint32_t kFowSize = Renderer::kFogOfWarSize;
     VkImage fowImage_[kMaxFrames]{};
     VkDeviceMemory fowImageMem_[kMaxFrames]{};
     VkImageView fowView_[kMaxFrames]{};
-    VkBuffer fowStaging_[kMaxFrames]{};
-    VkDeviceMemory fowStagingMem_[kMaxFrames]{};
-    void* fowStagingPtr_[kMaxFrames]{};
     VkSampler fowSampler_ = VK_NULL_HANDLE;
     std::vector<uint8_t> fowData_ = std::vector<uint8_t>(kFowSize * kFowSize, 255);
     uint64_t fowVersion_ = 1;
@@ -276,11 +275,9 @@ public:
 
     void createFogOfWarResources();
 
-    // Kopia bufora przejściowego klatki f do jej obrazu (z barierami: odczyt w shaderze <-> zapis transferu).
-    void recordFogOfWarCopy(VkCommandBuffer cmd, int f, bool fromShaderRead);
 
     // Na początku klatki: gdy dane widoczności się zmieniły, przesyłamy je do obrazu tej klatki.
-    void uploadFogOfWarIfChanged(VkCommandBuffer cmd);
+    void uploadFogOfWarIfChanged();
 
     void setFogOfWar(bool enabled, float originX, float originZ, float worldSize, float exploredBrightness);
     void updateFogOfWar(const std::vector<uint8_t>& visibility) {
@@ -655,8 +652,6 @@ private:
     VkPipelineLayout deferredPipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline deferredPipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout deferredDescriptorSetLayout_ = VK_NULL_HANDLE;
-    VkDescriptorPool deferredDescriptorPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet deferredDescriptorSets_[kMaxFrames] = {};
 
     // Ocean scene color (captured scene before ocean renders)
     VkImage sceneColorImages_[kMaxFrames] = {};

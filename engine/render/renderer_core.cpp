@@ -108,7 +108,7 @@ void Renderer::RendererImpl::render(const RenderScene& scene, const RenderView& 
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    uploadFogOfWarIfChanged(cmd);
+    uploadFogOfWarIfChanged();
 
     // Pre-render stage (outside render passes, e.g. for compute dispatches)
     for (auto& feature : features_) {
@@ -126,18 +126,12 @@ void Renderer::RendererImpl::render(const RenderScene& scene, const RenderView& 
     recordTransparentPass(cmd, scene, view, imageIndex);
     recordOverlayPass(cmd, view, imageIndex);
 
-    VkImageMemoryBarrier presentBarrier{};
-    presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    presentBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    presentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    presentBarrier.dstAccessMask = 0;
-    presentBarrier.image = swapchain_->images()[imageIndex];
-    presentBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    presentBarrier.subresourceRange.levelCount = 1;
-    presentBarrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &presentBarrier);
+    // Gotowy obraz do prezentacji (dalej czeka semafor submit -> present, więc dst bez etapów).
+    vk::imageBarrier(cmd, {.image = swapchain_->images()[imageIndex],
+                           .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                           .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                           .srcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                           .dstStage = VK_PIPELINE_STAGE_2_NONE, .dstAccess = VK_ACCESS_2_NONE});
 
     vkEndCommandBuffer(cmd);
     Profiler::get().lap("render.deferred+przezr.+GUI (nagrywanie)");

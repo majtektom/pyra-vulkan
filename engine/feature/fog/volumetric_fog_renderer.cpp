@@ -191,18 +191,10 @@ void VolumetricFogRenderer::createVolumeTexture(VkDevice device, VkPhysicalDevic
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.image = volumeImage_;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+    vk::imageBarrier(cmd, {.image = volumeImage_, .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                           .mipCount = 1, .layerCount = 1});
 
     executeOneTimeCommand(device, renderer_->commandPool(), renderer_->graphicsQueue(), cmd);
 }
@@ -537,20 +529,12 @@ void VolumetricFogRenderer::preRender(VkCommandBuffer cmd, uint32_t frameIndex, 
         localVolumesDirty_ = false;
     }
 
-    VkImageMemoryBarrier volToGeneral{};
-    volToGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    volToGeneral.image = volumeImage_;
-    volToGeneral.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    volToGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    volToGeneral.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    volToGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    volToGeneral.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    volToGeneral.subresourceRange.levelCount = 1;
-    volToGeneral.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &volToGeneral);
+    // Wolumen mgły: z odczytu w shaderze (poprzednia klatka) na zapis w compute shaderze.
+    vk::imageBarrier(cmd, {.image = volumeImage_, .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .srcAccess = VK_ACCESS_2_NONE,
+                           .dstStage = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                           .mipCount = 1, .layerCount = 1});
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_,
@@ -586,20 +570,12 @@ void VolumetricFogRenderer::preRender(VkCommandBuffer cmd, uint32_t frameIndex, 
 
     vkCmdDispatch(cmd, kFroxelX, kFroxelY, 1);
 
-    VkImageMemoryBarrier volumeBarrier{};
-    volumeBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    volumeBarrier.image = volumeImage_;
-    volumeBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    volumeBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    volumeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    volumeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    volumeBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    volumeBarrier.subresourceRange.levelCount = 1;
-    volumeBarrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &volumeBarrier);
+    // Zapisy compute widoczne dla odczytu w shaderze pikseli (nałożenie mgły na obraz).
+    vk::imageBarrier(cmd, {.image = volumeImage_, .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           .srcStage = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, .srcAccess = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                           .dstStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, .dstAccess = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                           .mipCount = 1, .layerCount = 1});
 }
 
 void VolumetricFogRenderer::render(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView& view) {

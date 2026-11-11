@@ -70,6 +70,7 @@ void GuiRenderer::init(VkDevice d, VkPhysicalDevice p, VkFormat colorFormat, VkF
     VkDescriptorSetLayoutBinding lb{}; lb.binding = 0; lb.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     lb.descriptorCount = 1; lb.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo sl{}; sl.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    sl.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT;   // tekstura podawana przy rysowaniu (push descriptors)
     sl.bindingCount = 1; sl.pBindings = &lb;
     vkCreateDescriptorSetLayout(d, &sl, nullptr, &dsl_);
 
@@ -95,56 +96,18 @@ void GuiRenderer::init(VkDevice d, VkPhysicalDevice p, VkFormat colorFormat, VkF
     vkDestroyShaderModule(d, fm, nullptr); vkDestroyShaderModule(d, vm, nullptr);
 
     createWhiteTexture();
-    createDescriptorSet();
     ready_ = true;
 }
 
+// Biała tekstura 1x1 (prostokąty i tekst używają tego samego potoku co obrazki) - piksel kopiowany z CPU.
 void GuiRenderer::createWhiteTexture() {
-    uint32_t w = 0xFFFFFFFF;
-    VkBuffer sb; VkDeviceMemory sm;
-    vk::createBuffer(device_, pd_, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sb, sm);
-    void* m; vkMapMemory(device_, sm, 0, 4, 0, &m); std::memcpy(m, &w, 4); vkUnmapMemory(device_, sm);
-    vk::createImage(device_, pd_, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,
+    const uint32_t white = 0xFFFFFFFF;
+    vk::createImage(device_, pd_, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_HOST_TRANSFER_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, whiteImage_, whiteMem_);
-    VkCommandBufferAllocateInfo ai{}; ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool = cp_; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount = 1;
-    VkCommandBuffer cb; vkAllocateCommandBuffers(device_, &ai, &cb);
-    VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO; bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cb, &bi);
-    VkImageMemoryBarrier bar{}; bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; bar.image = whiteImage_;
-    bar.srcAccessMask = 0; bar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    bar.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; bar.subresourceRange.levelCount = 1; bar.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
-    VkBufferImageCopy r{}; r.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; r.imageSubresource.layerCount = 1; r.imageExtent = {1,1,1};
-    vkCmdCopyBufferToImage(cb, sb, whiteImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
-    bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
-    vkEndCommandBuffer(cb);
-    VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; si.commandBufferCount = 1; si.pCommandBuffers = &cb;
-    vkQueueSubmit(q_, 1, &si, VK_NULL_HANDLE); vkQueueWaitIdle(q_);
-    vkFreeCommandBuffers(device_, cp_, 1, &cb);
-    vkDestroyBuffer(device_, sb, nullptr); vkFreeMemory(device_, sm, nullptr);
+    vk::hostTransitionToCopyLayout(device_, whiteImage_);
+    vk::hostCopyToImage(device_, whiteImage_, &white, 1, 1);
     whiteView_ = vk::createImageView(device_, whiteImage_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
     sampler_ = vk::createClampSampler(device_);
-}
-
-void GuiRenderer::createDescriptorSet() {
-    VkDescriptorPoolSize ps{}; ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; ps.descriptorCount = 1;
-    VkDescriptorPoolCreateInfo pi{}; pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pi.poolSizeCount = 1; pi.pPoolSizes = &ps; pi.maxSets = 1;
-    vkCreateDescriptorPool(device_, &pi, nullptr, &dp_);
-    VkDescriptorSetAllocateInfo ai{}; ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    ai.descriptorPool = dp_; ai.descriptorSetCount = 1; ai.pSetLayouts = &dsl_;
-    vkAllocateDescriptorSets(device_, &ai, &ds_);
-    VkDescriptorImageInfo ii{}; ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; ii.imageView = whiteView_; ii.sampler = sampler_;
-    VkWriteDescriptorSet w{}; w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = ds_; w.dstBinding = 0; w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w.descriptorCount = 1; w.pImageInfo = &ii;
-    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
 }
 
 void GuiRenderer::addRect(float x, float y, float w, float h, std::array<float,4> c, float z) {
@@ -166,73 +129,19 @@ void GuiRenderer::addText(const std::vector<GuiVertex>& verts) {
 
 int GuiRenderer::createImage(uint32_t width, uint32_t height) {
     if (images_.size() >= kMaxGuiImages || width == 0 || height == 0) return -1;
-    if (!imagePool_) {
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxGuiImages * kGuiMaxFrames};
-        VkDescriptorPoolCreateInfo pi{};
-        pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pi.poolSizeCount = 1;
-        pi.pPoolSizes = &ps;
-        pi.maxSets = kMaxGuiImages * kGuiMaxFrames;
-        vkCreateDescriptorPool(device_, &pi, nullptr, &imagePool_);
-    }
     GuiImage img;
     img.width = width;
     img.height = height;
     img.data.assign(static_cast<size_t>(width) * height * 4, 0);
-    const VkDeviceSize bytes = img.data.size();
     for (uint32_t f = 0; f < kGuiMaxFrames; ++f) {
+        // Obraz dla każdej klatki w locie; treść kopiowana z CPU prosto do obrazu (hostImageCopy), bez bufora pośredniego.
         vk::createImage(device_, pd_, width, height, 1, VK_FORMAT_R8G8B8A8_UNORM,
-                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        VK_IMAGE_USAGE_HOST_TRANSFER_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                         img.image[f], img.memory[f]);
         img.view[f] = vk::createImageView(device_, img.image[f], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
-        vk::createBuffer(device_, pd_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, img.staging[f],
-                         img.stagingMemory[f]);
-        vkMapMemory(device_, img.stagingMemory[f], 0, bytes, 0, &img.stagingPtr[f]);
-        std::memset(img.stagingPtr[f], 0, static_cast<size_t>(bytes));
-        // Stan początkowy (czarny obraz w layoucie do odczytu w shaderze) - jednorazowe polecenie.
-        vk::transitionImageLayout(device_, cp_, q_, img.image[f], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
-                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-        VkCommandBufferAllocateInfo ai{};
-        ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        ai.commandPool = cp_;
-        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        ai.commandBufferCount = 1;
-        VkCommandBuffer cb;
-        vkAllocateCommandBuffers(device_, &ai, &cb);
-        VkCommandBufferBeginInfo bi{};
-        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cb, &bi);
-        recordImageCopy(cb, img, f, false);
-        vkEndCommandBuffer(cb);
-        VkSubmitInfo si{};
-        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        si.commandBufferCount = 1;
-        si.pCommandBuffers = &cb;
-        vkQueueSubmit(q_, 1, &si, VK_NULL_HANDLE);
-        vkQueueWaitIdle(q_);
-        vkFreeCommandBuffers(device_, cp_, 1, &cb);
+        vk::hostTransitionToCopyLayout(device_, img.image[f]);
+        vk::hostCopyToImage(device_, img.image[f], img.data.data(), width, height);   // start: czarny obraz
         img.uploaded[f] = img.version;
-
-        VkDescriptorSetAllocateInfo dai{};
-        dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        dai.descriptorPool = imagePool_;
-        dai.descriptorSetCount = 1;
-        dai.pSetLayouts = &dsl_;
-        vkAllocateDescriptorSets(device_, &dai, &img.set[f]);
-        VkDescriptorImageInfo ii{};
-        ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        ii.imageView = img.view[f];
-        ii.sampler = sampler_;
-        VkWriteDescriptorSet w{};
-        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w.dstSet = img.set[f];
-        w.dstBinding = 0;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.descriptorCount = 1;
-        w.pImageInfo = &ii;
-        vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
     }
     images_.push_back(std::move(img));
     return static_cast<int>(images_.size()) - 1;
@@ -261,36 +170,11 @@ void GuiRenderer::addImage(int id, float x, float y, float w, float h, float z) 
     put(x, y, 0, 0); put(x + w, y + h, 1, 1); put(x, y + h, 0, 1);
 }
 
-void GuiRenderer::recordImageCopy(VkCommandBuffer cmd, GuiImage& img, uint32_t fi, bool fromShaderRead) {
-    VkImageMemoryBarrier b{};
-    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = img.image[fi];
-    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (fromShaderRead) {
-        b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-    }
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {img.width, img.height, 1};
-    vkCmdCopyBufferToImage(cmd, img.staging[fi], img.image[fi], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-}
-
-void GuiRenderer::uploadImages(VkCommandBuffer cmd, uint32_t fi) {
+// Przed rysowaniem klatki fi (po czekaniu na jej fence - GPU nie używa jej obrazów): zmienione obrazki kopiujemy z CPU.
+void GuiRenderer::uploadImages(uint32_t fi) {
     for (auto& img : images_) {
         if (img.uploaded[fi] == img.version) continue;
-        std::memcpy(img.stagingPtr[fi], img.data.data(), img.data.size());
-        recordImageCopy(cmd, img, fi, true);
+        vk::hostCopyToImage(device_, img.image[fi], img.data.data(), img.width, img.height);
         img.uploaded[fi] = img.version;
     }
 }
@@ -326,13 +210,16 @@ void GuiRenderer::ensureBuffer(VkDeviceSize sz, uint32_t fi) {
 void GuiRenderer::recordDrawCommands(VkCommandBuffer cmd, uint32_t fi) {
     if (vc_ == 0) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &ds_, 0, nullptr);
+    // Prostokąty i tekst: biała tekstura (push descriptors - bez puli i setów).
+    const VkDescriptorImageInfo white{sampler_, whiteView_, vk::hostCopyLayout()};
+    vk::pushImageSamplers(cmd, pipelineLayout_, 0, &white, 1);
     VkBuffer b[] = {vb_[fi]}; VkDeviceSize o[] = {0};
     vkCmdBindVertexBuffers(cmd, 0, 1, b, o);
     if (rectCount_ > 0) vkCmdDraw(cmd, rectCount_, 1, 0, 0);
     for (auto& img : images_) {
         if (img.count[fi] == 0) continue;
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &img.set[fi], 0, nullptr);
+        const VkDescriptorImageInfo info{sampler_, img.view[fi], vk::hostCopyLayout()};
+        vk::pushImageSamplers(cmd, pipelineLayout_, 0, &info, 1);
         vkCmdDraw(cmd, img.count[fi], 1, img.first[fi], 0);
     }
 }
@@ -343,17 +230,12 @@ void GuiRenderer::cleanup() {
             if (img.view[f]) vkDestroyImageView(device_, img.view[f], nullptr);
             if (img.image[f]) vkDestroyImage(device_, img.image[f], nullptr);
             if (img.memory[f]) vkFreeMemory(device_, img.memory[f], nullptr);
-            if (img.staging[f]) vkDestroyBuffer(device_, img.staging[f], nullptr);
-            if (img.stagingMemory[f]) vkFreeMemory(device_, img.stagingMemory[f], nullptr);
         }
     }
     images_.clear();
-    if (imagePool_) { vkDestroyDescriptorPool(device_, imagePool_, nullptr); imagePool_ = VK_NULL_HANDLE; }
     for (uint32_t i = 0; i < kGuiMaxFrames; i++) {
         if (vb_[i]) { vkDestroyBuffer(device_, vb_[i], nullptr); vkFreeMemory(device_, vbm_[i], nullptr); vb_[i] = VK_NULL_HANDLE; }
     }
-    ds_ = VK_NULL_HANDLE; // zwalniany razem z pulą
-    if (dp_) { vkDestroyDescriptorPool(device_, dp_, nullptr); dp_ = VK_NULL_HANDLE; }
     if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
     if (whiteView_) { vkDestroyImageView(device_, whiteView_, nullptr); whiteView_ = VK_NULL_HANDLE; }
     if (whiteImage_) { vkDestroyImage(device_, whiteImage_, nullptr); vkFreeMemory(device_, whiteMem_, nullptr); whiteImage_ = VK_NULL_HANDLE; }

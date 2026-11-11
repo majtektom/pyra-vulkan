@@ -145,6 +145,53 @@ void createImage(
 );
 
 /**
+ * @brief Bariera obrazu w stylu synchronizacji 2 (Vulkan 1.3): każdy obraz ma własne etapy i dostępy.
+ *
+ * Bariera mówi GPU: "zanim etapy dst zaczną dostęp dstAccess do obrazu, muszą skończyć się zapisy srcAccess
+ * z etapów src - i przy okazji zmień układ obrazu z oldLayout na newLayout". Pola z nazwami (C++20) czyta się jak
+ * zdanie, np. {.image = img, .oldLayout = ..., .newLayout = ..., .srcStage = ..., .srcAccess = ..., ...}.
+ */
+struct ImageBarrier {
+    VkImage image = VK_NULL_HANDLE;
+    VkImageLayout oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageLayout newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkPipelineStageFlags2 srcStage = VK_PIPELINE_STAGE_2_NONE;   // etapy, które muszą skończyć pracę
+    VkAccessFlags2 srcAccess = VK_ACCESS_2_NONE;                 // ich zapisy, które mają być widoczne
+    VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_2_NONE;   // etapy, które czekają
+    VkAccessFlags2 dstAccess = VK_ACCESS_2_NONE;                 // jak będą korzystać z obrazu
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    uint32_t baseMip = 0;
+    uint32_t mipCount = VK_REMAINING_MIP_LEVELS;
+    uint32_t baseLayer = 0;
+    uint32_t layerCount = VK_REMAINING_ARRAY_LAYERS;
+};
+// Jedno polecenie vkCmdPipelineBarrier2 dla wielu obrazów.
+void imageBarriers(VkCommandBuffer cmd, const ImageBarrier* barriers, uint32_t count);
+inline void imageBarrier(VkCommandBuffer cmd, const ImageBarrier& barrier) { imageBarriers(cmd, &barrier, 1); }
+// Mipmapy: poziom 0 (już wgrany, w układzie TRANSFER_DST) jest kolejno zmniejszany o połowę (vkCmdBlitImage) do
+// poziomów 1..mipLevels-1. Na końcu wszystkie poziomy są w układzie do odczytu w shaderze.
+void generateMipmaps(VkCommandBuffer cmd, VkImage image, uint32_t width, uint32_t height, uint32_t mipLevels);
+// Push descriptors (Vulkan 1.4): deskryptory podawane wprost w buforze poleceń, bez puli i setów.
+// Set w layoucie potoku musi mieć flagę VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT.
+void pushDescriptorSet(VkCommandBuffer cmd, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, uint32_t set,
+                       uint32_t count, const VkWriteDescriptorSet* writes);
+// Tekstury (combined image sampler) do kolejnych bindingów 0..count-1 setu (potok graficzny).
+void pushImageSamplers(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t set, const VkDescriptorImageInfo* images,
+                       uint32_t count);
+// Kopiowanie z CPU do obrazu (Vulkan 1.4, hostImageCopy): piksele trafiają do obrazu bez bufora pośredniego,
+// bez poleceń GPU i bez czekania na kolejkę. Obraz musi mieć VK_IMAGE_USAGE_HOST_TRANSFER_BIT i nie może być
+// w tej chwili używany przez GPU. hostCopyLayout() - układ, w którym takie obrazy żyją stale (i są próbkowane).
+void setHostCopyLayout(VkImageLayout layout);   // VulkanContext przy wyborze karty
+VkImageLayout hostCopyLayout();
+// Pierwsze przejście nowego obrazu (UNDEFINED) do hostCopyLayout() - na CPU, bez bufora poleceń.
+void hostTransitionToCopyLayout(VkDevice device, VkImage image, uint32_t mipLevels = 1);
+// Kopia pikseli (ciasno upakowanych) do poziomu mip obrazu 2D w układzie hostCopyLayout().
+void hostCopyToImage(VkDevice device, VkImage image, const void* pixels, uint32_t width, uint32_t height, uint32_t mip = 0);
+// Bariera pamięci (bufory, wszystkie zasoby) - np. po kopiowaniu danych do bufora wierzchołków.
+void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess);
+
+/**
  * @brief Zmienia układ pamięci obrazu (Transition Image Layout) za pomocą barier potoku (Pipeline Barriers).
  * 
  * Obrazy w GPU mogą mieć różne układy zoptymalizowane pod konkretne operacje (np. 
