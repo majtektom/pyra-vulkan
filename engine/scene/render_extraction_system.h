@@ -50,6 +50,7 @@ private:
     AssetRegistry& assetRegistry_;
     JobSystem& jobs_;
     const class Renderer& renderer_;
+    std::vector<std::vector<RenderPacket>> localBuffers_;   // paczki z każdego wątku (pamięć między klatkami)
 };
 
 } // namespace engine3d

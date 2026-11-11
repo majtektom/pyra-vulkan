@@ -30,11 +30,6 @@ namespace engine3d {
  */
 class MeshBuilder {
 public:
-    /**
-     * @brief Ustawia transformację stosowaną do kolejnych brył (obrót wokół Y + przesunięcie + skala).
-     */
-    MeshBuilder& setTransform(const Vec3& offset, float rotationYRadians = 0.0f, float uniformScale = 1.0f);
-    MeshBuilder& resetTransform();
 
     // Prostopadłościan o środku center i wymiarach size.
     MeshBuilder& box(const Vec3& center, const Vec3& size, const Vec3& color);
@@ -64,7 +59,7 @@ public:
     // Dowolny wypukły wielokąt (wierzchołki w kolejności obwodu). Normalna skierowana od insidePoint.
     MeshBuilder& polygon(std::initializer_list<Vec3> points, const Vec3& insidePoint, const Vec3& color);
 
-    // Dokleja istniejącą siatkę (z aktualną transformacją).
+    // Dokleja istniejącą siatkę (normalne są normalizowane).
     MeshBuilder& append(const MeshData& mesh);
 
     [[nodiscard]] MeshData build() const { return mesh_; }
@@ -76,17 +71,12 @@ public:
     static MeshData makeRing(float innerRadius, float outerRadius, int segments, const Vec3& color);
 
 private:
-    Vec3 applyPoint(const Vec3& p) const;
-    Vec3 applyDir(const Vec3& d) const;
     // Trójkąt z płaską normalną skierowaną od insidePoint.
     void addTriangle(const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& insidePoint, const Vec3& color);
     // Trójkąt z zadaną normalną (np. dla płaskich elementów widocznych z góry).
     void addTriangleFacing(const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& normal, const Vec3& color);
 
     MeshData mesh_;
-    Vec3 offset_{};
-    float rotY_ = 0.0f;
-    float scale_ = 1.0f;
 };
 
 } // namespace engine3d

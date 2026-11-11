@@ -37,29 +37,6 @@ Relacje rodzic-dziecko są obsługiwane przez `HierarchyComponent`.
 
 ---
 
-## Prefaby i Serializacja JSON
-
-Silnik wspiera zapis i odczyt stanu świata w formacie JSON.
-- **Sceny**: Można zapisać cały stan `Scene` do pliku `.json`, wliczając w to wszystkie encje, ich hierarchię i parametry komponentów.
-- **Prefaby**: Możliwość definiowania wzorców obiektów (np. "drzewo" z odpowiednim meshem i materiałem) i ich wielokrotnego instancjonowania na scenie.
-
-```json
-{
-  "name": "example_entity",
-  "transform": {
-    "position": {"x": 10, "y": 0, "z": 5},
-    "scale": {"x": 1, "y": 1, "z": 1}
-  },
-  "light": {
-    "type": "point",
-    "color": {"x": 1, "y": 0.8, "z": 0.5},
-    "intensity": 10.0
-  }
-}
-```
-
----
-
 ## Zalety Architektury ECS-lite
 
 1. **SOLID**: Każdy system ma jedną odpowiedzialność (Single Responsibility).

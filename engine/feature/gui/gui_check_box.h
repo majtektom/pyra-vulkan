@@ -12,7 +12,6 @@ public:
 
     void setText(const std::string& t) { text_ = t; }
     const std::string& text() const { return text_; }
-    bool checked() const { return checked_; }
     void setChecked(bool c) { checked_ = c; }
     const std::string& name() const { return name_; }
     int x() const { return x_; } int y() const { return y_; }

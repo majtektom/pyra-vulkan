@@ -218,11 +218,17 @@ bool SettlersApp::newWorld(uint32_t seed, Difficulty diff, const nlohmann::json*
     world_ = std::make_unique<World>(engine_, materials_);
     freePlay_ = false;
     fogVersionSent_ = ~0ull;
+    minimapFogVersion_ = ~0ull;   // nowy świat (może mieć ten sam adres co stary) - minimapa do przeliczenia
     if (save) {
         if (!world_->loadState(scene_, *save, error)) return false;
     } else {
+        // SETTLERS_SEED=<n>: zawsze ta sama mapa (porównanie zachowania AI przed/po zmianie, powtarzanie błędów).
+        if (const char* fixed = std::getenv("SETTLERS_SEED")) seed = static_cast<uint32_t>(std::strtoul(fixed, nullptr, 10));
+        LOG_INFO("Nowa gra: ziarno mapy {} (powtórzenie: SETTLERS_SEED={})", seed, seed);
         world_->create(scene_, seed, diff);
     }
+    // SETTLERS_AIFOG=0: AI zna całą mapę (bez mgły wojny AI) - do porównań.
+    if (const char* aiFog = std::getenv("SETTLERS_AIFOG")) world_->aiFogOfWar = std::atoi(aiFog) != 0;
     // Decyzje AI do logu ("[ai] ... buduje Tartak - ..."): w autoplayu albo z SETTLERS_AILOG=1.
     world_->aiLog = std::getenv("SETTLERS_AUTOPLAY") || std::getenv("SETTLERS_AILOG");
 
@@ -268,7 +274,8 @@ void SettlersApp::startNewGame(bool spectator) {
     world_->aiEnabled = true;
     world_->aiControlsPlayer = spectator;
     // Mgła wojny w zwykłej grze (w pokazie AI widz ogląda całą mapę; SETTLERS_NOFOG=1 wyłącza - zrzuty, testy).
-    world_->fogOfWar = !spectator && !std::getenv("SETTLERS_NOFOG") && !std::getenv("SETTLERS_AUTOPLAY");
+    world_->fogOfWar = (!spectator && !std::getenv("SETTLERS_NOFOG") && !std::getenv("SETTLERS_AUTOPLAY")) ||
+                       std::getenv("SETTLERS_FOG");   // SETTLERS_FOG=1: mgła także w autoplay (pomiar wydajności)
     spectator_ = spectator;
     gameSpeed_ = spectator ? 4 : 1;
     updateSpeedButton();
@@ -492,7 +499,7 @@ void SettlersApp::updateMode(float dt, Engine& e, const InputSnapshot& in) {
         handleGameInput(e, in);
         if (e.actionPressed(kActSlower)) changeGameSpeed(-1);
         if (e.actionPressed(kActFaster)) changeGameSpeed(+1);
-        for (int i = 0; i < gameSpeed_ && simulationRunning(); ++i) world_->update(dt);
+        advanceSimulation(dt);
         if (autoplaySeconds_ > 0.0f) updateAutoplay();
         if (world_->winner >= 0 && !freePlay_) {
             showGameOver();
@@ -511,6 +518,20 @@ void SettlersApp::updateMode(float dt, Engine& e, const InputSnapshot& in) {
         world_->update(dt);
         break;
     }
+}
+
+// Czas gry tej klatki (dt x prędkość) dzielony na krótkie kroki symulacji (najwyżej kSimMaxStep), a modele,
+// mgła wojny i granice - raz na klatkę (World::present). Wcześniej przy x24 całe World::update (z modelami
+// i mgłą) leciało 24 razy na klatkę, a dt obcinane do 0,1 s gubiło czas przy zacięciach.
+// Limit kroków na klatkę chroni przed "spiralą śmierci": gdy komputer nie nadąża, gra zwalnia zamiast się zawiesić.
+void SettlersApp::advanceSimulation(float dt) {
+    constexpr float kSimMaxStep = 0.05f;
+    constexpr int kSimMaxSteps = 12;
+    const float gameDt = dt * static_cast<float>(gameSpeed_);
+    const int steps = std::clamp(static_cast<int>(std::ceil(gameDt / kSimMaxStep)), 1, kSimMaxSteps);
+    const float step = std::min(gameDt / static_cast<float>(steps), kSimMaxStep);
+    for (int i = 0; i < steps && simulationRunning(); ++i) world_->simulate(step);
+    world_->present(dt);
 }
 
 // Pora dnia waha się łagodnie między porankiem a popołudniem (bez nocy - to gra strategiczna).

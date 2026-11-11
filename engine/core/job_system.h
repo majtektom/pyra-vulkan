@@ -1,11 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <future>
 
@@ -54,12 +56,6 @@ public:
     JobSystem(const JobSystem&) = delete;
     JobSystem& operator=(const JobSystem&) = delete;
 
-    /**
-     * @brief Zwraca stały indeks aktualnego wątku roboczego (0..N-1).
-     * Dla głównego wątku (main) lub wątków spoza puli zwraca SIZE_MAX.
-     */
-    static size_t currentWorkerIndex() { return s_workerIndex; }
-
     /** @return Liczba wątków roboczych w puli. */
     size_t threadCount() const { return workers_.size(); }
 
@@ -81,35 +77,89 @@ public:
     }
 
     /**
-     * @brief Dzieli zakres [0, count) na chunki i wykonuje je równolegle.
-     * Blokuje wątek wywołujący aż wszystkie chunki zostaną ukończone.
+     * @brief Indeks bufora "na wątek" dla kodu wykonywanego w parallelFor: 0..N-1 dla wątków roboczych,
+     * N dla wątku, który wywołał parallelFor (on też liczy kawałki). Bufory: threadCount() + 1.
+     */
+    size_t currentSlot() const {
+        const size_t w = s_workerIndex;
+        return w < workers_.size() ? w : workers_.size();
+    }
+
+    /**
+     * @brief Dzieli zakres [0, count) na kawałki i wykonuje je równolegle; wraca, gdy wszystkie są gotowe.
+     *
+     * Bez alokacji na kawałek: kontekst (licznik kawałków) leży na stosie wywołującego, do kolejki trafia najwyżej
+     * N małych zadań-pomocników (każde trzyma tylko wskaźnik - mieści się w std::function bez alokacji), które
+     * pobierają kolejne kawałki licznikiem atomowym. Wywołujący też liczy kawałki, a czekając na pomocników
+     * wykonuje inne zadania z kolejki - zagnieżdżone parallelFor nie zakleszczy puli.
      *
      * @param count     Liczba elementów do przetworzenia.
      * @param fn        fn(size_t begin, size_t end) – przetwarza zakres.
-     * @param chunkSize Minimalny rozmiar chunka (0 = auto).
+     * @param chunkSize Rozmiar kawałka (0 = auto: ok. jeden kawałek na wątek).
      */
-    void parallelFor(size_t count, std::function<void(size_t, size_t)> fn, size_t chunkSize = 0) {
+    template <class F>
+    void parallelFor(size_t count, F&& fn, size_t chunkSize = 0) {
         if (count == 0) return;
-
         const size_t nWorkers = workers_.size();
-        if (chunkSize == 0) {
-            chunkSize = std::max<size_t>(1, (count + nWorkers - 1) / nWorkers);
+        if (chunkSize == 0) chunkSize = std::max<size_t>(1, (count + nWorkers) / (nWorkers + 1));
+        const size_t chunks = (count + chunkSize - 1) / chunkSize;
+        if (chunks <= 1 || nWorkers == 0) {
+            fn(size_t{0}, count);
+            return;
         }
-
-        std::vector<std::future<void>> futures;
-        for (size_t start = 0; start < count; start += chunkSize) {
-            size_t end = std::min(start + chunkSize, count);
-            futures.push_back(submit([fn, start, end]() {
-                fn(start, end);
-            }));
+        using Fn = std::remove_reference_t<F>;
+        struct Context {
+            Fn* fn;
+            size_t count, chunkSize, chunks;
+            std::atomic<size_t> next{0};
+            std::atomic<size_t> running{0};
+            void runChunks() {
+                for (size_t i = next.fetch_add(1, std::memory_order_relaxed); i < chunks;
+                     i = next.fetch_add(1, std::memory_order_relaxed)) {
+                    const size_t begin = i * chunkSize;
+                    (*fn)(begin, std::min(begin + chunkSize, count));
+                }
+            }
+        };
+        Context ctx;
+        ctx.fn = &fn;
+        ctx.count = count;
+        ctx.chunkSize = chunkSize;
+        ctx.chunks = chunks;
+        const size_t helpers = std::min(nWorkers, chunks - 1);
+        ctx.running.store(helpers, std::memory_order_relaxed);
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            for (size_t h = 0; h < helpers; ++h) {
+                jobs_.push([c = &ctx]() {
+                    c->runChunks();
+                    c->running.fetch_sub(1, std::memory_order_release);   // po tym zadanie nie dotyka już kontekstu
+                });
+            }
         }
-
-        for (auto& f : futures) {
-            f.get();
+        cond_.notify_all();
+        ctx.runChunks();
+        // Kontekst jest na naszym stosie - czekamy, aż każdy pomocnik skończy (także taki, który nie zdążył
+        // zacząć: wtedy wykonujemy zadania z kolejki sami).
+        while (ctx.running.load(std::memory_order_acquire) != 0) {
+            if (!runOnePending()) std::this_thread::yield();
         }
     }
 
 private:
+    // Wykonuje jedno zadanie z kolejki na bieżącym wątku (false = kolejka pusta).
+    bool runOnePending() {
+        std::function<void()> job;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            if (jobs_.empty()) return false;
+            job = std::move(jobs_.front());
+            jobs_.pop();
+        }
+        job();
+        return true;
+    }
+
     void workerLoop() {
         while (true) {
             std::function<void()> job;

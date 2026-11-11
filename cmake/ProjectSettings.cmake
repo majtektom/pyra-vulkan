@@ -3,9 +3,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
-set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
+# -g1: tablice linii (bez pełnych informacji debuggera) - raport awarii pokazuje plik:linię. Binarki są przez to
+# ~4x większe (gra ~5,6 MB, libengine3d.so ~12 MB); kod wykonywany jest ten sam, szybkość bez zmian.
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g1 -DNDEBUG")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+
+# printf/snprintf: argumenty przez "..." nie mają sprawdzanych typów - obiekt zamiast int dla %d kompiluje się bez
+# słowa, a w grze kończy wywaleniem (tak było z Ref<T> w widoku debug). -Werror=format robi z tego błąd kompilacji.
+add_compile_options(-Wformat -Werror=format)
+# Nazwy funkcji binarki w zrzucie stosu po awarii (crash_handler: backtrace_symbols) - eksport symboli wykonywalnych.
+set(CMAKE_ENABLE_EXPORTS ON)
 
 # Katalog z binarkami i skompilowanymi shaderami (domyślnie <repo>/bin; skrypt wydania buduje gdzie indziej,
 # żeby nie nadpisać binarek używanych na co dzień).

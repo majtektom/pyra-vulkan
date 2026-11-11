@@ -21,7 +21,6 @@ Ten dokument opisuje ewolucję silnika `engine3d` oraz wyznacza cele na przyszł
 
 ### Zasoby i Dane
 - [x] **Asset Registry**: System typowanych uchwytów (`Handle`) zamiast stringów w runtime.
-- [x] **Serializacja JSON**: Zapis i odczyt scen oraz prefabów do formatu tekstowego.
 - [x] **Modern Loaders**: Wsparcie dla glTF (przez tinygltf), 3DS i MD2.
 - [x] **Logger**: Centralny, bezpieczny wątkowo system logowania diagnostycznego.
 

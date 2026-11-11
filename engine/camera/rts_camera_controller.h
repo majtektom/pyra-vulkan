@@ -46,7 +46,6 @@ public:
     void update(float deltaTime, CameraComponent& camera);
 
     [[nodiscard]] Vec3 focus() const { return focus_; }
-    [[nodiscard]] Vec3 targetFocus() const { return targetFocus_; }
     [[nodiscard]] float distance() const { return distance_; }
     [[nodiscard]] float yaw() const { return yaw_; }
     [[nodiscard]] float pitch() const { return pitch_; }

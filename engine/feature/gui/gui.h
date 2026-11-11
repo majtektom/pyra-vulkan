@@ -65,9 +65,7 @@ public:
     [[nodiscard]] float measureText(const std::string& text, float scale) const;
 
     GuiWindow* addWindow(const std::string& name, int x, int y, int w, int h);
-    bool removeWindow(const std::string& name);
     GuiWindow* getWindow(const std::string& name);
-    void forEachWindow(std::function<void(GuiWindow&)> fn);
 
     void setActive(const std::string& name);
     void update(const InputSnapshot& input, Platform& platform, float screenW, float screenH);
@@ -78,7 +76,6 @@ public:
     [[nodiscard]] int mouseY() const { return mouseY_; }
 
     void setCursorMode(CursorMode mode) { cursorMode_ = mode; }
-    [[nodiscard]] CursorMode cursorMode() const { return cursorMode_; }
 
     void renderGui();
     void build(uint32_t frameIndex);
@@ -90,6 +87,12 @@ public:
      * Służą do pasków życia, ramki zaznaczenia, minimapy, paneli HUD itp.
      * Domyślna głębokość 0.95 (okna leżą w zakresie 0.1..0.9, mniejsza = bliżej).
      */
+    // Obrazek w nakładce HUD (np. minimapa): createImage raz, updateImage gdy treść się zmieni (dane RGBA 8 bit,
+    // width * height * 4 bajty), addOverlayImage co klatkę - jedna tekstura zamiast tysięcy prostokątów.
+    int createImage(uint32_t width, uint32_t height) { return guiRenderer_.createImage(width, height); }
+    void updateImage(int id, const std::vector<uint8_t>& rgba) { guiRenderer_.updateImage(id, rgba); }
+    void addOverlayImage(int id, float x, float y, float w, float h, float depth);
+    void preRender(VkCommandBuffer cmd, uint32_t frameIndex, const RenderView&) override { guiRenderer_.uploadImages(cmd, frameIndex); }
     void addOverlayRect(float x, float y, float w, float h, std::array<float, 4> color, float depth = 0.95f);
     // Ramka (obrys) prostokąta o grubości thickness.
     void addOverlayFrame(float x, float y, float w, float h, float thickness, std::array<float, 4> color, float depth = 0.95f);
@@ -122,6 +125,11 @@ private:
         float depth;
     };
     std::vector<OverlayRect> overlayRects_;
+    struct OverlayImage {
+        int id;
+        float x, y, w, h, depth;
+    };
+    std::vector<OverlayImage> overlayImages_;
     int mouseX_ = 0, mouseY_ = 0;
     bool cursorEnabled_ = true;
     CursorMode cursorMode_ = CursorMode::Custom;
@@ -157,7 +165,6 @@ public:
     void removeWidget(GuiWidget* w);
     void render(GuiRenderer& r, TextDrawFn textFn, float sw, float sh) const;
     void updateWidgets(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta);
-    bool isPointOccluded(float gx, float gy, const GuiWidget* drawingWidget = nullptr) const;
     bool isPointInOpenWidget(int gx, int gy) const;
     void closeWidgets();
 

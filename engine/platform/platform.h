@@ -36,7 +36,6 @@ public:
     SDL_Window* nativeWindow() const;
 
     void grabPointer(bool grab);
-    bool pointerGrabbed() const;
     InputSnapshot pollInput();
 
     void setFullscreen(bool fullscreen);

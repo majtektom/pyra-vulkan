@@ -173,9 +173,12 @@ int World::createFlag(int f, const Vec3& p, int building) {
     fl.building = building;
     fl.entity = makeEntity("flag", flagMeshName(f));
     fl.entity->transform().position = fl.pos;
-    flags.push_back(std::move(fl));
+    const int id = freeFlags_.allocate(flags, gameTime);
+    fl.gen = flags[id].gen;
+    flags[id] = std::move(fl);
+    roadGraphChanged();
     routingDirty_ = true;
-    return static_cast<int>(flags.size()) - 1;
+    return id;
 }
 
 int World::flagNear(int f, const Vec3& p, float radius) const {
@@ -233,6 +236,8 @@ void World::removeFlag(int id) {
     fl.goods.clear();
     destroyEntity(fl.entity);
     for (auto*& e : fl.goodEntities) destroyEntity(e);
+    freeFlags_.release(id, gameTime);
+    roadGraphChanged();   // graf dróg bez tej flagi (removeRoad też to woła, ale flaga mogła nie mieć dróg)
     routingDirty_ = true;
 }
 
@@ -250,12 +255,14 @@ int World::createRoad(int f, int a, int b, const std::vector<Vec3>& points) {
     r.points.front() = {flags[a].pos.x, 0.0f, flags[a].pos.z};
     r.points.back() = {flags[b].pos.x, 0.0f, flags[b].pos.z};
     r.length = polylineLength(r.points);
-    roads.push_back(std::move(r));
-    const int id = static_cast<int>(roads.size()) - 1;
+    const int id = freeRoads_.allocate(roads, gameTime);
+    r.gen = roads[id].gen;
+    roads[id] = std::move(r);
     flags[a].roads.push_back(id);
     flags[b].roads.push_back(id);
     buildRoadMesh(id);
-    rebuildRoadCells();
+    roadGraphChanged();
+    markRoadCellsDirty();
     routingDirty_ = true;
     return id;
 }
@@ -269,7 +276,10 @@ void World::removeRoad(int id) {
         list.erase(std::remove(list.begin(), list.end(), id), list.end());
     }
     destroyEntity(r.entity);
-    rebuildRoadCells();
+    freeRoads_.release(id, gameTime);
+    engine_.getMeshManager()->removeMesh(roadMeshName(id));   // siatka drogi zwolniona (inaczej zostaje w VRAM)
+    roadGraphChanged();
+    markRoadCellsDirty();
     routingDirty_ = true;
 }
 
@@ -324,8 +334,9 @@ void World::buildRoadMesh(int id) {
     strip(1.9f, 0.25f, {0.43f, 0.35f, 0.24f});
     strip(1.2f, 0.32f, {0.6f, 0.5f, 0.35f});
 
-    static int meshCounter = 0;   // każda wersja siatki ma unikalną nazwę (podział drogi tworzy nową)
-    const std::string name = "road_" + std::to_string(++meshCounter);
+    // Stała nazwa na odcinek drogi: przebudowa (np. podział drogi) nadpisuje tę samą siatkę - MeshManager
+    // bezpiecznie odkłada stare bufory - a removeRoad ją zwalnia.
+    const std::string name = roadMeshName(id);
     engine_.getMeshManager()->loadMesh(name, mb.build());
     if (!r.entity) {
         r.entity = makeEntity("road", name);
@@ -335,7 +346,8 @@ void World::buildRoadMesh(int id) {
     }
 }
 
-void World::rebuildRoadCells() {
+void World::rebuildRoadCells() const {
+    roadCellsDirty_ = false;
     roadCells_.assign(static_cast<size_t>(nav_.width()) * nav_.height(), 0);
     for (size_t i = 0; i < roads.size(); ++i) {
         if (!roads[i].alive) continue;
@@ -348,6 +360,7 @@ void World::rebuildRoadCells() {
 
 int World::roadAtCell(float x, float z) const {
     int cx, cz;
+    if (roadCellsDirty_) rebuildRoadCells();
     if (roadCells_.empty() || !nav_.worldToCell(x, z, cx, cz)) return -1;
     return roadCells_[static_cast<size_t>(cz) * nav_.width() + cx] - 1;
 }
@@ -520,6 +533,15 @@ void World::updateRouting() {
     }
 }
 
+const World::NetDistances& World::networkFrom(int from) const {
+    NetDistances& e = netCache_[from];
+    if (e.version != roadGraphVersion_ || e.dist.size() != flags.size()) {
+        networkDistances(from, e.dist, e.prev);
+        e.version = roadGraphVersion_;
+    }
+    return e;
+}
+
 void World::networkDistances(int from, std::vector<float>& dist, std::vector<int>& prevRoad) const {
     dist.assign(flags.size(), 1e9f);
     prevRoad.assign(flags.size(), -1);
@@ -553,9 +575,9 @@ bool World::networkPath(int from, int to, std::vector<Vec3>& out) const {
         if (to >= 0) out.push_back(flags[to].pos);
         return to >= 0;
     }
-    std::vector<float> dist;
-    std::vector<int> prev;
-    networkDistances(from, dist, prev);
+    const NetDistances& net = networkFrom(from);
+    const auto& dist = net.dist;
+    const auto& prev = net.prev;
     if (to < 0 || to >= static_cast<int>(flags.size()) || dist[to] >= 1e8f) return false;
     std::vector<int> chain;   // odcinki od celu do startu
     for (int cur = to; cur != from;) {
@@ -596,13 +618,10 @@ void World::orderMaterials(int building, const Resources& r) {
             o.dest = building;
             left -= o.amount;
             fundOrder(o);
-            // Wolny slot (martwe zlecenia są używane ponownie - indeksy pozostają stabilne).
-            auto slot = std::find_if(orders.begin(), orders.end(), [](const TransportOrder& x) { return !x.alive; });
-            if (slot != orders.end()) {
-                *slot = o;
-            } else {
-                orders.push_back(o);
-            }
+            // Slot po wykonanym zleceniu (Ref<TransportOrder> tragarza rozpozna, że to już inne zlecenie) albo nowy.
+            const int id = freeOrders_.allocate(orders, gameTime);
+            o.gen = orders[id].gen;
+            orders[id] = o;
         }
     }
     refreshFactionResources();
@@ -631,6 +650,7 @@ void World::requestInputs(int id) {
 // Dzięki flagom budowa i warsztaty dostają towar, nawet gdy magazyny są pełne albo towar przekroczył limit zapasu.
 // Flagi mają lekką przewagę (x0,8 odległości) - zabranie towaru z flagi odblokowuje warsztat.
 bool World::fundOrder(TransportOrder& o) {
+    if (o.dest < 0) return false;   // odbiorca zniknął (zlecenie zaraz zostanie zwolnione)
     const Building& dst = buildings[o.dest];
     const Vec3 at = dst.pos;
     // Dowolna żywność: rodzaj, którego jest najwięcej (count zwraca liczbę dostępnych sztuk danego rodzaju).
@@ -646,9 +666,7 @@ bool World::fundOrder(TransportOrder& o) {
     // Tylko źródła osiągalne po drogach od odbiorcy - towaru z magazynu bez drogi nikt nie doniesie,
     // a opłacone zlecenie blokowałoby budowę na zawsze. Odbiorca bez drogi: zlecenie poczeka na drogę.
     if (dst.flag < 0 || !flags[dst.flag].alive || !flags[dst.flag].connected) return false;
-    std::vector<float> dist;
-    std::vector<int> prev;
-    networkDistances(dst.flag, dist, prev);
+    const auto& dist = networkFrom(dst.flag).dist;
 
     int bestStore = -1, bestFlag = -1;
     float bestD = 1e9f;
@@ -805,7 +823,6 @@ void World::updateFlags(float dt) {
     transportTimer_ -= dt;
     if (transportTimer_ > 0.0f) return;
     transportTimer_ = 0.5f;
-    std::unordered_map<int, std::vector<float>> reach;   // flaga odbiorcy -> odległości po drogach (raz na przebieg)
     for (auto& o : orders) {
         if (!o.alive) continue;
         const bool destOk = o.dest >= 0 && buildings[o.dest].alive;
@@ -816,7 +833,7 @@ void World::updateFlags(float dt) {
                 &orders[units[o.carrier].jobOrder] == &o) {
                 units[o.carrier].jobOrder = -1;
             }
-            o.alive = false;
+            releaseOrder(o);
             continue;
         }
         if (o.funded && !o.picked) {
@@ -833,14 +850,7 @@ void World::updateFlags(float dt) {
             // Źródło przestało być osiągalne (zburzona droga) - cofamy opłatę, zlecenie opłaci się z innego miejsca.
             const int dflag = buildings[o.dest].flag;
             const int src = o.source >= 0 ? buildings[o.source].flag : o.sourceFlag;
-            auto it = reach.find(dflag);
-            if (it == reach.end()) {
-                std::vector<float> d;
-                std::vector<int> p;
-                if (dflag >= 0 && flags[dflag].alive) networkDistances(dflag, d, p);
-                it = reach.emplace(dflag, std::move(d)).first;
-            }
-            if (src < 0 || it->second.empty() || it->second[src] >= 1e8f) unfundOrder(o);
+            if (src < 0 || dflag < 0 || networkFrom(dflag).dist[src] >= 1e8f) unfundOrder(o);
         }
         if (!o.funded && !o.picked) fundOrder(o);
     }
@@ -972,9 +982,7 @@ void World::assignTransportJobs(int f) {
         Unit& u = units[ci];
         if (!u.alive || u.faction != f || u.state != UnitState::CarrierWait) continue;
         if (u.atFlag < 0 || !flags[u.atFlag].alive) continue;
-        std::vector<float> dist;
-        std::vector<int> prev;
-        networkDistances(u.atFlag, dist, prev);
+        const auto& dist = networkFrom(u.atFlag).dist;
 
         // Najlepszy odbiór: blisko, a przy dużej liczbie towarów na fladze - chętniej.
         int bestFlag = -1;
@@ -1001,12 +1009,9 @@ void World::assignTransportJobs(int f) {
             const TransportOrder& o = orders[i];
             if (!o.alive || o.faction != f || !o.funded || o.carrier >= 0) continue;
             const int src = o.source >= 0 ? buildings[o.source].flag : o.sourceFlag;
-            const int dst = buildings[o.dest].flag;
+            const int dst = buildingOrDead(o.dest).flag;
             if (src < 0 || dst < 0 || dist[src] >= 1e8f) continue;
-            std::vector<float> d2;
-            std::vector<int> p2;
-            networkDistances(src, d2, p2);
-            if (d2[dst] >= 1e8f) continue;   // odbiorca nie ma drogi do magazynu
+            if (networkFrom(src).dist[dst] >= 1e8f) continue;   // odbiorca nie ma drogi do magazynu
             const float score = dist[src] - 20.0f;   // dostawy odrobinę ważniejsze (stoją place budowy)
             if (score < bestScore) {
                 bestScore = score;
@@ -1034,9 +1039,7 @@ void World::assignTransportJobs(int f) {
 
         // Magazyn docelowy dla odbioru: najbliższy po drogach z wolnym miejscem.
         Flag& fl = flags[bestFlag];
-        std::vector<float> d2;
-        std::vector<int> p2;
-        networkDistances(bestFlag, d2, p2);
+        const auto& d2 = networkFrom(bestFlag).dist;
         int store = -1;
         float storeD = 1e9f;
         for (size_t i = 0; i < buildings.size(); ++i) {
@@ -1162,9 +1165,7 @@ void World::updateCarrier(Unit& u, int id, float dt) {
         if (!atStore && u.timer > 3.0f) {
             int best = -1;
             float bestD = 1e9f;
-            std::vector<float> dist;
-            std::vector<int> prev;
-            if (u.atFlag >= 0) networkDistances(u.atFlag, dist, prev);
+            const auto& dist = networkFrom(u.atFlag).dist;   // atFlag = -1: wszystkie "bez połączenia"
             for (const auto& b : buildings) {
                 if (!b.alive || !b.constructed || b.faction != u.faction || storageCapacity(b.type) <= 0 || b.flag < 0) continue;
                 const float d = u.atFlag >= 0 && dist[b.flag] < 1e8f ? dist[b.flag] : 5000.0f + dist2D(u.pos, flags[b.flag].pos);
@@ -1218,7 +1219,7 @@ void World::updateCarrier(Unit& u, int id, float dt) {
                     ++it;
                 }
             }
-            Building& store = buildings[u.jobDest];
+            Building& store = buildingOrDead(u.jobDest);   // magazyn mógł zniknąć w trakcie marszu
             store.incoming = std::max(0, store.incoming - (u.carryCount - taken));
             u.carryCount = taken;
             if (taken == 0 || !store.alive || store.flag < 0 || !networkPath(u.jobFlag, store.flag, u.path)) {
@@ -1269,7 +1270,7 @@ void World::updateCarrier(Unit& u, int id, float dt) {
             u.carry = o.type;
             u.carryCount = o.amount;
             u.pathIndex = 0;
-            u.atFlag = buildings[o.dest].flag;
+            u.atFlag = buildingOrDead(o.dest).flag;   // -1 = odbiorca zniknął (obsłużone w CarrierWalk)
             u.state = UnitState::CarrierWalk;
             return;
         }
@@ -1288,7 +1289,7 @@ void World::updateCarrier(Unit& u, int id, float dt) {
         }
         if (u.jobFlag >= 0) {
             // Odbiór: towar trafia do magazynu (gdy w międzyczasie się zapełnił - zostaje na jego fladze).
-            Building& store = buildings[u.jobDest];
+            Building& store = buildingOrDead(u.jobDest);   // zniszczony magazyn - towar zostaje na fladze
             store.incoming = std::max(0, store.incoming - u.carryCount);
             if (store.alive && store.constructed) {
                 const int n = std::min(u.carryCount, storageCapacity(store.type) - store.stock.total());
@@ -1307,7 +1308,7 @@ void World::updateCarrier(Unit& u, int id, float dt) {
             } else {
                 dropCarriedGoods(u, u.atFlag);   // odbiorca zniknął - towar wróci do magazynu
             }
-            o.alive = false;
+            releaseOrder(o);
         }
         finishJob();
         return;
@@ -1369,6 +1370,32 @@ void World::removeRoadsOnLostLand() {
         const int owner = territoryOwnerAt(fl.pos);
         if (owner >= 0 && owner != fl.faction) removeFlag(static_cast<int>(i));
     }
+}
+
+} // namespace settlers
+
+namespace settlers {
+
+void World::releaseOrder(TransportOrder& o) {
+    if (!o.alive) return;
+    o.alive = false;
+    freeOrders_.release(static_cast<int>(&o - orders.data()), gameTime);
+}
+
+// Wolne sloty po wczytaniu zapisu: wszystkie martwe obiekty (czas śmierci "dawno" - bez kwarantanny).
+void World::rebuildFreeLists() {
+    auto fill = [](SlotFreeList& list, const auto& items, size_t first) {
+        list.clear();
+        for (size_t i = first; i < items.size(); ++i) {
+            if (!items[i].alive) list.release(static_cast<int>(i), -1e9f);
+        }
+    };
+    fill(freeUnits_, units, 0);
+    fill(freeBuildings_, buildings, 0);
+    fill(freeFlags_, flags, 0);
+    fill(freeRoads_, roads, 0);
+    fill(freeOrders_, orders, 0);
+    fill(freeNodes_, nodes, nodesGenerated_);
 }
 
 } // namespace settlers

@@ -64,11 +64,9 @@ public:
     ) const;
  
     void setEnabled(bool e) { enabled_ = e; }
-    [[nodiscard]] bool isEnabled() const { return enabled_; }
     [[nodiscard]] bool isReady() const { return ready_; }
  
     void setExposure(float e) { exposure_ = e; }
-    [[nodiscard]] float getExposure() const { return exposure_; }
     [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
 
     /**

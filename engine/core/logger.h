@@ -75,6 +75,7 @@ public:
             try {
                 std::string message = std::vformat(fmt, std::make_format_args(args...));
                 std::lock_guard<std::mutex> lock(mutex_);
+                remember(message);
                 if (backend_) {
                     backend_->log(level, message);
                 }
@@ -95,7 +96,11 @@ public:
     template<typename... Args> void error(std::string_view fmt, Args&&... args) { log(LogLevel::Error, fmt, std::forward<Args>(args)...); }
     template<typename... Args> void critical(std::string_view fmt, Args&&... args) { log(LogLevel::Critical, fmt, std::forward<Args>(args)...); }
 
+    // Ostatnie wpisy logu do raportu awarii (crash_handler): stała tablica, zapis do deskryptora pliku bez alokacji.
+    static void writeRecentLines(int fd);
+
 private:
+    static void remember(std::string_view message);
     Logger();
     LogLevel minLevel_ = LogLevel::Info;
     std::unique_ptr<LogBackend> backend_;

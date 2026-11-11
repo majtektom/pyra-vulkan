@@ -48,24 +48,9 @@ GuiWindow* GuiMgr::addWindow(const std::string& name, int x, int y, int w, int h
     return ptr;
 }
 
-bool GuiMgr::removeWindow(const std::string& name) {
-    auto it = windows_.find(name);
-    if (it == windows_.end()) return false;
-    GuiWindow* ptr = it->second.get();
-    windowOrder_.erase(std::remove(windowOrder_.begin(), windowOrder_.end(), ptr), windowOrder_.end());
-    if (activeWindow_ == ptr) activeWindow_ = nullptr;
-    if (hoveredWindow_ == ptr) hoveredWindow_ = nullptr;
-    windows_.erase(it);
-    return true;
-}
-
 GuiWindow* GuiMgr::getWindow(const std::string& name) {
     auto it = windows_.find(name);
     return it != windows_.end() ? it->second.get() : nullptr;
-}
-
-void GuiMgr::forEachWindow(std::function<void(GuiWindow&)> fn) {
-    for (auto& [k, w] : windows_) fn(*w);
 }
 
 void GuiMgr::setActive(const std::string& name) {
@@ -160,6 +145,11 @@ void GuiMgr::addOverlayRect(float x, float y, float w, float h, std::array<float
     overlayRects_.push_back({x, y, w, h, color, depth});
 }
 
+void GuiMgr::addOverlayImage(int id, float x, float y, float w, float h, float depth) {
+    if (id < 0 || w <= 0.0f || h <= 0.0f) return;
+    overlayImages_.push_back({id, x, y, w, h, depth});
+}
+
 void GuiMgr::addOverlayFrame(float x, float y, float w, float h, float t, std::array<float, 4> color, float depth) {
     addOverlayRect(x, y, w, t, color, depth);
     addOverlayRect(x, y + h - t, w, t, color, depth);
@@ -207,6 +197,11 @@ void GuiMgr::renderGui() {
         guiRenderer_.addRect(nx, ny, (r.w / screenW_) * 2.0f, (r.h / screenH_) * 2.0f, r.color, r.depth);
     }
     overlayRects_.clear();
+    for (const auto& im : overlayImages_) {
+        guiRenderer_.addImage(im.id, (im.x / screenW_) * 2.0f - 1.0f, (im.y / screenH_) * 2.0f - 1.0f, (im.w / screenW_) * 2.0f,
+                              (im.h / screenH_) * 2.0f, im.depth);
+    }
+    overlayImages_.clear();
 
     for (size_t i = 0; i < windowOrder_.size(); ++i) {
         auto* w = windowOrder_[i];
@@ -337,20 +332,6 @@ void GuiWindow::updateWidgets(int mx, int my, bool leftClicked, bool leftDown, i
         if (w == openWidget) continue;
         w->update(mx, my, leftClicked, leftDown, wheelDelta);
     }
-}
-
-bool GuiWindow::isPointOccluded(float gx, float gy, const GuiWidget* drawingWidget) const {
-    for (const auto* w : widgets_) {
-        if (w == drawingWidget) continue;
-        if (w->isOpen()) {
-            float rx = gx - x_;
-            float ry = gy - y_;
-            if (w->isInside(rx, ry)) {
-                return true;
-            }
-        }
-    }
-    return false;
 }
 
 bool GuiWindow::isPointInOpenWidget(int gx, int gy) const {

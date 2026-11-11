@@ -14,7 +14,6 @@ public:
     int GetTotalElements();
     T& GetAt(int index);
     bool IsAlive(int index);
-    void DeleteAll();
 
 protected:
     int m_iNumElements;
@@ -78,11 +77,5 @@ template <class T>
 T& RecyclingArray<T>::GetAt(int index) { return m_aElements[index]; }
 template <class T>
 bool RecyclingArray<T>::IsAlive(int index) { return m_bAlive[index]; }
-template <class T>
-void RecyclingArray<T>::DeleteAll() {
-    for (int q = 0; q < m_iNumElements; q++) m_bAlive[q] = false;
-    m_iUsedElements = 0;
-    m_iLastNew = 0;
-}
 
 } // namespace engine3d::particles

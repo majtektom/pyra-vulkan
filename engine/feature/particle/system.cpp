@@ -11,6 +11,7 @@
 #include "scene/scene.h"
 #include "core/types.h"
 #include "core/logger.h"
+#include "core/job_system.h"
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -195,9 +196,8 @@ void ParticleSystem::update(float time, const Vec3&, const Vec3&) {
     for (auto* e : emitters_) e->update(time);
 }
 
-void ParticleSystem::updateParallel(float time, int threadCount) {
-    int perEmitterThreads = std::max(1, threadCount / std::max(1, static_cast<int>(emitters_.size())));
-    for (auto* e : emitters_) e->updateParallel(time, perEmitterThreads);
+void ParticleSystem::updateParallel(float time) {
+    for (auto* e : emitters_) e->updateParallel(time, jobSystem_);
 }
 
 ParticleEmitter* ParticleSystem::addEmitter(const std::string& name) {
@@ -347,7 +347,8 @@ void ParticleSystem::initialize(Scene& scene,
                                 MaterialManager& materialManager,
                                 MaterialSystem& materialSystem,
                                 Renderer& renderer,
-                                AssetRegistry& assetRegistry) {
+                                AssetRegistry& assetRegistry,
+                                JobSystem* jobSystem) {
     if (initialized_) return;
 
     scene_ = &scene;
@@ -358,7 +359,7 @@ void ParticleSystem::initialize(Scene& scene,
     assetRegistry_ = &assetRegistry;
 
     meshNames_.clear();
-    numThreads_ = std::max(1u, std::thread::hardware_concurrency());
+    jobSystem_ = jobSystem;
 
     for (int ei = 0; ei < static_cast<int>(emitters_.size()); ei++) {
         auto* e = emitters_[ei];
@@ -415,12 +416,12 @@ void ParticleSystem::initialize(Scene& scene,
 void ParticleSystem::update(float dt) {
     if (!initialized_) return;
 
-    updateParallel(dt, numThreads_);
+    updateParallel(dt);
 
     int count = static_cast<int>(meshNames_.size());
     for (int ei = 0; ei < count; ei++) {
-        std::vector<ParticleInstanceData> instData;
-        emitters_[ei]->fillInstanceDataParallel(instData, numThreads_);
+        std::vector<ParticleInstanceData>& instData = instanceScratch_;
+        emitters_[ei]->fillInstanceDataParallel(instData, jobSystem_);
 
         uint32_t instanceCount = static_cast<uint32_t>(instData.size());
         if (instanceCount > 0) {

@@ -446,35 +446,6 @@ float requestedAnisotropy(TextureFilter filter) {
 
 }
 
-VkSampler createTextureSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels) {
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR; // Filtrowanie powiększające: interpolacja liniowa
-    samplerInfo.minFilter = VK_FILTER_LINEAR; // Filtrowanie pomniejszające: interpolacja liniowa
-    
-    // Obsługa współrzędnych UV poza zakresem [0, 1] – tryb powtarzania (standardowy kaflowy podział)
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-
-    const float anisotropy = supportedAnisotropy(physicalDevice, 16.0f);
-    samplerInfo.anisotropyEnable = anisotropy > 1.0f ? VK_TRUE : VK_FALSE;
-    samplerInfo.maxAnisotropy = anisotropy;
-    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE; // Używamy znormalizowanych współrzędnych [0.0, 1.0]
-    samplerInfo.compareEnable = VK_FALSE;
-    
-    // Próbkowanie mipmap (wybór pomiędzy poziomami szczegółowości) – interpolacja liniowa między poziomami
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.maxLod = static_cast<float>(mipLevels); // Maksymalny dopuszczalny poziom mipmapy
-
-    VkSampler sampler = VK_NULL_HANDLE;
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create sampler");
-    }
-    return sampler;
-}
-
 VkSampler createSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels, TextureFilter filter, AddressMode addressMode) {
     VkSamplerCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -584,34 +555,6 @@ VkSampler createClampSampler(VkDevice device) {
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
         throw std::runtime_error("failed to create clamp sampler");
-    }
-    return sampler;
-}
-
-VkSampler createMirrorRepeatSampler(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t mipLevels) {
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    
-    // Tryb MIRRORED_REPEAT: tekstura jest powtarzana, ale co drugie powtórzenie jest odbiciem lustrzanym.
-    // Pomaga to w płynnym łączeniu krawędzi bez widocznych szwów tekstury.
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-
-    const float anisotropy = supportedAnisotropy(physicalDevice, 16.0f);
-    samplerInfo.anisotropyEnable = anisotropy > 1.0f ? VK_TRUE : VK_FALSE;
-    samplerInfo.maxAnisotropy = anisotropy;
-    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.maxLod = static_cast<float>(mipLevels);
-
-    VkSampler sampler = VK_NULL_HANDLE;
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create mirror-repeat sampler");
     }
     return sampler;
 }

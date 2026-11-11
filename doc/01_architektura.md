@@ -19,7 +19,7 @@ Silnik podzielony jest na logiczne moduły (katalogi w `engine/`):
 |-------|-----------------|----------------|
 | **Core** | Fundament silnika, pętla główna, ECS, logger, matematyka. | `Engine`, `Logger`, `Entity`, `Component` |
 | **Render** | Backend Vulkan, zarządzanie pamięcią (VMA), shadery, materiały. | `Renderer`, `MaterialSystem`, `VulkanContext` |
-| **Scene** | Zarządzanie hierarchią obiektów, serializacja, systemy ECS. | `Scene`, `SceneManager`, `TransformSystem` |
+| **Scene** | Zarządzanie hierarchią obiektów, systemy ECS. | `Scene`, `SceneManager`, `TransformSystem` |
 | **Object** | Wysokopoziomowe obiekty geometryczne i loadery. | `Terrain`, `Model3ds`, `GltfModel`, `Md2Model` |
 | **Feature** | Specjalistyczne systemy renderujące i UI. | `ParticleSystem`, `SpriteSystem`, `GuiManager` |
 | **Platform** | Abstrakcja systemu operacyjnego, okno, wejście. | `Platform`, `InputActions` |
@@ -41,7 +41,12 @@ W każdej klatce dane przechodzą przez uporządkowany proces:
    - `RenderExtractionSystem`: Tłumaczenie komponentów sceny na paczki renderujące (`RenderPacket`).
    - `LightSystem`: Zbiór aktywnych świateł dla renderera.
 4. **Render Phase**:
-   - `RenderOrchestrator` wykonuje plan renderowania (Cienie -> G-Buffer -> Lighting -> Transparent -> UI).
+   - `Renderer::render` nagrywa przebiegi klatki po kolei: cienie (`renderer_shadow_pass.cpp`) -> G-Buffer
+     (`renderer_gbuffer_pass.cpp`) -> oświetlenie deferred i obiekty forward (`renderer_deferred_pass.cpp`) ->
+     kopia koloru sceny dla oceanu (`renderer_scene_copy.cpp`) -> przezroczyste i nakładka GUI
+     (`renderer_overlay_pass.cpp`). Wspólny stan to `Renderer::RendererImpl` z prywatnego `renderer_impl.h`.
+   - Układ push constants (dane obiektu dla shadera) - `render/push_constants.h`; rysowanie paczki materiałem -
+     `packet_draw.h` (`DrawBindCache` pomija powtórne bindowanie).
    - Wysyłanie komend do GPU przez `Renderer`.
 
 ---

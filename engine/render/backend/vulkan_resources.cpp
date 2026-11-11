@@ -10,7 +10,8 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanContext> context,
                            VkDeviceSize size, 
                            VkBufferUsageFlags usage, 
                            VkMemoryPropertyFlags properties)
-    : context_(context), size_(size), usage_(usage) {
+    : context_(context), size_(size), usage_(usage),
+      hostVisible_((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
     
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -19,9 +20,15 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanContext> context,
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VmaAllocationCreateInfo allocInfo{};
-    bool needsUpload = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
-    allocInfo.usage = needsUpload ? VMA_MEMORY_USAGE_CPU_TO_GPU : VMA_MEMORY_USAGE_AUTO;
-    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    if (hostVisible_) {
+        // Pamięć zapisywana przez CPU i czytana przez GPU (bufory dynamiczne, bufory pośrednie - staging).
+        allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    } else {
+        // Pamięć karty (VRAM) - najszybsza dla GPU, CPU nie ma do niej dostępu (dane trafiają kopią vkCmdCopyBuffer).
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        allocInfo.flags = 0;
+    }
 
     VkResult res = vmaCreateBuffer(context_->allocator(), &bufferInfo, &allocInfo, &buffer_, &allocation_, nullptr);
     if (res != VK_SUCCESS) {
@@ -57,6 +64,10 @@ void VulkanBuffer::unmap() {
 }
 
 void VulkanBuffer::upload(const void* data, VkDeviceSize size) {
+    if (!hostVisible_) {
+        LOG_ERROR("[VulkanBuffer] upload() do bufora DEVICE_LOCAL - użyj kopii z bufora pośredniego");
+        return;
+    }
     if (size > size_) {
         LOG_ERROR("[VulkanBuffer] Upload size ({}) exceeds buffer size ({})", size, size_);
         return;

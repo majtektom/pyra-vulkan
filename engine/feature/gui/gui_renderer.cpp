@@ -164,7 +164,147 @@ void GuiRenderer::addText(const std::vector<GuiVertex>& verts) {
     vertices_.insert(vertices_.end(), verts.begin(), verts.end());
 }
 
+int GuiRenderer::createImage(uint32_t width, uint32_t height) {
+    if (images_.size() >= kMaxGuiImages || width == 0 || height == 0) return -1;
+    if (!imagePool_) {
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxGuiImages * kGuiMaxFrames};
+        VkDescriptorPoolCreateInfo pi{};
+        pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pi.poolSizeCount = 1;
+        pi.pPoolSizes = &ps;
+        pi.maxSets = kMaxGuiImages * kGuiMaxFrames;
+        vkCreateDescriptorPool(device_, &pi, nullptr, &imagePool_);
+    }
+    GuiImage img;
+    img.width = width;
+    img.height = height;
+    img.data.assign(static_cast<size_t>(width) * height * 4, 0);
+    const VkDeviceSize bytes = img.data.size();
+    for (uint32_t f = 0; f < kGuiMaxFrames; ++f) {
+        vk::createImage(device_, pd_, width, height, 1, VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        img.image[f], img.memory[f]);
+        img.view[f] = vk::createImageView(device_, img.image[f], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+        vk::createBuffer(device_, pd_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, img.staging[f],
+                         img.stagingMemory[f]);
+        vkMapMemory(device_, img.stagingMemory[f], 0, bytes, 0, &img.stagingPtr[f]);
+        std::memset(img.stagingPtr[f], 0, static_cast<size_t>(bytes));
+        // Stan początkowy (czarny obraz w layoucie do odczytu w shaderze) - jednorazowe polecenie.
+        vk::transitionImageLayout(device_, cp_, q_, img.image[f], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
+                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
+        VkCommandBufferAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        ai.commandPool = cp_;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        VkCommandBuffer cb;
+        vkAllocateCommandBuffers(device_, &ai, &cb);
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cb, &bi);
+        recordImageCopy(cb, img, f, false);
+        vkEndCommandBuffer(cb);
+        VkSubmitInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cb;
+        vkQueueSubmit(q_, 1, &si, VK_NULL_HANDLE);
+        vkQueueWaitIdle(q_);
+        vkFreeCommandBuffers(device_, cp_, 1, &cb);
+        img.uploaded[f] = img.version;
+
+        VkDescriptorSetAllocateInfo dai{};
+        dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dai.descriptorPool = imagePool_;
+        dai.descriptorSetCount = 1;
+        dai.pSetLayouts = &dsl_;
+        vkAllocateDescriptorSets(device_, &dai, &img.set[f]);
+        VkDescriptorImageInfo ii{};
+        ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ii.imageView = img.view[f];
+        ii.sampler = sampler_;
+        VkWriteDescriptorSet w{};
+        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet = img.set[f];
+        w.dstBinding = 0;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.descriptorCount = 1;
+        w.pImageInfo = &ii;
+        vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+    }
+    images_.push_back(std::move(img));
+    return static_cast<int>(images_.size()) - 1;
+}
+
+void GuiRenderer::updateImage(int id, const std::vector<uint8_t>& rgba) {
+    if (id < 0 || id >= static_cast<int>(images_.size())) return;
+    GuiImage& img = images_[static_cast<size_t>(id)];
+    if (rgba.size() != img.data.size()) return;
+    img.data = rgba;
+    ++img.version;
+}
+
+void GuiRenderer::addImage(int id, float x, float y, float w, float h, float z) {
+    if (id < 0 || id >= static_cast<int>(images_.size())) return;
+    auto& out = images_[static_cast<size_t>(id)].vertices;
+    GuiVertex v;
+    v.color[0] = v.color[1] = v.color[2] = 1.0f;
+    v.color[3] = 2.0f;   // znacznik dla shadera (text.hlsl): obrazek - kolor RGBA z tekstury, nie maska glifu
+    auto put = [&](float px, float py, float u, float t) {
+        v.pos[0] = px; v.pos[1] = py; v.pos[2] = z;
+        v.texCoord[0] = u; v.texCoord[1] = t;
+        out.push_back(v);
+    };
+    put(x, y, 0, 0); put(x + w, y, 1, 0); put(x + w, y + h, 1, 1);
+    put(x, y, 0, 0); put(x + w, y + h, 1, 1); put(x, y + h, 0, 1);
+}
+
+void GuiRenderer::recordImageCopy(VkCommandBuffer cmd, GuiImage& img, uint32_t fi, bool fromShaderRead) {
+    VkImageMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = img.image[fi];
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (fromShaderRead) {
+        b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {img.width, img.height, 1};
+    vkCmdCopyBufferToImage(cmd, img.staging[fi], img.image[fi], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+}
+
+void GuiRenderer::uploadImages(VkCommandBuffer cmd, uint32_t fi) {
+    for (auto& img : images_) {
+        if (img.uploaded[fi] == img.version) continue;
+        std::memcpy(img.stagingPtr[fi], img.data.data(), img.data.size());
+        recordImageCopy(cmd, img, fi, true);
+        img.uploaded[fi] = img.version;
+    }
+}
+
 void GuiRenderer::build(uint32_t fi) {
+    // Obrazki za prostokątami w tym samym buforze wierzchołków; rysowane z własną teksturą (recordDrawCommands).
+    const uint32_t rectCount = static_cast<uint32_t>(vertices_.size());
+    for (auto& img : images_) {
+        img.first[fi] = static_cast<uint32_t>(vertices_.size());
+        img.count[fi] = static_cast<uint32_t>(img.vertices.size());
+        vertices_.insert(vertices_.end(), img.vertices.begin(), img.vertices.end());
+        img.vertices.clear();
+    }
+    rectCount_ = rectCount;
     if (vertices_.empty()) { vc_ = 0; return; }
     vc_ = (uint32_t)vertices_.size();
     VkDeviceSize sz = sizeof(GuiVertex) * vertices_.size();
@@ -189,10 +329,26 @@ void GuiRenderer::recordDrawCommands(VkCommandBuffer cmd, uint32_t fi) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &ds_, 0, nullptr);
     VkBuffer b[] = {vb_[fi]}; VkDeviceSize o[] = {0};
     vkCmdBindVertexBuffers(cmd, 0, 1, b, o);
-    vkCmdDraw(cmd, vc_, 1, 0, 0);
+    if (rectCount_ > 0) vkCmdDraw(cmd, rectCount_, 1, 0, 0);
+    for (auto& img : images_) {
+        if (img.count[fi] == 0) continue;
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &img.set[fi], 0, nullptr);
+        vkCmdDraw(cmd, img.count[fi], 1, img.first[fi], 0);
+    }
 }
 
 void GuiRenderer::cleanup() {
+    for (auto& img : images_) {
+        for (uint32_t f = 0; f < kGuiMaxFrames; ++f) {
+            if (img.view[f]) vkDestroyImageView(device_, img.view[f], nullptr);
+            if (img.image[f]) vkDestroyImage(device_, img.image[f], nullptr);
+            if (img.memory[f]) vkFreeMemory(device_, img.memory[f], nullptr);
+            if (img.staging[f]) vkDestroyBuffer(device_, img.staging[f], nullptr);
+            if (img.stagingMemory[f]) vkFreeMemory(device_, img.stagingMemory[f], nullptr);
+        }
+    }
+    images_.clear();
+    if (imagePool_) { vkDestroyDescriptorPool(device_, imagePool_, nullptr); imagePool_ = VK_NULL_HANDLE; }
     for (uint32_t i = 0; i < kGuiMaxFrames; i++) {
         if (vb_[i]) { vkDestroyBuffer(device_, vb_[i], nullptr); vkFreeMemory(device_, vbm_[i], nullptr); vb_[i] = VK_NULL_HANDLE; }
     }

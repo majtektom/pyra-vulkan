@@ -31,6 +31,9 @@ public:
         Overlay
     };
     virtual Stage getStage() const { return Stage::AfterOpaque; }
+    // Czy feature czyta kopię koloru sceny (odbicia/załamania, np. ocean). Gdy żaden aktywny jej nie potrzebuje,
+    // renderer pomija kopię obrazu ekranu (~8 MB na klatkę przy 1080p).
+    virtual bool needsSceneColor() const { return false; }
 };
 
 } // namespace engine3d

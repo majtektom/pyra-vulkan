@@ -20,6 +20,7 @@ using Noise = ValueNoise;
 // Tworzy nową partię: teren, nawigację, surowce, zamki z jednostkami startowymi
 // i (zależnie od poziomu trudności) gotowe budynki przeciwnika.
 bool World::create(Scene* scene, uint32_t seed, Difficulty diff) {
+    activate();
     createLand(scene, seed, diff);
     createStartingBases(diff);
     finishCreate();
@@ -328,9 +329,15 @@ int World::addNode(NodeKind kind, const Vec3& pos, int variant, float scale) {
     }
     node.entity->transform().position = node.pos;
     node.entity->transform().rotation.y = randf(0.0f, 2.0f * PI);
-    node.entity->transform().scale = {scale, scale * randf(0.9f, 1.15f), scale};
-    nodes.push_back(node);
-    return static_cast<int>(nodes.size()) - 1;
+    node.heightJitter = randf(0.9f, 1.15f);
+    node.entity->transform().scale = {scale, scale * node.heightJitter, scale};
+    // Sloty surowców z generatora mapy (indeksy < nodesGenerated_) nie są używane ponownie - zapis gry odtwarza
+    // je z ziarna mapy; sadzonki leśniczego zajmują sloty po wyczerpanych sadzonkach.
+    const int id = nodesGenerated_ > 0 ? freeNodes_.allocate(nodes, gameTime) : static_cast<int>(nodes.size());
+    if (id == static_cast<int>(nodes.size())) nodes.emplace_back();
+    node.gen = nodes[id].gen;
+    nodes[id] = node;
+    return id;
 }
 
 // Rozmieszcza surowce: lasy wg szumu, po dwa lasy i grupę skał przy każdej bazie, skały na wzgórzach.

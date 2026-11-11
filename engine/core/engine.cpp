@@ -1,4 +1,5 @@
 #include "core/engine.h"
+#include "core/crash_handler.h"
 #include "feature/audio/audio_system.h"
 #include "render/renderer.h"
 #include "feature/font/font_manager.h"
@@ -40,6 +41,8 @@ Engine::Engine() = default;
 Engine::~Engine() { cleanup(); }
 
 bool Engine::initialize(const std::string& appName, int width, int height, bool enableValidationLayers) {
+    // Awaria (błąd pamięci, abort, nieobsłużony wyjątek) - opis ze stosem wywołań do crash/<program>_<data>.log.
+    installCrashHandler("crash");
     // Warstwy walidacji Vulkana sprawdzają KAŻDE polecenie na CPU - przy tysiącu rysowań na klatkę zjadają
     // większość czasu klatki. To narzędzie programisty: włączone w buildzie Debug albo z ENGINE_VALIDATION=1
     // (np. po zmianach w rendererze), w zwykłej grze (Release) - wyłączone. ENGINE_VALIDATION=0 wyłącza zawsze.
@@ -208,20 +211,6 @@ const Scene* Engine::activeScene() const {
     return sceneManager.activeScene();
 }
 
-void Engine::setShaderManifest(const ShaderManifest& manifest) {
-    if (shaderManager) {
-        for (const auto& entry : manifest.entries) {
-            shaderManager->add(entry.name, entry.program);
-        }
-    }
-}
-
-void Engine::addShader(const std::string& name, const ShaderProgram& program) {
-    if (shaderManager) {
-        shaderManager->add(name, program);
-    }
-}
-
 void Engine::configureScene(Scene& scene) {
     if (!scene.hasSystem("RenderExtractionSystem")) {
         scene.addSystem(std::make_unique<RenderExtractionSystem>(
@@ -255,6 +244,17 @@ void Engine::update(TimeDelta deltaTime) {
         }
     }
 
+    // ENGINE_CRASH_TEST=segv|abort|throw: celowa awaria po 60 klatkach - sprawdzenie raportu w crash/.
+    if (frameCount == 60) {
+        if (const char* crash = std::getenv("ENGINE_CRASH_TEST")) {
+            LOG_WARN("ENGINE_CRASH_TEST={} - celowa awaria (test raportu awarii)", crash);
+            if (std::string(crash) == "abort") std::abort();
+            if (std::string(crash) == "throw") throw std::runtime_error("test nieobsłużonego wyjątku");
+            volatile int* nothing = nullptr;
+            *nothing = 42;   // segv
+        }
+    }
+
     // Callback użytkownika (np. skryptowanie w pętli głównej)
     if (onUpdate) {
         PROFILE_SCOPE("update.gra (onUpdate)");
@@ -263,51 +263,29 @@ void Engine::update(TimeDelta deltaTime) {
 
     if (shaderHotReload_) shaderHotReload_->check();
 
-    // Aktualizacja animacji szkieletowych GLTF + morphingowych MD2 równolegle.
-    // GLTF i MD2 działają na niezależnych danych (różne bufory GPU) - brak wyścigów.
+    // Aktualizacja animacji szkieletowych GLTF + morphingowych MD2 równolegle (jeden parallelFor po obu listach).
+    // GLTF i MD2 działają na niezależnych danych (różne bufory GPU) - brak wyścigów. Wyniki MD2 trafiają do
+    // md2Results_ (pole silnika - pamięć wierzchołków zostaje między klatkami), a do GPU wysyła je wątek główny.
     {
-        // Uruchamiamy GLTF asynchronicznie na wątkach roboczych.
-        std::vector<std::future<void>> gltfFutures;
-        gltfFutures.reserve(currentBrainInstances_.size());
-        for (auto& inst : currentBrainInstances_) {
-            if (inst) {
-                // Każda instancja GLTF posiada własną pamięć GPU (boneMemory_) - thread-safe.
-                gltfFutures.push_back(jobSystem_.submit([&inst, dtSeconds]() {
-                    inst->update(dtSeconds, 0, 1.0f);
-                }));
+        const size_t gltfCount = currentBrainInstances_.size();
+        const size_t total = gltfCount + md2Instances_.size();
+        md2Results_.resize(md2Instances_.size());
+        jobSystem_.parallelFor(total, [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                if (i < gltfCount) {
+                    // Każda instancja GLTF posiada własną pamięć GPU (boneMemory_) - thread-safe.
+                    if (auto& inst = currentBrainInstances_[i]) inst->update(dtSeconds, 0, 1.0f);
+                    continue;
+                }
+                auto& inst = md2Instances_[i - gltfCount];
+                MeshData& out = md2Results_[i - gltfCount];
+                out.vertices.clear();
+                if (inst.model && inst.anim) animateMd2(*inst.model, *inst.anim, dtSeconds, out);
             }
-        }
-
-        // MD2 również równolegle - każda instancja ma własny MeshData i meshName.
-        // Zbieramy pary (meshName, MeshData) tylko dla aktywnych instancji z zachowaniem kolejności.
-        struct Md2Job {
-            std::string meshName;
-            MeshData result;
-            std::future<void> fut;
-        };
-        std::vector<Md2Job> md2Jobs;
-        md2Jobs.reserve(md2Instances_.size());
-
-        for (auto& inst : md2Instances_) {
-            if (!inst.model || !inst.anim) continue;
-            md2Jobs.emplace_back();
-            auto& job = md2Jobs.back();
-            job.meshName = inst.meshName;
-            // Animacja obliczana na wątku roboczym - każda instancja ma osobny stan i bufor wyjściowy.
-            job.fut = jobSystem_.submit([&inst, &out = job.result, dtSeconds]() {
-                animateMd2(*inst.model, *inst.anim, dtSeconds, out);
-            });
-        }
-
-        // Czekamy na ukończenie GLTF.
-        for (auto& f : gltfFutures) f.get();
-
-        // Czekamy na MD2 i przesyłamy wyniki do GPU (updateMesh musi być single-threaded - Vulkan).
-        for (auto& job : md2Jobs) {
-            job.fut.get();
-            if (!job.result.vertices.empty()) {
-                meshManager->updateMesh(job.meshName, job.result);
-            }
+        }, 1);
+        // updateMesh tylko z jednego wątku (Vulkan).
+        for (size_t i = 0; i < md2Instances_.size(); ++i) {
+            if (!md2Results_[i].vertices.empty()) meshManager->updateMesh(md2Instances_[i].meshName, md2Results_[i]);
         }
     }
 
@@ -324,11 +302,11 @@ void Engine::update(TimeDelta deltaTime) {
         PROFILE_SCOPE("update.scena (ekstrakcja paczek)");
         sceneManager.update(dtSeconds);
     }
-    layerManager.update(dtSeconds);
 }
 
 void Engine::renderFrame() {
     renderScene.clear();
+    renderScene.setCollectShadows(renderer && renderer->shadowsEnabled());   // cienie wyłączone - bez listy cieni
     RenderView renderView{};
     bool hasRenderView = false;
 
@@ -368,6 +346,8 @@ void Engine::renderFrame() {
         hasRenderView = false;
     }
 
+    // Nowe siatki statyczne: kopie z buforów pośrednich do pamięci karty - przed renderem, na tej samej kolejce.
+    if (meshManager) meshManager->flushUploads();
     // Wywołanie niskopoziomowych komend rysujących (Vulkan/DirectX/OpenGL).
     renderer->render(renderScene, renderView);
 }
@@ -598,20 +578,12 @@ float Engine::getWindTime() const { return renderer ? renderer->getWindTime() : 
 void Engine::setWindStrength(float strength) { if (renderer) renderer->setWindStrength(strength); }
 float Engine::getWindStrength() const { return renderer ? renderer->getWindStrength() : 0.3f; }
 
-void Engine::bindActionKey(std::string_view action, int scancode) {
-    inputActions_.bindKey(action, scancode);
-}
-
 bool Engine::actionDown(std::string_view action) const {
     return inputActions_.isDown(currentInput_, action);
 }
 
 bool Engine::actionPressed(std::string_view action) const {
     return inputActions_.wasPressed(previousInput_, currentInput_, action);
-}
-
-bool Engine::actionReleased(std::string_view action) const {
-    return inputActions_.wasReleased(previousInput_, currentInput_, action);
 }
 
 bool Engine::mouseDown(int button) const {

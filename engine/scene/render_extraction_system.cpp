@@ -62,23 +62,22 @@ void RenderExtractionSystem::update(Scene& scene, float /*deltaTime*/) {
     //  d) materialInstance – tylko odczyt (Krok 1 zakończył).
     //  e) registerTexture() – thread-safe (shared_mutex w AssetRegistry).
     // ------------------------------------------------------------------
-    const size_t nWorkers = jobs_.threadCount();
-    // N buforów – po jednym na każdy wątek roboczy (główny wątek nie przetwarza chunków).
-    std::vector<std::vector<RenderPacket>> localBuffers(nWorkers);
+    // Bufor na każdy wątek roboczy + jeden dla wątku wywołującego (on też przetwarza kawałki) - JobSystem::currentSlot.
+    // Wektory są polem systemu: pamięć zostaje między klatkami (clear nie zwalnia pojemności).
+    const size_t nSlots = jobs_.threadCount() + 1;
+    auto& localBuffers = localBuffers_;
+    localBuffers.resize(nSlots);
     {
-        const size_t estPerBuf = std::max<size_t>(4, entityCount / nWorkers + 4);
-        for (auto& buf : localBuffers) buf.reserve(estPerBuf);
+        const size_t estPerBuf = std::max<size_t>(4, entityCount / nSlots + 4);
+        for (auto& buf : localBuffers) {
+            buf.clear();
+            buf.reserve(estPerBuf);
+        }
     }
 
     jobs_.parallelFor(entityCount, [&](size_t begin, size_t end) {
-        // Stały indeks wątku - nigdy nie zmienia się przez cały czas życia silnika.
-        const size_t wIdx = JobSystem::currentWorkerIndex();
-
-        // Defensywna walidacja: jeśli z jakiegoś powodu indeks jest poza zakresem,
-        // pomijamy (nie powinno się zdarzyć - parallelFor wykonuje tylko wątki robocze).
-        if (wIdx >= nWorkers) return;
-
-        auto& myBuf = localBuffers[wIdx];
+        // Bufor tego wątku: indeks wątku roboczego albo ostatni (wątek wywołujący) - stały dla wątku.
+        auto& myBuf = localBuffers[jobs_.currentSlot()];
 
         for (size_t i = begin; i < end; ++i) {
             const auto& entity = entities[i];

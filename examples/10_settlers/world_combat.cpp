@@ -122,6 +122,11 @@ void World::releaseGarrison(int tower) {
 
 // Marsz do drzwi wieży; na miejscu żołnierz wchodzi do załogi (model ukrywa syncVisuals).
 void World::soldierGoGarrison(Unit& u, float dt) {
+    if (u.homeTower < 0) {   // wieży już nie ma (odwołanie nieaktualne) - żołnierz jest wolny
+        u.state = UnitState::Idle;
+        u.guardPos = u.pos;
+        return;
+    }
     const Building& t = buildings[u.homeTower];
     const Vec3 door = t.door();
     const bool pathDone = !u.path.empty() && u.pathIndex >= u.path.size();
@@ -233,7 +238,7 @@ void World::captureTower(int ti, int unitId) {
     t.ring->getComponent<MeshComponent>()->castShadows = false;
     t.delivered = {};
     for (auto& o : orders) {
-        if (o.alive && o.dest == ti) o.alive = false;   // dostawy dawnego właściciela przepadają
+        if (o.alive && o.dest == ti) releaseOrder(o);   // dostawy dawnego właściciela przepadają
     }
     if (t.flag >= 0 && flags[t.flag].alive) {
         removeFlag(t.flag);   // drogi poprzedniego właściciela; flaga przy budynku zostaje
@@ -250,7 +255,7 @@ void World::captureTower(int ti, int unitId) {
     u.attackMove = false;
     u.pos = t.door();
     u.path.clear();
-    territoryDirty_ = true;
+    markTerritoryChanged();
     routingDirty_ = true;
     emitSound("complete", t.pos, 1.0f, false);
     if (t.faction == kPlayer) {
@@ -336,8 +341,9 @@ void World::updateSoldier(Unit& u, int id, float dt) {
 
     soldierAcquireTarget(u);
 
-    // Wieża macierzysta przestała być nasza (zdobyta / zburzona) - żołnierz jest wolny.
-    if (u.homeTower >= 0 && (!buildings[u.homeTower].alive || buildings[u.homeTower].faction != u.faction)) {
+    // Wieża macierzysta przestała być nasza (zdobyta / zburzona / jej slot zajął nowy budynek) - żołnierz jest wolny.
+    if ((u.homeTower < 0 && (u.state == UnitState::Garrison || u.state == UnitState::GoGarrison)) ||
+        (u.homeTower >= 0 && (!buildings[u.homeTower].alive || buildings[u.homeTower].faction != u.faction))) {
         u.homeTower = -1;
         if (u.state == UnitState::Garrison || u.state == UnitState::GoGarrison) {
             u.state = UnitState::Idle;
@@ -426,6 +432,10 @@ void World::soldierAttack(Unit& u, int id, float dt) {
             return;
         }
     } else {
+        if (u.targetBuilding < 0) {   // bez celu (sprawdzone wyżej w updateSoldier - tu tylko zabezpieczenie)
+            u.state = UnitState::Idle;
+            return;
+        }
         const Building& b = buildings[u.targetBuilding];
         if (isCapturable(b)) {   // ukończonej wieży się nie burzy - szturmuje się ją
             soldierAssaultTower(u, id, dt);
@@ -503,6 +513,10 @@ void World::damageUnit(int target, float amount, int attackerFaction, int attack
     t.lastDamagedTime = gameTime;
     lastCombatTime[t.faction] = gameTime;
     if (attackerFaction >= 0) lastCombatTime[attackerFaction] = gameTime;
+    if (attackerFaction >= 0 && attackerFaction != t.faction) {   // skąd przyszedł atak (front obrony AI)
+        factions[t.faction].lastAttackPos = attackerUnit >= 0 && units[attackerUnit].alive ? units[attackerUnit].pos : t.pos;
+        factions[t.faction].lastAttackTime = gameTime;
+    }
 
     if (t.faction == kPlayer && gameTime - factions[kPlayer].underAttackMsgTime > 25.0f) {
         factions[kPlayer].underAttackMsgTime = gameTime;
@@ -528,6 +542,10 @@ void World::damageBuilding(int target, float amount, int attackerFaction, int at
     b.lastDamagedTime = gameTime;
     lastCombatTime[b.faction] = gameTime;
     if (attackerFaction >= 0) lastCombatTime[attackerFaction] = gameTime;
+    if (attackerFaction >= 0 && attackerFaction != b.faction) {
+        factions[b.faction].lastAttackPos = attackerUnit >= 0 && units[attackerUnit].alive ? units[attackerUnit].pos : b.pos;
+        factions[b.faction].lastAttackTime = gameTime;
+    }
     if (b.faction == kPlayer && gameTime - factions[kPlayer].underAttackMsgTime > 25.0f) {
         factions[kPlayer].underAttackMsgTime = gameTime;
         pushMessage(std::string("Wróg atakuje: ") + buildingDef(b.type).name, {1.0f, 0.4f, 0.3f, 1.0f});

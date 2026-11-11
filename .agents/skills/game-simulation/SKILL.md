@@ -119,6 +119,20 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
   na początku testu ustaw znany stan (zapasy, ludność, limit).
 - Przy błędzie nieodtwarzalnym dopisz szczegółowy log w miejscu porażki testu zamiast zgadywać.
 
+## 8a. Wydajność symulacji (sprawdzone)
+
+- Identyfikatory = indeksy w wektorach + ponowne używanie martwych slotów (lista wolnych z kwarantanną) i generacja
+  w każdym obiekcie; odwołanie = (indeks, generacja), nieaktualne zachowuje się jak "brak". Bez ponownego użycia
+  wektory rosną przez całą partię; bez generacji stare odwołanie trafia w nowy obiekt.
+- AI w mgle wojny: własna mapa odkrytego terenu, każde zapytanie AI o mapę przez jeden filtr (aiKnows); zwiadowca
+  z pamięcią nieosiągalnych celów; limit rozbudowy "na ślepo". Porównanie z/bez mgły na stałym ziarnie mapy.
+
+- Symulacja w krótkich krokach (np. <= 0,05 s, limit kroków na klatkę), a modele/mgła/efekty raz na klatkę -
+  wołanie pełnego update N razy przy przyspieszeniu czasu mnożyło koszt grafiki, a obcinanie dt gubiło czas.
+- Zapytania przestrzenne: siatka/kubełki (jednostki, terytorium) - i test porównujący z pełnym skanem.
+- Grafy (drogi): pamięć wyników Dijkstry per źródło + licznik wersji grafu do unieważniania.
+- Mgła wojny: liczniki obserwatorów na komórkach, przeliczać tylko tych, co zmienili komórkę.
+
 ## 9. Interfejs gracza dla ekonomii
 
 - Znaczniki problemów nad budynkami ("! brak drogi", "! pełna flaga", "! brak dojścia"), panel zaznaczenia z

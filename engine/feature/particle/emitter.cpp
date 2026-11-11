@@ -5,9 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdlib>
-#include <future>
-#include <random>
-#include <thread>
+#include "core/job_system.h"
 
 namespace engine3d::particles {
 
@@ -160,27 +158,23 @@ void ParticleEmitter::update(float time) {
     }
 }
 
-void ParticleEmitter::updateParallel(float time, int totalThreads) {
+// Ruch cząsteczek na wątkach puli silnika (JobSystem). Wcześniej co klatkę każdy emiter tworzył nowe wątki
+// przez std::async - utworzenie wątku systemowego kosztuje więcej niż ruch tysiąca cząsteczek.
+// Każdy kawałek tablicy zmienia tylko swoje cząsteczki, więc wątki sobie nie przeszkadzają; usuwanie martwych
+// i tworzenie nowych (zmiana wspólnej listy) zostaje na wątku wołającym.
+void ParticleEmitter::updateParallel(float time, JobSystem* jobs) {
     if (!particles_) return;
 
-    int totalElements = particles_->GetTotalElements();
-    if (totalThreads < 2 || totalElements < 512) {
+    const int totalElements = particles_->GetTotalElements();
+    if (!jobs || jobs->threadCount() < 2 || totalElements < 512) {
         update(time);
         return;
     }
 
-    int chunkSize = (totalElements + totalThreads - 1) / totalThreads;
-    std::vector<std::future<void>> futs;
-    Vec3 grav = gravity_;
-
-    for (int t = 0; t < totalThreads; ++t) {
-        int cstart = t * chunkSize;
-        int cend = std::min(cstart + chunkSize, totalElements);
-        if (cstart >= cend) break;
-
-        futs.push_back(std::async(std::launch::async, [this, time, cstart, cend, grav]() {
-            thread_local std::mt19937 rng(std::random_device{}());
-            for (int i = cstart; i < cend; ++i) {
+    const Vec3 grav = gravity_;
+    const size_t chunkSize = std::max<size_t>(256, (static_cast<size_t>(totalElements) + jobs->threadCount() - 1) / jobs->threadCount());
+    jobs->parallelFor(static_cast<size_t>(totalElements), [this, time, grav](size_t cstart, size_t cend) {
+            for (size_t i = cstart; i < cend; ++i) {
                 if (!particles_->IsAlive(i)) continue;
                 Particle* par = &particles_->GetAt(i);
 
@@ -231,9 +225,7 @@ void ParticleEmitter::updateParallel(float time, int totalThreads) {
                     }
                 }
             }
-        }));
-    }
-    for (auto& f : futs) f.get();
+        }, chunkSize);
 
     for (int i = 0; i < totalElements; ++i) {
         if (particles_->IsAlive(i)) {
@@ -312,36 +304,28 @@ void ParticleEmitter::fillInstanceData(std::vector<ParticleInstanceData>& out) {
     }
 }
 
-void ParticleEmitter::fillInstanceDataParallel(std::vector<ParticleInstanceData>& out, int threadCount) {
+void ParticleEmitter::fillInstanceDataParallel(std::vector<ParticleInstanceData>& out, JobSystem* jobs) {
     out.clear();
     if (!particles_) return;
 
     int alive = particles_->GetNumUsedElements();
     if (alive == 0) return;
 
-    if (threadCount < 2 || alive < 1000) {
+    if (!jobs || jobs->threadCount() < 2 || alive < 1000) {
         fillInstanceData(out);
         return;
     }
 
-    std::vector<int> activeIdx;
-    activeIdx.reserve(alive);
+    activeIdx_.clear();   // pamięć wektora zostaje między klatkami
     for (int i = 0; i < particles_->GetTotalElements(); ++i) {
-        if (particles_->IsAlive(i)) activeIdx.push_back(i);
+        if (particles_->IsAlive(i)) activeIdx_.push_back(i);
     }
 
     out.resize(alive);
-    int chunkSize = (alive + threadCount - 1) / threadCount;
-    std::vector<std::future<void>> futs;
-
-    for (int t = 0; t < threadCount; t++) {
-        int cstart = t * chunkSize;
-        int cend = std::min(cstart + chunkSize, alive);
-        if (cstart >= cend) break;
-
-        futs.push_back(std::async(std::launch::async, [&, cstart, cend]() {
-            for (int j = cstart; j < cend; j++) {
-                Particle* par = &particles_->GetAt(activeIdx[j]);
+    const size_t chunkSize = std::max<size_t>(512, (static_cast<size_t>(alive) + jobs->threadCount() - 1) / jobs->threadCount());
+    jobs->parallelFor(static_cast<size_t>(alive), [this, &out](size_t cstart, size_t cend) {
+            for (size_t j = cstart; j < cend; j++) {
+                Particle* par = &particles_->GetAt(activeIdx_[j]);
                 ParticleInstanceData& inst = out[j];
                 inst.posX = par->pos.x;
                 inst.posY = par->pos.y;
@@ -352,9 +336,7 @@ void ParticleEmitter::fillInstanceDataParallel(std::vector<ParticleInstanceData>
                 inst.b = par->color[2];
                 inst.a = par->color[3];
             }
-        }));
-    }
-    for (auto& f : futs) f.get();
+        }, chunkSize);
 }
 
 } // namespace engine3d::particles

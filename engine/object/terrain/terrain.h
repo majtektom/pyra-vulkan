@@ -251,16 +251,8 @@ public:
      * @param mgr Menadżer siatek odpowiedzialny za alokację buforów GPU.
      */
     void uploadTo(MeshManager& mgr);
-
-    /**
-     * @brief Przesyła siatki wszystkich węzłów do GPU.
-     *
-     * Alternatywna metoda uploadu - przesyła bufory wierzchołków dla każdego węzła.
-     *
-     * @param meshManager Menadżer siatek GPU.
-     * @param meshPrefix Prefiks nazwy siatki.
-     */
-    void uploadMeshes(MeshManager& meshManager, const std::string& meshPrefix);
+    // Usuwa z MeshManager wszystkie siatki tego terenu (węzły, warianty LOD) - np. przy zmianie mapy.
+    void releaseMeshes(MeshManager& mgr);
 
     // =========================================================================
     // Aktualizacja per-klatka i renderowanie
@@ -371,13 +363,8 @@ public:
     Vec3 worldOffset() const;
     float worldSizeXZ() const { return static_cast<float>(hmSize_) * scaleXZ_; }
     const std::vector<Node*>& getVisibleNodes() const { return visibleNodes_; }
-    // Zasięg (od kamery), w którym węzły spoza kadru i tak rzucają cienie.
-    void setShadowCasterDistance(float d) { shadowCasterDistance_ = d; }
     const std::vector<float>& getHeightmapData() const { return heightmap_; }
     int getHeightmapSize() const { return hmSize_; }
-    float getScaleXZ() const { return scaleXZ_; }
-    float getScaleY() const { return scaleY_; }
-    int getMaxLodLevels() const { return maxLodLevels_; }
 
     /**
      * @brief Zwraca całkowitą liczbę węzłów liściowych w drzewie czwórkowym.
@@ -394,6 +381,7 @@ public:
     std::string meshName_;                // Nazwa siatki w menadżerze GPU.
 
 private:
+    std::shared_ptr<TerrainSurface> surface_;   // wspólne dane powierzchni dla paczek węzłów (collectRenderPackets)
     /**
      * @brief Rekurencyjnie buduje drzewo czwórkowe.
      *

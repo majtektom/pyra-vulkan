@@ -16,9 +16,38 @@ World::World(Engine& engine, const GameMaterials& materials) : engine_(engine), 
     nodes.reserve(1024);
     flags.reserve(1024);
     roads.reserve(1024);
+    static int worldCounter = 0;   // każdy świat ma własny prefiks siatek (stary i nowy istnieją chwilę naraz)
+    meshPrefix_ = "w" + std::to_string(++worldCounter) + "_";
+    activate();
 }
 
-World::~World() = default;
+// Ten świat jest "bieżący" dla nowych przypisań Ref<T> (slot_ref.h). Wołane w konstruktorze i na wejściu do
+// kroku gry, zapisu i wczytania - przy kilku światach naraz każdy przypisuje odwołania do swoich wektorów.
+void World::activate() {
+    SlotRegistry<Unit>::items = &units;
+    SlotRegistry<Building>::items = &buildings;
+    SlotRegistry<Flag>::items = &flags;
+    SlotRegistry<Road>::items = &roads;
+    SlotRegistry<TransportOrder>::items = &orders;
+    SlotRegistry<ResourceNode>::items = &nodes;
+}
+
+// Siatki tworzone przez ten świat (teren, drogi, granice terytorium) - zwalniane, inaczej każda nowa gra
+// i każde wczytanie zapisu zostawiałyby je w pamięci GPU.
+World::~World() {
+    if (SlotRegistry<Unit>::items == &units) {
+        SlotRegistry<Unit>::items = nullptr;
+        SlotRegistry<Building>::items = nullptr;
+        SlotRegistry<Flag>::items = nullptr;
+        SlotRegistry<Road>::items = nullptr;
+        SlotRegistry<TransportOrder>::items = nullptr;
+        SlotRegistry<ResourceNode>::items = nullptr;
+    }
+    auto* mm = engine_.getMeshManager();
+    if (!mm) return;
+    if (terrain_) terrain_->releaseMeshes(*mm);
+    mm->removeMeshesWithPrefix(meshPrefix_);
+}
 
 // Punkt przed wejściem: środek budynku + (halfSize + 3) w kierunku przodu (oś +Z obrócona o rotY).
 Vec3 Building::door() const {
@@ -100,8 +129,10 @@ int World::spawnUnit(UnitType type, int faction, const Vec3& pos) {
     u.ring = makeEntity("ring", faction == kPlayer ? kRingPlayerMesh : kRingEnemyMesh);
     u.ring->setActive(false);
     u.ring->getComponent<MeshComponent>()->castShadows = false;
-    units.push_back(std::move(u));
-    return static_cast<int>(units.size()) - 1;
+    const int id = freeUnits_.allocate(units, gameTime);   // ponownie użyty slot poległej jednostki albo nowy
+    u.gen = units[id].gen;
+    units[id] = std::move(u);
+    return id;
 }
 
 // Stawia budynek: wysokość = średnia terenu pod obrysem, obrys blokuje nawigację.
@@ -150,8 +181,9 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
         b.scaffold->transform().scale = {h, def.height * 0.75f, h};
         b.scaffold->transform().rotation.y = rotY;
     }
-    buildings.push_back(std::move(b));
-    const int id = static_cast<int>(buildings.size()) - 1;
+    const int id = freeBuildings_.allocate(buildings, gameTime);
+    b.gen = buildings[id].gen;
+    buildings[id] = std::move(b);
 
     // Flaga przed wejściem: istniejąca flaga tuż przy drzwiach, podział drogi biegnącej pod drzwiami
     // (budynek postawiony przy drodze od razu jest z nią połączony) albo nowa flaga.
@@ -182,7 +214,7 @@ int World::placeBuilding(BuildingType type, const Vec3& posIn, int faction, bool
     routingDirty_ = true;
     // Materiały na budowę: zdejmowane z magazynów od razu, na plac donoszą je tragarze.
     if (!instant) orderMaterials(id, def.cost);
-    if (instant && def.territoryRadius > 0.0f) territoryDirty_ = true;
+    if (instant && def.territoryRadius > 0.0f) markTerritoryChanged();
     return id;
 }
 
@@ -198,7 +230,7 @@ void World::completeBuilding(int id) {
     b.delivered = {};   // materiały budowy zużyte
     b.entity->transform().scale = {1.0f, 1.0f, 1.0f};
     destroyEntity(b.scaffold);
-    if (def.territoryRadius > 0.0f) territoryDirty_ = true;
+    if (def.territoryRadius > 0.0f) markTerritoryChanged();
     routingDirty_ = true;   // nowy magazyn przyjmuje towary
     refreshFactionResources();
     if (b.faction == kPlayer) {
@@ -246,6 +278,7 @@ void World::killUnit(int id, int killerFaction) {
     u.selected = false;
     destroyEntity(u.entity);
     destroyEntity(u.ring);
+    freeUnits_.release(id, gameTime);
     factions[u.faction].unitsLost++;
     if (killerFaction >= 0 && killerFaction != u.faction) factions[killerFaction].enemiesKilled++;
 }
@@ -283,7 +316,8 @@ void World::destroyBuilding(int id, int killerFaction) {
     destroyEntity(b.entity);
     destroyEntity(b.scaffold);
     destroyEntity(b.ring);
-    if (def.territoryRadius > 0.0f) territoryDirty_ = true;
+    freeBuildings_.release(id, gameTime);
+    if (def.territoryRadius > 0.0f) markTerritoryChanged();
 
     // Zapasy magazynu przepadają. Flaga zostaje, jeśli prowadzą do niej drogi (to już zwykła flaga).
     b.stock = {};

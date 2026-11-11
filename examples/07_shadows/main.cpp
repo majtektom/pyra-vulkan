@@ -178,7 +178,6 @@ int main() {
     auto* markerPointMesh = markerPoint->addComponent<MeshComponent>("marker_point");
     markerPointMesh->materialHandle = sceneMaterialHandle;
     markerPointMesh->castShadows = false;
-    auto* pointLight = markerPoint->getComponent<LightComponent>();
 
     // 3. Światło reflektora (Spot Light - np. latarka).
     // Emituje stożek światła z danej pozycji w określonym kierunku.

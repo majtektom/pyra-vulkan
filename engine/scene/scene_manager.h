@@ -15,7 +15,6 @@ namespace engine3d {
  * scena poziomu 1, scena edytora). Odpowiada za:
  * - Tworzenie, usuwanie i wyszukiwanie scen po ich nazwach.
  * - Kontrolowanie, która scena jest w danej chwili aktywna (activeScene) – czyli aktualizowana i rysowana.
- * - Integrację z systemem zapisu/odczytu (serializacji scen i prefabrykatów).
  * - Aktualizację systemów ECS aktywnej sceny.
  */
 class SceneManager {
@@ -46,28 +45,6 @@ public:
     Scene* activeScene() { return activeScene_; }
     const Scene* activeScene() const { return activeScene_; }
     const std::unordered_map<std::string, std::unique_ptr<Scene>>& scenes() const { return scenes_; }
-
-    /**
-     * @brief Zapisuje (serializuje) wybraną scenę do pliku JSON.
-     */
-    bool serializeScene(const std::string& name, const std::string& filePath) const;
-
-    /**
-     * @brief Wczytuje (deserializuje) scenę z pliku JSON. Tworzy nową scenę, jeśli jeszcze nie istnieje.
-     */
-    bool deserializeScene(const std::string& name, const std::string& filePath);
-
-    /**
-     * @brief Zapisuje wybraną encję ze wskazanej sceny do pliku prefabrykatu JSON.
-     */
-    bool serializePrefab(const std::string& sceneName, EntityId entityId,
-                         const std::string& filePath) const;
-
-    /**
-     * @brief Tworzy instancję prefabrykatu z pliku JSON i umieszcza go na wskazanej scenie.
-     */
-    Entity* instantiatePrefab(const std::string& sceneName, const std::string& filePath,
-                              const std::string& nameOverride = "");
 
     /**
      * @brief Aktualizuje czas w systemach ECS aktywnej sceny. Wywoływane co klatkę.

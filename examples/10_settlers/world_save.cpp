@@ -36,10 +36,14 @@ template <class T> struct IsDeque : std::false_type {};
 template <class T> struct IsDeque<std::deque<T>> : std::true_type {};
 template <class T> struct IsArray : std::false_type {};
 template <class T, size_t N> struct IsArray<std::array<T, N>> : std::true_type {};
+template <class T> struct IsRef : std::false_type {};
+template <class T> struct IsRef<Ref<T>> : std::true_type {};
 
 template <class T> json enc(const T& v) {
     if constexpr (std::is_enum_v<T>) {
         return static_cast<int>(v);
+    } else if constexpr (IsRef<T>::value) {
+        return static_cast<int>(v);   // odwołanie: indeks (nieaktualne = -1); generacji nie zapisujemy
     } else if constexpr (std::is_same_v<T, Vec3>) {
         return json::array({v.x, v.y, v.z});
     } else if constexpr (std::is_same_v<T, Resources>) {
@@ -56,6 +60,8 @@ template <class T> json enc(const T& v) {
 template <class T> void dec(const json& j, T& v) {
     if constexpr (std::is_enum_v<T>) {
         v = static_cast<T>(j.get<int>());
+    } else if constexpr (IsRef<T>::value) {
+        v.setLoadedIndex(j.get<int>());   // po wczytaniu wszystkie sloty mają generację 0
     } else if constexpr (std::is_same_v<T, Vec3>) {
         v = {j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>()};
     } else if constexpr (std::is_same_v<T, Resources>) {
@@ -148,6 +154,8 @@ template <class A> void fields(A& a, FactionState& fs) {
     a("aiExpandFor", fs.aiExpandFor); a("waveTimer", fs.waveTimer); a("waveNumber", fs.waveNumber);
     a("soldiersTrained", fs.soldiersTrained); a("carrierTarget", fs.carrierTarget);
     a("carrierAuto", fs.carrierAuto); a("stockLimit", fs.stockLimit);
+    a("aiScoutTimer", fs.aiScoutTimer); a("aiScout", fs.aiScout);
+    a("aiNoTowerUntil", fs.aiNoTowerUntil); a("lastAttackPos", fs.lastAttackPos); a("lastAttackTime", fs.lastAttackTime);
 }
 
 // Stan surowca na mapie. Dla surowców spoza generatora (sadzonki) zapisujemy też rodzaj, miejsce i model.
@@ -214,7 +222,9 @@ void World::saveState(json& out) const {
     }
     out["nodes"] = std::move(nodesJ);
     out["fogOfWar"] = fogOfWar;
-    out["fogExplored"] = fogExploredRle();
+    out["fogExplored"] = fogExploredRle(kPlayer);
+    out["fogExploredAi"] = fogExploredRle(kEnemy);   // wiedza AI o mapie (mgła wojny AI)
+    out["aiFogOfWar"] = aiFogOfWar;
     out["nodesGenerated"] = nodesGenerated_;
 }
 
@@ -223,6 +233,7 @@ void World::saveState(json& out) const {
 // =====================================================================================
 
 bool World::loadState(engine3d::Scene* scene, const json& in, std::string* error) {
+    activate();
     auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
@@ -347,7 +358,9 @@ bool World::loadState(engine3d::Scene* scene, const json& in, std::string* error
             fields(r, factions[f]);
         }
         fogOfWar = in.value("fogOfWar", false);
-        if (in.contains("fogExplored")) setFogExploredRle(in["fogExplored"].get<std::string>());
+        if (in.contains("fogExplored")) setFogExploredRle(kPlayer, in["fogExplored"].get<std::string>());
+        if (in.contains("fogExploredAi")) setFogExploredRle(kEnemy, in["fogExploredAi"].get<std::string>());
+        aiFogOfWar = in.value("aiFogOfWar", aiFogOfWar);
         gameTime = in.value("gameTime", 0.0f);
         winner = in.value("winner", -1);
         if (in.contains("lastCombatTime")) dec(in["lastCombatTime"], lastCombatTime);
@@ -357,7 +370,8 @@ bool World::loadState(engine3d::Scene* scene, const json& in, std::string* error
         }
 
         // 7. To, co wynika z obiektów: terytorium, spójność dróg, obszary nawigacji, surowce na koncie.
-        territoryDirty_ = true;
+        rebuildFreeLists();
+        markTerritoryChanged();
         routingDirty_ = true;
         regionsDirty_ = true;
         finishCreate();

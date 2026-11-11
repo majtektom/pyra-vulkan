@@ -20,8 +20,6 @@ public:
     int x() const { return x_; } int y() const { return y_; }
     int width() const { return w_; } int height() const { return h_; }
     bool isHovered(int mx, int my) const;
-    int itemCount() const { return (int)items_.size(); }
-    const std::string& getItem(int idx) const { return items_[idx]; }
 
     void setOnSelect(std::function<void(const std::string&)> fn) { onSelect_ = fn; }
     void update(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta) override;

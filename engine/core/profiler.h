@@ -30,9 +30,6 @@ public:
     void count(const char* name, double n);
     void endFrame();
 
-    // Ostatni raport (średnie z okna ~3 s) - np. do wyświetlenia w grze.
-    [[nodiscard]] const std::string& lastReport() const { return lastReport_; }
-
 private:
     Profiler();
     struct Section {
@@ -47,7 +44,6 @@ private:
     std::chrono::steady_clock::time_point frameStart_{}, lapStart_{}, windowStart_{};
     double frameTotalMs_ = 0.0;
     int frames_ = 0;
-    std::string lastReport_;
 };
 
 class ProfileScope {

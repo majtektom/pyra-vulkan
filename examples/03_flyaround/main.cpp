@@ -66,17 +66,7 @@ int main() {
     // Pobranie najważniejszych menedżerów silnika
     auto* renderer = engine.getRenderer();
     auto* mats = engine.getMaterialManager();
-    auto* assets = engine.getAssetRegistry();
     std::unordered_map<std::string, MaterialHandle> materialHandles;
-
-    // Lambda pomocnicza do pobierania nazwy tekstury z rejestru zasobów
-    auto requireTextureName = [&](TextureHandle textureHandle, const std::string& fallback = "default") -> std::string {
-        if (!textureHandle.isValid() || !assets) {
-            return fallback;
-        }
-        const auto name = assets->textureName(textureHandle);
-        return name.has_value() ? *name : fallback;
-    };
 
     // Lambda pomocnicza do bezpiecznego pobierania identyfikatora materiału
     auto requireMaterialHandle = [&](const std::string& materialName) -> MaterialHandle {
@@ -105,12 +95,11 @@ int main() {
     }
 
     // Tworzenie światła kierunkowego (np. Słońce)
-    auto* sunLightEntity = activeScene->createDirectionalLight(
+    activeScene->createDirectionalLight(
         "sun_light",
         Vec3{2.3f, 2.8f, 2.5f},  // Kierunek świecenia
         Vec3{0.9f, 0.9f, 0.7f},  // Kolor (ciepła biel)
         3.2f);                   // Intensywność
-    auto* sunLight = sunLightEntity->getComponent<LightComponent>();
 
     // Konfiguracja rzutowania cieni (rozmiar kaskady/obszaru widoczności cieni)
     engine.configureDirectionalShadow(1200.0f);

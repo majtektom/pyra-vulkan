@@ -30,12 +30,12 @@ void TransparentPass::execute(VkCommandBuffer commandBuffer, uint32_t currentFra
     });
 
     // Rysowanie każdej półprzezroczystej paczki geometrii:
-    VkPipelineLayout boundLayout = VK_NULL_HANDLE;
+    DrawBindCache bound;
     for (const auto* packetPtr : sortedPackets) {
         const auto& packet = *packetPtr;
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
 
-        drawRenderPacket(commandBuffer, packet, packet.material->getPipeline(), globalDescriptorSet, boundLayout);
+        drawRenderPacket(commandBuffer, packet, packet.material->getPipeline(), globalDescriptorSet, bound);
     }
 }
 
@@ -49,12 +49,12 @@ TransparentDepthPrepass::TransparentDepthPrepass() : name_("TransparentDepthPrep
 void TransparentDepthPrepass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, const RenderScene& scene,
                                       VkDescriptorSet globalDescriptorSet) {
     (void)currentFrame;
-    VkPipelineLayout boundLayout = VK_NULL_HANDLE;
+    DrawBindCache bound;
     for (const auto& packet : scene.getTransparentPackets()) {
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
         const VulkanPipeline* depthOnly = packet.material->getDepthPrepassPipeline();
         if (!depthOnly || depthOnly->pipeline == VK_NULL_HANDLE) continue;
-        drawRenderPacket(commandBuffer, packet, *depthOnly, globalDescriptorSet, boundLayout);
+        drawRenderPacket(commandBuffer, packet, *depthOnly, globalDescriptorSet, bound);
     }
 }
 

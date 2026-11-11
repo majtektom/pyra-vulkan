@@ -49,12 +49,8 @@ public:
     VkDevice device() const { return device_; }
     VkQueue graphicsQueue() const { return graphicsQueue_; }
     VkQueue presentQueue() const { return presentQueue_; }
-    VkQueue computeQueue() const { return computeQueue_; }
     VkCommandPool commandPool() const { return commandPool_; }
-    VkCommandPool computeCommandPool() const { return computeCommandPool_; }
     VmaAllocator allocator() const { return allocator_; }
-    uint32_t graphicsQueueFamily() const { return graphicsQueueFamily_; }
-    uint32_t computeQueueFamily() const { return computeQueueFamily_; }
     bool isTessellationSupported() const { return tessellationSupported_; }
     // depthClamp: geometria przed bliską płaszczyzną jest "spłaszczana" zamiast obcinana (mapy cieni).
     bool isDepthClampSupported() const { return depthClampSupported_; }
@@ -66,7 +62,6 @@ private:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createCommandPool();
-    void createComputeCommandPool();
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
@@ -75,13 +70,9 @@ private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
     VkQueue presentQueue_ = VK_NULL_HANDLE;
-    VkQueue computeQueue_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
-    VkCommandPool computeCommandPool_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = VK_NULL_HANDLE;                  // Zarządza pamięcią (buforami, teksturami).
     bool validationLayersEnabled_ = true;
-    uint32_t graphicsQueueFamily_ = 0;                          // Indeks rodziny kolejek graficznych.
-    uint32_t computeQueueFamily_ = 0;                           // Indeks rodziny kolejek obliczeniowych.
     bool tessellationSupported_ = false;
     bool depthClampSupported_ = false;
 };

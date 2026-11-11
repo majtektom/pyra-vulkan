@@ -1,7 +1,5 @@
 #include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -9,7 +7,6 @@
 #include "core/light_component.h"
 #include "feature/fog/volumetric_fog_renderer.h"
 #include "scene/scene.h"
-#include "scene/prefab_serializer.h"
 
 using namespace engine3d;
 
@@ -53,12 +50,6 @@ bool testLocalFogVolumesAreBoundedAndSanitized() {
                   "Local fog extents should be positive") &&
            expect(nearlyEqual(result[0].edgeFade, 1.0f),
                   "Local fog edge fade should be clamped");
-}
-
-std::filesystem::path makeTempPrefabPath() {
-    const auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-    return std::filesystem::temp_directory_path() /
-           ("engine3d_prefab_hierarchy_test_" + std::to_string(now) + ".json");
 }
 
 bool testBasicParentChildAndCycleProtection() {
@@ -205,102 +196,6 @@ bool testDetachChildrenPolicy() {
     return true;
 }
 
-bool testPrefabRoundtripPreservesHierarchyAndData() {
-    Scene source("prefab_source");
-
-    Entity* root = source.createEntity("root_source");
-    Entity* child = source.createEntity("child_source");
-    Entity* grandChild = source.createEntity("grand_child_source");
-
-    root->transform().position = Vec3{1.0f, 2.0f, 3.0f};
-    child->transform().position = Vec3{4.0f, 5.0f, 6.0f};
-    grandChild->transform().position = Vec3{7.0f, 8.0f, 9.0f};
-
-    auto* childLight = child->addComponent<LightComponent>();
-    childLight->type = LightType::Spot;
-    childLight->intensity = 2.5f;
-    childLight->range = 42.0f;
-
-    if (!expect(source.setParent(child, root), "setParent(child, root) should succeed in source prefab")) {
-        return false;
-    }
-    if (!expect(source.setParent(grandChild, child), "setParent(grandChild, child) should succeed in source prefab")) {
-        return false;
-    }
-
-    const std::filesystem::path prefabPath = makeTempPrefabPath();
-
-    if (!expect(PrefabSerializer::saveEntityToFile(*root, prefabPath.string()), "PrefabSerializer::saveEntityToFile should succeed")) {
-        return false;
-    }
-
-    Scene destination("prefab_destination");
-    Entity* instantiatedRoot =
-        PrefabSerializer::instantiateFromFile(destination, prefabPath.string(), "root_instance");
-
-    std::error_code removeError;
-    std::filesystem::remove(prefabPath, removeError);
-
-    if (!expect(instantiatedRoot != nullptr, "PrefabSerializer::instantiateFromFile should return root entity")) {
-        return false;
-    }
-    if (!expect(instantiatedRoot->getName() == "root_instance", "Root instance should use name override")) {
-        return false;
-    }
-
-    const std::vector<Entity*> rootChildren = destination.childrenOf(instantiatedRoot);
-    if (!expect(rootChildren.size() == 1, "Instantiated root should have exactly one direct child")) {
-        return false;
-    }
-
-    Entity* instantiatedChild = rootChildren[0];
-    if (!expect(instantiatedChild->getName() == "child_source", "Instantiated child should keep source name")) {
-        return false;
-    }
-    if (!expect(destination.parentOf(instantiatedChild) == instantiatedRoot, "Instantiated child parent should be root instance")) {
-        return false;
-    }
-
-    const std::vector<Entity*> childChildren = destination.childrenOf(instantiatedChild);
-    if (!expect(childChildren.size() == 1, "Instantiated child should have exactly one grandchild")) {
-        return false;
-    }
-
-    Entity* instantiatedGrandChild = childChildren[0];
-    if (!expect(instantiatedGrandChild->getName() == "grand_child_source", "Grandchild should keep source name")) {
-        return false;
-    }
-    if (!expect(destination.parentOf(instantiatedGrandChild) == instantiatedChild, "Grandchild parent should be instantiated child")) {
-        return false;
-    }
-
-    if (!expect(nearlyEqual(instantiatedChild->transform().position.x, 4.0f), "Child transform.x should be preserved")) {
-        return false;
-    }
-    if (!expect(nearlyEqual(instantiatedChild->transform().position.y, 5.0f), "Child transform.y should be preserved")) {
-        return false;
-    }
-    if (!expect(nearlyEqual(instantiatedChild->transform().position.z, 6.0f), "Child transform.z should be preserved")) {
-        return false;
-    }
-
-    auto* instantiatedLight = instantiatedChild->getComponent<LightComponent>();
-    if (!expect(instantiatedLight != nullptr, "Child light component should be restored")) {
-        return false;
-    }
-    if (!expect(instantiatedLight->type == LightType::Spot, "Child light type should be preserved")) {
-        return false;
-    }
-    if (!expect(nearlyEqual(instantiatedLight->intensity, 2.5f), "Child light intensity should be preserved")) {
-        return false;
-    }
-    if (!expect(nearlyEqual(instantiatedLight->range, 42.0f), "Child light range should be preserved")) {
-        return false;
-    }
-
-    return true;
-}
-
 } // namespace
 
 int main() {
@@ -310,7 +205,6 @@ int main() {
     ok = testRemoveSubtreePolicy() && ok;
     ok = testReparentChildrenToParentPolicy() && ok;
     ok = testDetachChildrenPolicy() && ok;
-    ok = testPrefabRoundtripPreservesHierarchyAndData() && ok;
     ok = testLocalFogVolumesAreBoundedAndSanitized() && ok;
 
     if (!ok) {

@@ -1,7 +1,5 @@
 #include "scene/scene_manager.h"
 
-#include "scene/prefab_serializer.h"
-#include "scene/scene_serializer.h"
 
 namespace engine3d {
 
@@ -65,52 +63,6 @@ bool SceneManager::setActiveScene(const std::string& name) {
     }
     activeScene_ = scene;
     return true;
-}
-
-bool SceneManager::serializeScene(const std::string& name, const std::string& filePath) const {
-    const Scene* scene = getScene(name);
-    if (!scene) {
-        return false; // Scena nie istnieje.
-    }
-    // Wywołujemy serializator do zapisu stanu świata do JSON.
-    return SceneSerializer::saveToFile(*scene, filePath);
-}
-
-bool SceneManager::deserializeScene(const std::string& name, const std::string& filePath) {
-    // Pobieramy istniejącą lub tworzymy pustą scenę o podanej nazwie.
-    Scene* scene = createScene(name);
-    if (!scene) {
-        return false;
-    }
-    // Wczytujemy z pliku JSON stan świata (stare encje zostaną wyczyszczone).
-    return SceneSerializer::loadFromFile(*scene, filePath);
-}
-
-bool SceneManager::serializePrefab(const std::string& sceneName, EntityId entityId,
-                                   const std::string& filePath) const {
-    const Scene* scene = getScene(sceneName);
-    if (!scene) {
-        return false;
-    }
-
-    const Entity* entity = scene->getEntity(entityId);
-    if (!entity) {
-        return false; // Brak encji o podanym ID.
-    }
-
-    // Serializacja wybranego poddrzewa do pliku prefabrykatu.
-    return PrefabSerializer::saveEntityToFile(*entity, filePath);
-}
-
-Entity* SceneManager::instantiatePrefab(const std::string& sceneName, const std::string& filePath,
-                                        const std::string& nameOverride) {
-    Scene* scene = createScene(sceneName);
-    if (!scene) {
-        return nullptr;
-    }
-
-    // Dodajemy kopię prefabrykatu do wybranej sceny.
-    return PrefabSerializer::instantiateFromFile(*scene, filePath, nameOverride);
 }
 
 void SceneManager::update(float deltaTime) {

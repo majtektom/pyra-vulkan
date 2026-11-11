@@ -18,11 +18,6 @@ void lerpColor(const std::array<float, 4>& a, const std::array<float, 4>& b,
     for (int i = 0; i < 4; ++i) out[i] = a[i] + (b[i] - a[i]) * t;
 }
 
-float sunHeightFromTime(float tod) {
-    float t = std::fmod(tod, 24.0f);
-    return std::sin((t - 6.0f) / 12.0f * PI);
-}
-
 void generateDomeGeometry(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) {
     constexpr int n = 30;
     constexpr float r = 500.0f;

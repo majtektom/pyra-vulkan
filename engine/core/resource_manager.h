@@ -42,17 +42,6 @@ public:
         return resource;
     }
 
-    void clearUnused() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto it = resources_.begin(); it != resources_.end();) {
-            if (it->second.expired()) {
-                it = resources_.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);
         resources_.clear();

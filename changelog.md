@@ -4,7 +4,115 @@
 
 Przykład `10_settlers` — gra strategiczna w stylu "Osadników" (budowa, ekonomia, walka z AI).
 
+Usunięty martwy kod (ok. 1100 linii; wszystko jest w historii git):
+ - nieużywane zmienne i funkcje z -Wall -Wextra (m.in. model_3ds, model_gltf, sprite, skydome, przykłady 03/06/07/08)
+ - całe podsystemy bez użytkowników: `LayerManager` (silnik aktualizował pustą listę warstw), zapis/wczytanie scen
+   (`SceneSerializer`, `PrefabSerializer` z jego testem i metody `SceneManager::serialize*/deserialize*/…Prefab`)
+ - ok. 80 nigdy niewołanych metod (gettery kamery, terenu, mgły wolumetrycznej, GUI, sprite'ów, cząsteczek,
+   `Entity::getComponents/hasComponent/removeComponent`, akcje `actionReleased/bindActionKey/wasReleased`,
+   `MeshBuilder::setTransform` z całym przekształceniem, kolejka i pula poleceń obliczeniowych Vulkan itd.)
+ - zostawione świadomie: konfiguracja loggera (`setLevel`, `useFileBackend`…) - opisana w doc/10_logger.md
+
+Przegląd błędów (narzędzia):
+ - Sprawdzone: build z -Wall -Wextra (36 ostrzeżeń - martwy kod, porównania int/uint w pętlach; bez błędów logiki),
+   ASan + UBSan (clang) na teście UI, autoplay z walką i przykładach 01-09 (0 zgłoszeń, 0 wycieków w naszym kodzie),
+   build z -D_GLIBCXX_ASSERTIONS (sprawdzanie indeksów kontenerów) na teście UI i autoplay, walidacja Vulkan w Debug.
+   ThreadSanitizer nie działa ze sterownikiem NVIDIA (wewnętrzny błąd TSan przy starcie).
+ - Naprawione: po wprowadzeniu Ref<T> nieaktualne odwołanie daje -1 - tragarz idący z towarem do magazynu, który
+   zburzono, a jego slot zajął nowy budynek, czytał buildings[-1] (wywalenie gry w długiej partii). `buildingOrDead`
+   w kodzie tragarzy i zleceń, zabezpieczenia żołnierzy (wieża / cel budynek), kwarantanna slotów budynków, flag
+   i dróg 30 s. Test `staleRefTest` (w buildzie z asercjami bez poprawki przerywa program, z poprawką przechodzi)
+
+Raport awarii:
+ - Naprawione wywalanie gry w widoku debug (F3): `snprintf("%d", b.worker)` po zmianie pól na `Ref<T>` dostawał
+   obiekt zamiast inta (to samo w `describeUnit`). Build ma teraz `-Werror=format` - taka pomyłka nie skompiluje się
+ - `installCrashHandler` (engine/core/crash_handler.*, woła go Engine::initialize): przy SIGSEGV/SIGBUS/SIGFPE/
+   SIGILL/SIGABRT i nieobsłużonym wyjątku C++ zapis `crash/<program>_<data>.log` - przyczyna i adres, miejsce awarii
+   (plik:linia z łańcuchem funkcji inline), stos wywołań z nazwami funkcji i liniami (addr2line z binutils), ostatnie
+   64 wpisy logu; potem systemowy coredump jak wcześniej. Release budowany z `-g1` (tablice linii; binarki ~4x
+   większe), symbole binarek eksportowane. Test: `ENGINE_CRASH_TEST=segv|abort|throw`
+
+Poprawki z drugiego przeglądu:
+ - `Ref<T>` pamięta wektor swojego świata (odczyt zawsze sprawdza właściwy świat, także przy dwóch światach naraz;
+   `World::activate()` ustawia świat dla nowych przypisań), indeks spoza wektora = nieważny (uszkodzony zapis nie
+   wyjdzie poza tablicę), wczytanie przez `Ref::setLoadedIndex` (generacja 0, bez czytania wektora)
+ - `saveLoadTest` porównuje wszystkie klucze zapisu (nowe pola, np. wiedza AI o mapie, sprawdzane automatycznie)
+ - AI: po "żadna wieża nie doda lądu" minuta bez wież poszerzających (bez prób i logów co 3 s)
+ - AI mniej pasywne: etap "wojsko" (koszary + łańcuch broni) przed bieżącymi brakami materiałów, gdy podstawa
+   gospodarki stoi; mniejsza pierwsza fala (3/4/5 wg poziomu, kolejne do +4), 1 obrońca przy małej armii;
+   producenta brakującego materiału AI dobudowuje tylko, gdy ma mniej niż dwóch (wcześniej 6 kopalń kamienia "na
+   wieżę" zjadało jedzenie i osada stawała); wieża obronna tylko, gdy stać na nią od razu. Autoplay (4 mapy,
+   x24): każda partia kończy się zwycięstwem w 20.-30. minucie, fale od 8.-20. minuty; log `[ai]` fal i
+   `[autoplay] wojsko` (wolni żołnierze, ludność, fale)
+
+Obrona AI:
+ - Wieże obronne: przy zagrożeniu (niedawny atak - frakcja pamięta, skąd przyszedł, `lastAttackPos`; albo znany
+   budynek wroga bliżej niż 650) AI stawia gęsto wieże na granicy od strony zagrożenia (`aiDefenseFront`), bez wymogu
+   nowego lądu. Limit wież frontu (w stożku +-35° w stronę zagrożenia): 1 + budynki/8 (max 5), +1 po ataku, nie więcej
+   niż żołnierzy na załogi; tylko przy działającej gospodarce (tartak, min. 8 budynków)
+
+Poprawki AI (wieże):
+ - AI nie stawia już "stada" wież przy morzu ani pierścienia wież wokół zamku: wieża musi dodać min. 35% nowego,
+   osiągalnego lądu w swoim zasięgu (`aiTowerGain`) i stać z dala od innych wież/zamku; cel rozbudowy (las, skały)
+   musi być osiągalny pieszo (`landReachable` - las za wodą dawał rząd wież wzdłuż brzegu). Gdy żadna wieża nic
+   nie doda, AI rezygnuje z wieży i buduje co innego; log `[ai]` podaje zysk lądu każdej wieży
+
+Poprawki z przeglądu:
+ - Osadnicy: `canPlace` sprawdza wszystkie drogi w pobliżu (wcześniej po 16 drogach pętla je pomijała - przy gęstej
+   sieci budynek dawał się postawić na drodze); `removeFlag` unieważnia pamięć odległości po drogach;
+   `findEnemyUnitNear` bez alokacji (kubełki przeglądane wprost); wygląd drzew i skał (skala, obrót) liczony
+   w `present` raz na klatkę zamiast w każdym kroku symulacji
+ - Dźwięk: `playMusic` nie dekoduje na wątku gry (pierwszą porcję robi wątek strumienia), a wątek strumienia
+   dekoduje bez blokady - `playMusic`/`stopMusic` nie czekają na dekoder
+ - Renderer: kopia koloru sceny tylko, gdy aktywny feature jej potrzebuje (`IRenderFeature::needsSceneColor`,
+   ocean) - bez oceanu ~8 MB kopii na klatkę mniej; zmiana filtra i przeładowanie tekstury bez `vkDeviceWaitIdle`
+   (deskryptor podmieniany w secie każdej klatki po jej zakończeniu, stare samplery/obrazy niszczone po klatkach
+   w locie)
+ - `JobSystem::parallelFor` bez alokacji na kawałek (licznik atomowy, pomocnicy z jednym wskaźnikiem, wywołujący
+   też liczy i pomaga, czekając - zagnieżdżenie bez zakleszczenia; `currentSlot()` = bufor na wątek);
+   animacje glTF + MD2 jednym `parallelFor`, wyniki MD2 i bufory ekstrakcji paczek używane ponownie -
+   ekstrakcja paczek 0,49 -> 0,36 ms
+
+Osadnicy:
+ - Stabilne uchwyty z generacją (`slot_ref.h`): odwołania między obiektami to `Ref<T>` (indeks + generacja slotu),
+   martwe sloty jednostek, budynków, flag, dróg, zleceń i sadzonek są po kwarantannie używane ponownie - wektory
+   nie rosną przez całą partię, a stare odwołanie do obiektu z zajętego slotu daje -1 (wcześniej zlecenia
+   transportu zajmowały martwe sloty od razu i bez generacji - tragarz mógł "przejąć" cudze zlecenie)
+ - Mgła wojny dla AI: każda frakcja ma własną mapę odkrytego terenu; AI zna tylko odkryte surowce, góry i budynki
+   gracza, wysyła zwiadowcę, a wież "na ślepo" stawia najwyżej kilka (dalej czeka na zwiad); zapis zachowuje
+   wiedzę AI (`fogExploredAi`). `SETTLERS_AIFOG=0` - AI bez mgły (porównania)
+ - AI: pamięć ekonomii (budynki frakcji według typu liczone raz na krok myślenia zamiast przeglądania wszystkich
+   budynków w każdym zapytaniu), deterministyczne szukanie miejsca (pierścienie od środka zamiast 120 losowych
+   prób - zwartsza osada, krótsze drogi, ten sam wynik za każdym razem)
+ - `SETTLERS_SEED=<n>` - stała mapa (ziarno wypisywane w logu); testy `slotReuseTest`, `aiFogTest`; log autoplay:
+   zwiad (odkryta część mapy, znane budynki wroga) i sloty (rozmiar wektora / żywe obiekty)
+
 Nowe w silniku:
+ - Renderer podzielony na pliki przebiegów: `render()` to lista kroków (cienie, G-Buffer, oświetlenie deferred,
+   kopia sceny, przezroczyste, nakładka), klasa `RendererImpl` w prywatnym `renderer_impl.h`, metody w
+   `renderer_shadow_pass/gbuffer_pass/deferred_pass/scene_copy/overlay_pass/textures/fog_of_war.cpp`
+   (renderer_core.cpp: 3970 -> 830 linii); usunięty nieużywany `RenderOrchestrator`
+ - `render/push_constants.h`: jeden układ push constants materiału (`MaterialPushConstants`, `makeMaterialPush`)
+   i cieni zamiast trzech kopii; `static_assert` pilnuje rozmiaru zgodnego z shaderami
+ - `RenderPacket`: dane terenu (warstwy tekstur, mapa wysokości) we wspólnym `TerrainSurface` zamiast ~300 B
+   w każdej paczce; indeksy tekstur terenu liczone raz na teren, a nie dla każdej paczki
+ - Siatki statyczne w pamięci karty: `loadMesh` tworzy bufory DEVICE_LOCAL, dane idą przez bufor pośredni,
+   a `MeshManager::flushUploads` (Engine woła przed renderem) wysyła wszystkie kopie klatki jednym zgłoszeniem;
+   `updateMesh` (siatki zmieniane co klatkę) zostaje w pamięci hosta
+ - Cienie: przy wyłączonych cieniach renderer nie zbiera listy cieni ani nie liczy kaskad; lista cieni to
+   odwołania zamiast kopii paczek; tańszy test "paczka w kaskadzie" (środek + rozmiar zamiast 8 narożników)
+   - nagrywanie cieni 0,28 -> 0,18 ms
+ - Cząsteczki liczone na puli wątków silnika (`Engine::getJobSystem`, parametr `ParticleSystem::initialize`)
+   zamiast tworzenia wątków `std::async` co klatkę
+ - Dźwięk w czasie rzeczywistym: wątek audio nie czeka na muteks i nie alokuje - polecenia z gry przez kolejkę
+   bez blokad, muzykę OGG dekoduje osobny wątek do bufora pierścieniowego (brak trzasków przy zacięciach gry)
+ - Mniej zmian stanu przy rysowaniu: `DrawBindCache` (packet_draw.h) pamięta zbindowany potok, descriptor sety
+   i bufory i pomija powtórzenia; paczki G-Buffera sortowane po potoku, pierścieniu odległości i siatce
+   (front-to-back, teren na końcu), paczki cieni - raz na klatkę po potoku i siatce. Przy ~1000 paczkach
+   ~3500 bindowań mniej na klatkę, nagrywanie cieni 0,41 -> 0,28 ms
+ - Wydajność i wycieki: `MeshManager::removeMesh/removeMeshesWithPrefix/meshCount` (bufory zwalniane bezpiecznie
+   przez retire), `Terrain::releaseMeshes`; obrazki w GUI (`GuiMgr::createImage/updateImage/addOverlayImage`,
+   kopia na klatkę w locie, przesył w preRender) - np. minimapa jako jedna tekstura zamiast 4096 prostokątów
  - Porządek w shaderach: jedno miejsce na każdą rzecz - `shared/globals.hlsl` (UBO, tekstury bindless, mapa cieni;
    wcześniej 12 kopii cbuffer), `shared/surface.hlsl` (`SurfaceData`, `perturbNormal` - wcześniej 4 kopie mapowania
    normalnych), `shared/gbuffer_output.hlsl` (`packGBuffer`), `shared/surface_lighting.hlsl` (`shadeSurface`,
@@ -72,6 +180,12 @@ Nowe w silniku:
  - `GuiMgr::addOverlayRect/addOverlayFrame` (HUD), `isPointerOverGui`, `GuiWindow::setPosition/setSize`
  - `feature/audio/audio_system.h` — dźwięk: mikser SDL3, OGG przez stb_vorbis, dźwięk 3D, muzyka strumieniowana z przenikaniem
  - `InputSnapshot::mouseWheelF` — precyzyjne kółko myszy/touchpad (wcześniej ułamki ginęły przy rzutowaniu na int)
+ - Osadnicy: optymalizacje z przeglądu - symulacja i prezentacja rozdzielone (`World::simulate` w krokach
+   <= 0,05 s, najwyżej 12 na klatkę + `World::present` raz na klatkę; koniec gubienia czasu przy zacięciach),
+   pamięć odległości po drogach (`networkFrom`), mapa właścicieli terenu i kubełki jednostek, przyrostowa mgła
+   wojny, minimapa jako tekstura; naprawiony wyciek siatek (drogi, teren i granice starego świata zostawały
+   w VRAM przy każdej budowie/rozbiórce drogi i każdym wczytaniu); testy `spatialGridTest` i liczby siatek;
+   duża osada x24: 2,3 -> 1,7 ms na klatkę, 480 jednostek x24: 3,8 -> 1,5 ms
  - Osadnicy: mgła wojny i zwiad (`world_fog.cpp`) - siatka widoczności gracza 256x256 (4 x 4 j.), zasięg wzroku
    jednostek (łucznik najdalej) i budynków (zamek, wieże - dalej niż terytorium); jednostki wroga widać tylko
    w zasięgu wzroku, budynki/flagi/drogi/granice wroga - na odkrytym terenie; bez zaznaczania niewidocznego wroga,

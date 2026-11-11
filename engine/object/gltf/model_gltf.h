@@ -108,8 +108,6 @@ public:
     void update(float dt, int animIdx = 0, float speed = 1.0f);
     void cleanup();
 
-    Entity* getRootEntity() const { return rootEntity_; }
-    float getAnimationTime() const { return animTime_; }
     void setAnimationTime(float time) { animTime_ = time; }
 
     // Liczba slotów macierzy kości: GPU może jeszcze czytać kMaxFrames poprzednich klatek,

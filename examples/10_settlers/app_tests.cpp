@@ -6,6 +6,8 @@
  * SETTLERS_AUTOPLAY  - AI gra za obie strony, stan partii jest logowany co 30 s gry.
  */
 #include <filesystem>
+#include <set>
+#include <random>
 #include <nlohmann/json.hpp>
 #include "settlers_app.h"
 
@@ -458,6 +460,18 @@ void SettlersApp::economyRoadTest() {
     const bool connected = w.autoConnectFlag(wcFlag, &reason);
     LOG_INFO("[uitest] droga drwal-zamek: {} {}", connected ? "zbudowana" : "BRAK", reason);
     uiCheck("autoConnectFlag łączy warsztat drogą z zamkiem", connected);
+    {   // Siatki dróg: usunięcie dróg zwalnia ich siatki (wcześniej każda budowa / rozbiórka zostawiała je w VRAM).
+        const size_t withRoads = engine_.getMeshManager()->meshCount();
+        std::vector<int> roadIds;
+        for (size_t r = 0; r < w.roads.size(); ++r) {
+            if (w.roads[r].alive && (w.roads[r].flagA == wcFlag || w.roads[r].flagB == wcFlag)) roadIds.push_back(static_cast<int>(r));
+        }
+        for (int r : roadIds) w.removeRoad(r);
+        const size_t without = engine_.getMeshManager()->meshCount();
+        LOG_INFO("[uitest] siatki dróg: {} odcinków przy drwalu, siatek {} -> {} po usunięciu", roadIds.size(), withRoads, without);
+        uiCheck("usunięcie drogi zwalnia jej siatkę", !roadIds.empty() && without + roadIds.size() <= withRoads);
+        w.autoConnectFlag(wcFlag, &reason);   // droga z powrotem - dalsza część testu jej potrzebuje
+    }
     for (int i = 0; i < 2400; ++i) w.update(0.1f);
     const int delivered = w.buildings[castle].stock[CarryType::Wood];
     const int produced = w.buildings[wc].produced - producedBefore;
@@ -680,9 +694,10 @@ void SettlersApp::autoRecruitTest() {
     w.debugSetStock(kPlayer, Resources{{CarryType::Weapons, 40}, {CarryType::Bread, 40}, {CarryType::Fish, 40}, {CarryType::Planks, 60}});
     // Mapy są losowe - gdy domów nie dało się postawić, robimy miejsce w limicie ludności (bezczynni osadnicy odchodzą).
     w.update(0.1f);
-    for (size_t i = 0; i < w.units.size() && fs.popCap - fs.population < 8; ++i) {
+    // Najpierw bezczynni; gdy to za mało (wszyscy zajęci), dowolni osadnicy - test sprawdza rekrutację, nie gospodarkę.
+    for (int pass = 0; pass < 2; ++pass) for (size_t i = 0; i < w.units.size() && fs.popCap - fs.population < 8; ++i) {
         const Unit& u = w.units[i];
-        if (u.alive && u.faction == kPlayer && u.type == UnitType::Settler && u.state == UnitState::Idle) {
+        if (u.alive && u.faction == kPlayer && u.type == UnitType::Settler && (pass == 1 || u.state == UnitState::Idle)) {
             w.debugKillUnit(static_cast<int>(i));
             --fs.population;
         }
@@ -739,7 +754,12 @@ void SettlersApp::saveLoadTest() {
     for (const auto& u : world_->units) unitsBefore += u.alive ? 1 : 0;
     for (const auto& b : world_->buildings) buildingsBefore += b.alive ? 1 : 0;
     const bool saved = saveGame(path);
+    const size_t meshesBefore = engine_.getMeshManager()->meshCount();
     const bool loaded = saved && loadGame(path);
+    // Wczytanie tworzy nowy świat - siatki starego (teren, drogi, granice) muszą zostać zwolnione.
+    const size_t meshesAfter = engine_.getMeshManager()->meshCount();
+    LOG_INFO("[uitest] siatki w MeshManager: przed wczytaniem {}, po {}", meshesBefore, meshesAfter);
+    uiCheck("wczytanie gry nie zostawia siatek starego świata", meshesAfter <= meshesBefore + 5);
     uiCheck("zapis i wczytanie gry z pliku", saved && loaded);
     if (!loaded) {
         mode_ = prevMode;
@@ -748,10 +768,14 @@ void SettlersApp::saveLoadTest() {
     nlohmann::json after;
     world_->saveState(after);
     std::string diff;
-    for (const char* key : {"seed", "gameTime", "rng", "buildings", "units", "flags", "roads", "orders", "factions", "nodes",
-                            "fogOfWar", "fogExplored"}) {
-        if (before[key] != after[key]) diff += std::string(diff.empty() ? "" : ", ") + key;
+    // Wszystkie klucze zapisu (z obu stron) - nowe pole w saveState jest sprawdzane bez dopisywania go tutaj.
+    std::set<std::string> keys;
+    for (auto it = before.begin(); it != before.end(); ++it) keys.insert(it.key());
+    for (auto it = after.begin(); it != after.end(); ++it) keys.insert(it.key());
+    for (const std::string& key : keys) {
+        if (!before.contains(key) || !after.contains(key) || before[key] != after[key]) diff += (diff.empty() ? "" : ", ") + key;
     }
+    uiCheck("zapis zawiera wiedzę AI o mapie (mgła wojny AI)", before.contains("fogExploredAi") && before.contains("aiFogOfWar"));
     LOG_INFO("[uitest] zapis/wczytanie: budynki {}, jednostki {}, plik {} KB, różnice: {}", buildingsBefore, unitsBefore,
              std::filesystem::exists(path) ? std::filesystem::file_size(path) / 1024 : 0, diff.empty() ? "brak" : diff);
     uiCheck("po wczytaniu stan świata jest identyczny z zapisanym", diff.empty());
@@ -765,6 +789,176 @@ void SettlersApp::saveLoadTest() {
     std::error_code ec;
     std::filesystem::remove(path, ec);
     mode_ = prevMode;
+}
+
+// Siatki przestrzenne (optymalizacja) muszą dawać te same wyniki co pełny skan:
+// właściciel terenu z mapy komórek = dokładny, najbliższy wróg z kubełków = z przeglądu wszystkich jednostek.
+void SettlersApp::spatialGridTest() {
+    World& w = *world_;
+    w.update(0.1f);   // kubełki jednostek z bieżących pozycji
+    std::mt19937 rng(1234);
+    std::uniform_real_distribution<float> coord(-kWorldHalf + 5.0f, kWorldHalf - 5.0f);
+    int ownerMismatch = 0;
+    for (int i = 0; i < 3000; ++i) {
+        const Vec3 p{coord(rng), 0.0f, coord(rng)};
+        if (w.territoryOwnerAt(p) != w.territoryOwnerExactPublic(p)) ++ownerMismatch;
+    }
+    int enemyMismatch = 0;
+    for (int i = 0; i < 300; ++i) {
+        const Vec3 p{coord(rng), 0.0f, coord(rng)};
+        const int f = i % kFactionCount;
+        const float radius = 90.0f;
+        // Pełny przegląd (wzorzec) - ta sama reguła co findEnemyUnitNear.
+        int best = -1;
+        float bestScore = std::numeric_limits<float>::max();
+        for (size_t k = 0; k < w.units.size(); ++k) {
+            const Unit& u = w.units[k];
+            if (!u.alive || u.faction == f || u.state == UnitState::Garrison) continue;
+            const float d = std::sqrt((u.pos.x - p.x) * (u.pos.x - p.x) + (u.pos.z - p.z) * (u.pos.z - p.z));
+            if (d > radius) continue;
+            const float score = d + (u.type == UnitType::Settler ? 40.0f : 0.0f);
+            if (score < bestScore) {
+                bestScore = score;
+                best = static_cast<int>(k);
+            }
+        }
+        if (w.findEnemyUnitNearPublic(f, p, radius) != best) ++enemyMismatch;
+    }
+    LOG_INFO("[uitest] siatki przestrzenne: różnice właściciela terenu {}/3000, najbliższego wroga {}/300", ownerMismatch,
+             enemyMismatch);
+    uiCheck("mapa właścicieli terenu daje te same wyniki co dokładne liczenie", ownerMismatch == 0);
+    uiCheck("kubełki jednostek dają tego samego najbliższego wroga co pełny przegląd", enemyMismatch == 0);
+}
+
+// Stabilne uchwyty: slot poległej jednostki jest po kwarantannie zajmowany przez nową (wektor nie rośnie),
+// stare odwołanie (cel ataku) do zabitej jednostki daje -1, a nie nową jednostkę z tego samego slotu.
+void SettlersApp::slotReuseTest() {
+    World& w = *world_;
+    const Vec3 c = w.buildings[w.factions[kPlayer].castle].pos;
+    const Vec3 p{c.x + 30.0f, 0.0f, c.z + 30.0f};
+    const int victim = w.debugSpawnUnit(UnitType::Swordsman, kEnemy, p);
+    const int hunter = w.debugSpawnUnit(UnitType::Swordsman, kPlayer, p);
+    w.units[hunter].targetUnit = victim;
+    const bool refBefore = w.units[hunter].targetUnit == victim;
+    w.debugKillUnit(victim);
+    const bool refDuringQuarantine = w.units[hunter].targetUnit == victim;   // martwa, ale jeszcze ta sama
+    const size_t sizeBefore = w.units.size();
+    w.gameTime += 10.0f;   // po kwarantannie
+    // Nowe jednostki zajmują wolne sloty (najstarszy wolny najpierw) - aż trafi na slot ofiary.
+    int reused = -1;
+    std::vector<int> spawned;
+    for (int i = 0; i < 64 && reused < 0; ++i) {
+        const int id = w.debugSpawnUnit(UnitType::Settler, kPlayer, p);
+        spawned.push_back(id);
+        if (id == victim) reused = id;
+    }
+    const bool noGrowth = w.units.size() <= sizeBefore + spawned.size() && reused == victim;
+    const bool staleRef = w.units[hunter].targetUnit == -1;
+    LOG_INFO("[uitest] sloty: odwołanie przed {} w kwarantannie {}, slot ofiary użyty ponownie {}, stare odwołanie = {}, "
+             "wolnych slotów {}", refBefore, refDuringQuarantine, reused == victim, w.units[hunter].targetUnit.get(),
+             w.freeSlotCount());
+    uiCheck("odwołanie do jednostki działa, także w czasie kwarantanny po śmierci", refBefore && refDuringQuarantine);
+    uiCheck("slot poległej jednostki zajmuje nowa jednostka (wektor nie rośnie)", noGrowth);
+    uiCheck("stare odwołanie do jednostki z ponownie użytego slotu daje -1", staleRef);
+    for (int id : spawned) w.debugKillUnit(id);
+    w.debugKillUnit(hunter);
+}
+
+// Nieaktualne odwołania: tragarze idą z towarem do magazynów, magazyny zostają zburzone, po kwarantannie ich sloty
+// zajmują nowe budynki. Odwołania tragarzy (cel dostawy) muszą dać "brak", a nie nowy budynek ani indeks -1
+// (w buildzie z -D_GLIBCXX_ASSERTIONS wyjście poza wektor przerywa program - test wtedy go wykrywa).
+void SettlersApp::staleRefTest() {
+    World& w = *world_;
+    const bool aiWas = w.aiEnabled;
+    w.aiEnabled = false;
+    const Vec3 c = w.buildings[w.factions[kPlayer].castle].pos;
+    auto placeHouse = [&]() {
+        for (float r = 40.0f; r < 240.0f; r += 7.0f) {
+            for (int k = 0; k < 24; ++k) {
+                const float a = static_cast<float>(k) * 2.0f * PI / 24.0f + r * 0.03f;
+                const Vec3 p = w.snapToGrid(add(c, {std::cos(a) * r, 0.0f, std::sin(a) * r}));
+                if (w.canPlace(BuildingType::House, p, kPlayer)) return w.placeBuilding(BuildingType::House, p, kPlayer, true);
+            }
+        }
+        return -1;
+    };
+    // Flaga odbioru: dowolna żywa flaga gracza.
+    int flag = -1;
+    for (size_t i = 0; i < w.flags.size() && flag < 0; ++i) {
+        if (w.flags[i].alive && w.flags[i].faction == kPlayer) flag = static_cast<int>(i);
+    }
+    const int target = placeHouse();   // "magazyn" docelowy tragarza - zaraz zniknie
+    const int carrier = w.debugSpawnUnit(UnitType::Settler, kPlayer, flag >= 0 ? w.flags[flag].pos : c);
+    if (flag < 0 || target < 0) {
+        uiCheck("test nieaktualnych odwołań: jest flaga i miejsce na budynek", false);
+        return;
+    }
+    w.demolish(target);
+    w.gameTime += 40.0f;   // po kwarantannie slotów budynków
+    int reusedId = -1;
+    for (int k = 0; k < 64 && reusedId != target; ++k) {
+        reusedId = placeHouse();
+        if (reusedId < 0) break;
+    }
+    // Tragarz stoi przy fladze odbioru, a jego cel dostawy to zburzony budynek, którego slot zajął już nowy.
+    Unit& u = w.units[carrier];
+    u.state = UnitState::GoToRoad;
+    u.atFlag = flag;
+    u.jobFlag = flag;
+    u.carry = CarryType::Wood;
+    u.carryCount = 1;
+    u.path.clear();
+    u.pos = w.flags[flag].pos;
+    // Odwołanie z generacją sprzed zburzenia (jak u tragarza, który dostał zlecenie, zanim magazyn zniknął):
+    // setLoadedIndex daje generację 0, a slot po ponownym użyciu ma już generację >= 1 - odwołanie nieaktualne.
+    u.jobDest.setLoadedIndex(target);
+    const bool staleBefore = u.jobDest == -1;
+    for (int i = 0; i < 20; ++i) w.update(0.1f);   // tragarz przechodzi przez kod odbioru towaru
+    LOG_INFO("[uitest] nieaktualne odwołania: slot budynku użyty ponownie {}, odwołanie tragarza nieaktualne {}, gra trwa",
+             reusedId == target, staleBefore);
+    uiCheck("tragarz z nieaktualnym celem dostawy (slot zajęty przez nowy budynek) nie psuje gry",
+            reusedId == target && staleBefore && w.units[carrier].alive);
+    w.debugKillUnit(carrier);
+    w.aiEnabled = aiWas;
+}
+
+// Mgła wojny AI: komputer nie zna budynku gracza, dopóki jego ludzie go nie zobaczą (nie może go wybrać na cel
+// fali ataku); po przejściu łucznika wroga obok budynek jest znany. Szukanie miejsca: ten sam wynik za każdym razem.
+void SettlersApp::aiFogTest() {
+    World& w = *world_;
+    const bool aiFogWas = w.aiFogOfWar;
+    w.aiFogOfWar = true;
+    int target = -1;
+    for (size_t i = 0; i < w.buildings.size() && target < 0; ++i) {
+        const Building& b = w.buildings[i];
+        if (b.alive && b.faction == kPlayer && !w.exploredBy(kEnemy, b.pos)) target = static_cast<int>(i);
+    }
+    if (target < 0) {
+        LOG_INFO("[uitest] mgła AI: wróg zna już wszystkie budynki gracza - część testu pominięta");
+    } else {
+        auto known = [&]() {
+            const auto list = w.aiKnownEnemyBuildingsPublic(kEnemy);
+            return std::find(list.begin(), list.end(), target) != list.end();
+        };
+        const bool hiddenBefore = !w.aiKnowsPublic(kEnemy, w.buildings[target].pos) && !known();
+        const int scout = w.debugSpawnUnit(UnitType::Archer, kEnemy, w.buildings[target].door());
+        for (int i = 0; i < 4; ++i) w.update(0.2f);   // mgła odświeża się co 0,15 s
+        const bool knownAfter = w.aiKnowsPublic(kEnemy, w.buildings[target].pos) && known();
+        w.debugKillUnit(scout);
+        LOG_INFO("[uitest] mgła AI: budynek gracza nieznany przed zwiadem {}, znany po {}, wróg zna {:.0f}% mapy", hiddenBefore,
+                 knownAfter, w.exploredFraction(kEnemy) * 100.0f);
+        uiCheck("AI nie zna budynku gracza na nieodkrytym terenie", hiddenBefore);
+        uiCheck("AI zna budynek gracza po zwiadzie", knownAfter);
+    }
+    w.aiFogOfWar = aiFogWas;
+
+    // Deterministyczne szukanie miejsca: dwa wywołania - to samo miejsce, najbliżej środka z dostępnych.
+    const Vec3 home = w.buildings[w.factions[kPlayer].castle].pos;
+    Vec3 a{}, b{};
+    const bool fa = w.findPlacementNearPublic(BuildingType::House, kPlayer, home, 20.0f, 160.0f, a);
+    const bool fb = w.findPlacementNearPublic(BuildingType::House, kPlayer, home, 20.0f, 160.0f, b);
+    LOG_INFO("[uitest] szukanie miejsca: {} ({:.1f}, {:.1f}) / {} ({:.1f}, {:.1f})", fa, a.x, a.z, fb, b.x, b.z);
+    uiCheck("szukanie miejsca na budynek daje ten sam wynik (bez losowania)", fa && fb && distanceXZ(a, b) < 0.01f);
 }
 
 // Mgła wojny i zwiad: zamek wroga na początku nieodkryty (jego jednostek nie widać, nie można ich zaznaczyć);
@@ -1108,6 +1302,18 @@ void SettlersApp::runUiTestStep() {
         storageJamTest();
         autoRecruitTest();
         aiPlannerTest();
+        spatialGridTest();
+        slotReuseTest();
+        {
+            // Zmiana filtra tekstur w trakcie gry: bez vkDeviceWaitIdle - nowe samplery, podmiana deskryptorów
+            // klatka po klatce, stare samplery niszczone po klatkach w locie (sprawdzane walidacją Vulkan).
+            const TextureFilter was = engine_.getTextureFilter();
+            engine_.setTextureFilter(TextureFilter::Linear);
+            engine_.setTextureFilter(was);
+            uiCheck("zmiana filtra tekstur w trakcie gry", engine_.getTextureFilter() == was);
+        }
+        aiFogTest();
+        staleRefTest();
         fogOfWarTest();
         saveLoadTest();
         freePlayTest();
@@ -1394,8 +1600,14 @@ void SettlersApp::updateAutoplay() {
                          factionName(f), buildingDef(b.type).name, w.flagConnected(b.flag) ? "tak" : "NIE", b.delivered.total(),
                          buildingDef(b.type).cost.total(), ord, unreachable, b.progress * 100.0f);
             }
-            LOG_INFO("[autoplay] wojsko {}: broń={} koszary={} w kolejce={} wieże={} w załogach={}", factionName(f),
-                     w.factions[f].res[CarryType::Weapons], barracks, queued, towers, garrisoned);
+            int freeSoldiers = 0;
+            for (const auto& u : w.units) {
+                freeSoldiers += (u.alive && u.faction == f && u.type != UnitType::Settler && u.state != UnitState::Garrison &&
+                                 u.state != UnitState::GoGarrison) ? 1 : 0;
+            }
+            LOG_INFO("[autoplay] wojsko {}: broń={} koszary={} w kolejce={} wieże={} w załogach={} wolni żołnierze={} "
+                     "ludność={}/{} fale={}", factionName(f), w.factions[f].res[CarryType::Weapons], barracks, queued, towers,
+                     garrisoned, freeSoldiers, w.factions[f].population, w.factions[f].popCap, w.factions[f].waveNumber);
             LOG_INFO("[autoplay] transport {}: drogi={} tragarze={}/{} zajęci={} na flagach={} dostawy={} (bez towaru {}) "
                      "magazyn={}/{} warsztaty={} bez drogi={} wstrzymane={}",
                      factionName(f), roadCount, ts.carriers, ts.target, ts.busy, onFlags, ts.ordersWaiting, ts.ordersUnfunded,
@@ -1405,6 +1617,20 @@ void SettlersApp::updateAutoplay() {
             int units = 0;
             for (const auto& u : w.units) units += u.alive ? 1 : 0;
             LOG_INFO("[autoplay] wydajność gry: fps={:.0f} jednostek={} (przyspieszenie x{})", engine_.getCurrentFPS(), units, gameSpeed_);
+            // Mgła wojny AI: ile mapy zna każda strona i czy odkryła już budynki przeciwnika.
+            for (int f = 0; f < kFactionCount; ++f) {
+                int known = 0;
+                for (const auto& b : w.buildings) known += (b.alive && b.faction != f && w.exploredBy(f, b.pos)) ? 1 : 0;
+                const int scout = w.factions[f].aiScout;
+                LOG_INFO("[autoplay] zwiad {}: odkryte {:.0f}% mapy, znane budynki wroga {}, zwiadowca {}", factionName(f),
+                         w.exploredFraction(f) * 100.0f, known,
+                         scout >= 0 && w.units[scout].alive ? World::stateName(w.units[scout].state) : "brak");
+            }
+            // Sloty: rozmiar wektora / żywe obiekty - przy ponownym używaniu slotów wektor nie rośnie przez całą partię.
+            auto alive = [](const auto& v) { int n = 0; for (const auto& x : v) n += x.alive ? 1 : 0; return n; };
+            LOG_INFO("[autoplay] sloty (wektor/żywe): jednostki {}/{} budynki {}/{} flagi {}/{} drogi {}/{} zlecenia {}/{} "
+                     "surowce {}/{}", w.units.size(), alive(w.units), w.buildings.size(), alive(w.buildings), w.flags.size(),
+                     alive(w.flags), w.roads.size(), alive(w.roads), w.orders.size(), alive(w.orders), w.nodes.size(), alive(w.nodes));
         }
         if (audio_) LOG_INFO("[autoplay] audio: muzyka={} grająca={} szczyt={:.3f} głosy={}", audio_->currentMusic(),
                              audio_->isMusicPlaying(), audio_->peakLevel(), audio_->activeVoices());

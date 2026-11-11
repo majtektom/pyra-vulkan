@@ -88,23 +88,16 @@ public:
 
     // Zarządzanie zasobami sprajtów w puli:
     int addSprite(const Sprite& sprite);
-    Sprite& getSprite(int id);
-    int spriteCount() const;
-    void removeSprite(int id);
     void clear();
 
     // Modyfikatory stanu sprajtów:
     void setPosition(int id, const Vec3& pos);
     void setSize(int id, float size);
     void setColor(int id, const std::array<float, 4>& color);
-    void setUV(int id, float offsetU, float offsetV, float scaleU, float scaleV);
 
     // Sterowanie animacją:
     void setAnim(int id, int framesX, int framesY, float timePerFrame,
                  int startFrame = 0, int endFrame = -1, bool loop = true);
-    void playAnim(int id);
-    void pauseAnim(int id);
-    void stopAnim(int id);
 
     // Nadpisane metody z interfejsu IRenderFeature:
     void init(Renderer*) override {}

@@ -75,11 +75,13 @@ void World::updateAI(int f, float dt) {
     fs.aiThinkTimer -= dt;
     if (fs.aiThinkTimer <= 0.0f) {
         fs.aiThinkTimer = 3.0f;
+        aiEco_[f] = aiEconomy(f);   // jeden przegląd świata na krok myślenia - dalsze zapytania korzystają z pamięci
         aiConnectRoads(f);
         aiBuildNext(f);
         aiTrainArmy(f);
     }
 
+    aiScout(f, dt);
     aiLaunchAttackWave(f, dt);
 }
 
@@ -90,12 +92,24 @@ Vec3 World::aiHome(int f) const {
 }
 
 // Stan gospodarki frakcji widziany przez AI.
+bool World::aiKnows(int f, const Vec3& p) const {
+    return !aiFogOfWar || exploredBy(f, p) || territoryOwnerAt(p) == f;
+}
+
 World::AiEconomy World::aiEconomy(int f) const {
     AiEconomy e;
-    for (const auto& b : buildings) {
-        if (!b.alive || b.faction != f) continue;
+    for (size_t i = 0; i < buildings.size(); ++i) {
+        const Building& b = buildings[i];
+        if (!b.alive) continue;
+        if (b.faction != f) {
+            if (aiKnows(f, b.pos)) e.knownEnemyBuildings.push_back(static_cast<int>(i));
+            continue;
+        }
         const size_t t = static_cast<size_t>(b.type);
         e.total[t]++;
+        e.own[t].push_back(static_cast<int>(i));
+        ++e.buildingCount;
+        if (b.constructed && b.outputBlocked && flagBlockReason(b.flag) == FlagBlock::StorageFull) ++e.storageBlocked;
         if (!b.constructed) {
             e.inProgress[t]++;
             ++e.underConstruction;
@@ -107,6 +121,7 @@ World::AiEconomy World::aiEconomy(int f) const {
         if (producesGoods(b.type) && b.flag >= 0 && flagAvailableGoods(flags[b.flag]) >= 4) e.backlog[t]++;
         if (b.inputStarved) e.starved[t]++;
     }
+    for (const auto& u : units) e.soldiers += (u.alive && u.faction == f && u.type != UnitType::Settler) ? 1 : 0;
     e.have = spendable(f);
     for (const auto& o : orders) {   // dostawy bez pokrycia w towarze = to, czego brakuje odbiorcom
         if (o.alive && o.faction == f && !o.funded) e.waiting[o.type] += o.amount;
@@ -193,13 +208,12 @@ int World::aiResourceCluster(int f, NodeKind kind, BuildingType worker, Vec3& ce
     const float coveredR = buildingDef(worker).workRadius * 0.5f;
     int best = 0;
     int sampled = 0;
+    const auto& workers = aiEco_[f].own[static_cast<size_t>(worker)];
     for (size_t i = 0; i < nodes.size() && sampled < 80; i += 3) {   // co trzeci węzeł - wystarczy do oceny
         const ResourceNode& nd = nodes[i];
-        if (!nd.alive || nd.kind != kind || territoryOwnerAt(nd.pos) != f) continue;
+        if (!nd.alive || nd.kind != kind || territoryOwnerAt(nd.pos) != f || !aiKnows(f, nd.pos)) continue;
         bool covered = false;
-        for (const auto& b : buildings) {
-            covered |= b.alive && b.faction == f && b.type == worker && dist2D(b.pos, nd.pos) < coveredR;
-        }
+        for (int bi : workers) covered |= dist2D(buildings[bi].pos, nd.pos) < coveredR;
         if (covered) continue;
         ++sampled;
         const int c = countNodesInRange(kind, nd.pos, 60.0f);
@@ -213,14 +227,17 @@ int World::aiResourceCluster(int f, NodeKind kind, BuildingType worker, Vec3& ce
 
 // Cel rozbudowy terytorium: najbliższy (od zamku) punkt poza naszym i wrogim terenem, w którym jest to, czego
 // zabrakło: drzewa (drwal, leśniczy), skały (kamieniarz), góry (kopalnie). Inaczej - wolny teren najdalej od wroga.
-bool World::aiExpansionTarget(int f, BuildingType wanted, Vec3& target) const {
+bool World::aiExpansionTarget(int f, BuildingType wanted, Vec3& target, bool* blind) const {
+    if (blind) *blind = false;
     const Vec3 home = aiHome(f);
-    auto freeLand = [&](const Vec3& p) { return territoryOwnerAt(p) < 0; };
+    // Ziemia niczyja - AI ocenia tylko teren, który zna (mgła wojny AI).
+    auto freeLand = [&](const Vec3& p) { return aiKnows(f, p) && territoryOwnerAt(p) < 0; };
     float best = 1e9f;
     bool found = false;
+    // Tylko cele osiągalne lądem - las za morzem dawał rząd wież wzdłuż brzegu (każda "w stronę" celu).
     auto consider = [&](const Vec3& p) {
         const float d = dist2D(p, home);
-        if (d < best && d < 700.0f && freeLand(p)) {
+        if (d < best && d < 700.0f && freeLand(p) && landReachable(home, p)) {
             best = d;
             target = p;
             found = true;
@@ -244,16 +261,25 @@ bool World::aiExpansionTarget(int f, BuildingType wanted, Vec3& target) const {
         }
     }
     if (found) return true;
-    // Wolny teren: kierunek od wroga (rozbudowa "do tyłu" jest bezpieczniejsza), sprawdzamy wachlarz kierunków.
-    const int enemy = f == kPlayer ? kEnemy : kPlayer;
-    Vec3 away = subtract(home, aiHome(enemy));
+    if (blind) *blind = true;
+    // Wolny teren: kierunek od ZNANYCH budynków wroga (rozbudowa "do tyłu" jest bezpieczniejsza); gdy wroga jeszcze
+    // nie odkryto - w stronę środka mapy. Nieodkryty ląd też jest dobrym celem: wieża go odsłoni.
+    Vec3 away = multiply(home, -1.0f);   // do środka mapy
+    const auto& enemies = aiEco_[f].knownEnemyBuildings;
+    if (!enemies.empty()) {
+        Vec3 c{};
+        for (int bi : enemies) c = add(c, buildings[bi].pos);
+        away = subtract(home, multiply(c, 1.0f / static_cast<float>(enemies.size())));
+    }
     const float len = std::sqrt(away.x * away.x + away.z * away.z);
     const float base = len > 1.0f ? std::atan2(away.z, away.x) : 0.0f;
+    auto landToClaim = [&](const Vec3& p) { return !aiKnows(f, p) || territoryOwnerAt(p) < 0; };
     for (int k = 0; k < 12 && !found; ++k) {
         const float a = base + static_cast<float>((k + 1) / 2) * ((k % 2) ? 0.5f : -0.5f);
         for (float r = 150.0f; r < 500.0f && !found; r += 25.0f) {
             const Vec3 p{home.x + std::cos(a) * r, 0.0f, home.z + std::sin(a) * r};
-            if (heightAt(p.x, p.z) > kWaterLevel + 2.0f && heightAt(p.x, p.z) < kMountainLevel && freeLand(p)) {
+            if (heightAt(p.x, p.z) > kWaterLevel + 2.0f && heightAt(p.x, p.z) < kMountainLevel && landToClaim(p) &&
+                landReachable(home, p)) {
                 target = p;
                 found = true;
             }
@@ -266,16 +292,14 @@ bool World::aiExpansionTarget(int f, BuildingType wanted, Vec3& target) const {
 bool World::aiFindSpot(int f, BuildingType t, Vec3& spot) {
     const Vec3 home = aiHome(f);
     const float maxR = buildingDef(BuildingType::Castle).territoryRadius - 25.0f;
+    const AiEconomy& e = aiEco_[f];
     auto centroid = [&](std::initializer_list<BuildingType> types, Vec3& c) {
         Vec3 sum{};
         int n = 0;
-        for (const auto& b : buildings) {
-            if (!b.alive || b.faction != f) continue;
-            for (BuildingType ty : types) {
-                if (b.type == ty) {
-                    sum = add(sum, b.pos);
-                    ++n;
-                }
+        for (BuildingType ty : types) {
+            for (int bi : e.own[static_cast<size_t>(ty)]) {
+                sum = add(sum, buildings[bi].pos);
+                ++n;
             }
         }
         if (n > 0) c = multiply(sum, 1.0f / static_cast<float>(n));
@@ -291,12 +315,10 @@ bool World::aiFindSpot(int f, BuildingType t, Vec3& spot) {
         return aiResourceCluster(f, NodeKind::Rock, t, c) >= 3 && findPlacementNear(t, f, c, 8.0f, 40.0f, spot);
     case BuildingType::Forester: {
         // Przy drwalu, który nie ma leśniczego w pobliżu (leśniczy sadzi w promieniu 60).
-        for (const auto& w : buildings) {
-            if (!w.alive || w.faction != f || w.type != BuildingType::Woodcutter) continue;
+        for (int wi : e.own[static_cast<size_t>(BuildingType::Woodcutter)]) {
+            const Building& w = buildings[wi];
             bool has = false;
-            for (const auto& b : buildings) {
-                has |= b.alive && b.faction == f && b.type == BuildingType::Forester && dist2D(b.pos, w.pos) < 100.0f;
-            }
+            for (int fi : e.own[static_cast<size_t>(BuildingType::Forester)]) has |= dist2D(buildings[fi].pos, w.pos) < 100.0f;
             if (!has && findPlacementNear(t, f, w.pos, 12.0f, 50.0f, spot)) return true;
         }
         break;
@@ -319,9 +341,10 @@ bool World::aiFindSpot(int f, BuildingType t, Vec3& spot) {
         // Magazyn blisko produkcji: w okolicy środka ciężkości warsztatów.
         Vec3 sum{};
         int n = 0;
-        for (const auto& b : buildings) {
-            if (b.alive && b.faction == f && producesGoods(b.type)) {
-                sum = add(sum, b.pos);
+        for (size_t t = 0; t < e.own.size(); ++t) {
+            if (!producesGoods(static_cast<BuildingType>(t))) continue;
+            for (int bi : e.own[t]) {
+                sum = add(sum, buildings[bi].pos);
                 ++n;
             }
         }
@@ -329,8 +352,35 @@ bool World::aiFindSpot(int f, BuildingType t, Vec3& spot) {
         break;
     }
     case BuildingType::Tower: {
-        // Wieża przy granicy terytorium, w stronę tego, czego brakuje: idziemy od celu w stronę zamku
-        // aż do pierwszego punktu na własnym terenie.
+        if (aiDefenseTower_) {
+            // Wieża obronna: przy froncie, mogą stać gęsto (byle nie jedna na drugiej) - teren nie musi przybywać.
+            Vec3 front;
+            int level = 0;
+            if (!aiDefenseFront(f, front, level)) return false;
+            const float towerR = buildingDef(BuildingType::Tower).territoryRadius;
+            auto spaced = [&](const Vec3& p) {
+                for (int bi : e.own[static_cast<size_t>(BuildingType::Tower)]) {
+                    if (dist2D(buildings[bi].pos, p) < towerR * 0.3f) return false;
+                }
+                return true;
+            };
+            return findPlacementNear(t, f, front, 0.0f, 50.0f, spot, spaced);
+        }
+        // Wieża ma sens tylko, gdy poszerza teren o ląd: min. 35% jej zasięgu to nowa, osiągalna ziemia, i nie stoi
+        // przy innej wieży / zamku (wcześniej przy morzu powstawał rząd wież, z których każda dodawała tylko wodę).
+        const float towerR = buildingDef(BuildingType::Tower).territoryRadius;
+        auto worthIt = [&](const Vec3& p) {
+            for (BuildingType ty : {BuildingType::Tower, BuildingType::Castle}) {
+                for (int bi : e.own[static_cast<size_t>(ty)]) {
+                    if (dist2D(buildings[bi].pos, p) < towerR * 0.8f) return false;
+                }
+            }
+            const float g = aiTowerGain(f, p);
+            aiTowerBestGain_ = std::max(aiTowerBestGain_, g);
+            return g >= 0.35f;
+        };
+        aiTowerBestGain_ = 0.0f;
+        // W stronę tego, czego brakuje: idziemy od celu w stronę zamku aż do pierwszego punktu na własnym terenie.
         Vec3 target;
         if (aiExpansionTarget(f, factions[f].aiExpandFor >= 0 ? static_cast<BuildingType>(factions[f].aiExpandFor) : BuildingType::Count, target)) {
             Vec3 dir = subtract(home, target);
@@ -342,12 +392,12 @@ bool World::aiFindSpot(int f, BuildingType t, Vec3& spot) {
                     const Vec3 p = add(target, multiply(dir, d));
                     if (territoryOwnerAt(p) != f) continue;
                     const Vec3 inside = add(p, multiply(dir, 20.0f));   // kawałek w głąb, żeby budynek zmieścił się na naszym
-                    if (findPlacementNear(t, f, inside, 0.0f, 35.0f, spot)) return true;
+                    if (findPlacementNear(t, f, inside, 0.0f, 35.0f, spot, worthIt)) return true;
                     break;
                 }
             }
         }
-        return findPlacementNear(t, f, home, maxR * 0.7f, maxR + 60.0f, spot);
+        return findPlacementNear(t, f, home, maxR * 0.7f, maxR + 60.0f, spot, worthIt);
     }
     case BuildingType::Barracks:
         if (findPlacementNear(t, f, home, 30.0f, maxR, spot)) return true;
@@ -361,27 +411,28 @@ bool World::aiFindSpot(int f, BuildingType t, Vec3& spot) {
 // Planista budowy (opis kolejności na górze pliku). Najwyżej 2 budowy naraz, jeden nowy budynek na krok.
 void World::aiBuildNext(int f) {
     FactionState& fs = factions[f];
-    const AiEconomy e = aiEconomy(f);
+    const AiEconomy& e = aiEco_[f];   // policzone w updateAI na początku kroku myślenia
     auto n = [&](BuildingType t) { return e.total[static_cast<size_t>(t)]; };
+    aiDefenseTower_ = false;
 
     // 1. Sprzątanie: wyczerpany kamieniarz / drwal bez drzew i bez sadzonek - burzymy (pracownik wraca do puli).
-    for (size_t i = 0; i < buildings.size(); ++i) {
+    for (BuildingType gatherer : {BuildingType::Quarry, BuildingType::Woodcutter}) for (int i : e.own[static_cast<size_t>(gatherer)]) {
         const Building& b = buildings[i];
-        if (!b.alive || b.faction != f || !b.constructed || b.resourcesInRange != 0) continue;
+        if (!b.constructed || b.resourcesInRange != 0) continue;
         const bool exhausted = b.type == BuildingType::Quarry ||
                                (b.type == BuildingType::Woodcutter && saplingsNear(b.pos, buildingDef(b.type).workRadius) == 0);
         if (!exhausted) continue;
         aiLogDecision(f, std::string("burzy ") + bname(b.type) + " - nie ma już czego wydobywać");
-        demolish(static_cast<int>(i));
+        demolish(i);
         return;
     }
     // Plac budowy, który od 90 s nie ma drogi do magazynu - materiały nigdy nie dotrą, a blokuje limit 2 budów.
-    for (size_t i = 0; i < buildings.size(); ++i) {
+    for (const auto& list : e.own) for (int i : list) {
         const Building& b = buildings[i];
-        if (!b.alive || b.faction != f || b.constructed || b.type == BuildingType::Castle) continue;
+        if (b.constructed || b.type == BuildingType::Castle) continue;
         if (flagConnected(b.flag) || gameTime - b.placedTime < 90.0f) continue;
         aiLogDecision(f, std::string("burzy plac ") + bname(b.type) + " - od 90 s bez drogi");
-        demolish(static_cast<int>(i));
+        demolish(i);
         return;
     }
     // Limit ludności: nowi osadnicy (budowniczowie, tragarze) pojawią się dopiero po Domu - Dom może więc powstać
@@ -404,10 +455,57 @@ void World::aiBuildNext(int f) {
         choose(BuildingType::House, "limit ludności " + std::to_string(fs.population) + "/" + std::to_string(fs.popCap));
     }
     // Brak miejsca / surowców na terytorium (nie udało się postawić potrzebnego budynku) - wieża w tamtą stronę.
-    if (fs.aiPlacementFailures >= 2 && e.inProgress[static_cast<size_t>(BuildingType::Tower)] == 0) {
+    // Mgła wojny AI: gdy AI nie zna żadnego miejsca z tym, czego szuka, stawia najwyżej kilka wież "na ślepo"
+    // (odsłaniają teren), a dalej czeka na zwiad - inaczej wieże ciągnęłyby się w nieznane bez końca.
+    bool blindExpansion = false;
+    if (fs.aiPlacementFailures >= 2) {
+        Vec3 t;
+        const BuildingType wanted = fs.aiExpandFor >= 0 ? static_cast<BuildingType>(fs.aiExpandFor) : BuildingType::Count;
+        aiExpansionTarget(f, wanted, t, &blindExpansion);
+        if (blindExpansion && n(BuildingType::Tower) >= 3 + e.buildingCount / 10) {
+            aiLogDecision(f, std::string("nie zna miejsca dla: ") + (wanted != BuildingType::Count ? bname(wanted) : "budynku") +
+                                 " - czeka na zwiad zamiast kolejnej wieży w nieznane");
+            fs.aiPlacementFailures = 0;
+        }
+    }
+    const bool expansionTowerAllowed = gameTime >= fs.aiNoTowerUntil;   // niedawno nie było gdzie - nie próbujemy w kółko
+    if (fs.aiPlacementFailures >= 2 && expansionTowerAllowed && e.inProgress[static_cast<size_t>(BuildingType::Tower)] == 0) {
         choose(BuildingType::Tower, std::string("brak miejsca na terytorium dla: ") +
                                         (fs.aiExpandFor >= 0 ? bname(static_cast<BuildingType>(fs.aiExpandFor)) : "budynku") +
                                         " - wieża poszerzy teren w tę stronę");
+    }
+    // Obrona: przy zagrożeniu (wróg blisko granicy albo niedawny atak) gęsto wieże na froncie - od strony,
+    // z której wróg przychodzi. Tylko przy działającej gospodarce (tartak, kilka budynków) i z limitem zależnym od
+    // wielkości osady i liczby żołnierzy (wieża bez załogi nie strzela).
+    {
+        Vec3 front;
+        int level = 0;
+        if (n(BuildingType::Sawmill) > 0 && e.buildingCount >= 8 && e.inProgress[static_cast<size_t>(BuildingType::Tower)] == 0 &&
+            aiDefenseFront(f, front, level)) {
+            // Wieże frontu = wszystkie w stożku +-35° w stronę zagrożenia (nie tylko przy bieżącym punkcie frontu -
+            // ten przesuwa się z każdą wieżą i wieże pełzłyby w stronę wroga bez końca).
+            const Vec3 home = aiHome(f);
+            Vec3 toFront = subtract(front, home);
+            toFront.y = 0.0f;
+            const float frontLen = std::max(1.0f, std::sqrt(toFront.x * toFront.x + toFront.z * toFront.z));
+            int frontTowers = 0;
+            for (int bi : e.own[static_cast<size_t>(BuildingType::Tower)]) {
+                Vec3 v = subtract(buildings[bi].pos, home);
+                v.y = 0.0f;
+                const float len = std::sqrt(v.x * v.x + v.z * v.z);
+                if (len < 1.0f) continue;
+                const float cosA = (v.x * toFront.x + v.z * toFront.z) / (len * frontLen);
+                frontTowers += cosA > 0.82f ? 1 : 0;   // cos 35°
+            }
+            const int maxFront = std::min(1 + e.buildingCount / 8, 5) + (level >= 2 ? 1 : 0);
+            // Wieża obronna tylko, gdy stać na nią od razu - obrona nie może uruchamiać "budowy producenta materiału".
+            const bool affordable = e.have.canAfford(buildingDef(BuildingType::Tower).cost);
+            if (frontTowers < maxFront && frontTowers <= e.soldiers && affordable && next == BuildingType::Count) {
+                aiDefenseTower_ = true;   // tylko gdy to ta reguła wybiera budynek (nie wcześniejsza wieża poszerzająca)
+                choose(BuildingType::Tower, std::string("obrona frontu (") + (level >= 2 ? "niedawny atak" : "wróg blisko granicy") +
+                                                ", wież na froncie " + std::to_string(frontTowers) + "/" + std::to_string(maxFront) + ")");
+            }
+        }
     }
     if (aiNeedsWarehouse(f, e)) {
         choose(BuildingType::Warehouse, "magazyny " + std::to_string(storageUsedOf(f)) + "/" + std::to_string(storageCapacityOf(f)) +
@@ -422,6 +520,23 @@ void World::aiBuildNext(int f) {
             choose(r.processor, std::string(bname(r.processor)) + " - 1 na " + std::to_string(r.perProcessor) + " (" +
                                     bname(r.supplier) + ": " + std::to_string(suppliers) + ", " + bname(r.processor) + ": " +
                                     std::to_string(n(r.processor)) + ")");
+        }
+    }
+
+    // 3b. Wojsko: gdy podstawa gospodarki stoi, łańcuch broni i koszary mają pierwszeństwo przed bieżącymi brakami
+    //     desek/kamienia/jedzenia (tych brakuje prawie zawsze - wcześniej wojsko z listy minimum nie powstawało
+    //     przez pół godziny, a AI nie miało kim atakować).
+    {
+        const bool baseReady = n(BuildingType::Sawmill) > 0 && n(BuildingType::Quarry) + n(BuildingType::Mine) > 0 &&
+                               n(BuildingType::Fisher) + n(BuildingType::Hunter) >= 2 && e.buildingCount >= 8;
+        // Brak ludzi zwykle wstrzymuje wojsko (najpierw jedzenie), ale po 15 min gry już nie - inaczej koszary nie powstają nigdy.
+        if (baseReady && (!e.peopleShort || gameTime > 900.0f)) {
+            for (BuildingType t : {BuildingType::Barracks, BuildingType::CoalMine, BuildingType::OreMine, BuildingType::Smelter,
+                                   BuildingType::Smithy}) {
+                if (n(t) > 0) continue;
+                choose(t, std::string("wojsko: ") + bname(t) + " (łańcuch broni dla koszar)");
+                break;
+            }
         }
     }
 
@@ -479,11 +594,12 @@ void World::aiBuildNext(int f) {
     }
     int buildingsTotal = 0;
     for (size_t t = 0; t < e.total.size(); ++t) buildingsTotal += e.total[t];
-    if (e.inProgress[static_cast<size_t>(BuildingType::Tower)] == 0 &&
+    if (e.inProgress[static_cast<size_t>(BuildingType::Tower)] == 0 && expansionTowerAllowed &&
         n(BuildingType::Tower) < buildingsTotal / 10) {
         choose(BuildingType::Tower, "rozwój terytorium (1 wieża na 10 budynków)");
     }
     if (next == BuildingType::Count) return;
+    if (next != BuildingType::Tower) aiDefenseTower_ = false;
     if (atPopCap && next != BuildingType::House && e.underConstruction >= 2) return;
 
     // Rezerwa: bez tartaku i źródła kamienia nie da się nic odbudować - dopóki ich nie ma, materiały na nie
@@ -524,6 +640,12 @@ void World::aiBuildNext(int f) {
         const CarryType lack = e.have[CarryType::Planks] < cost[CarryType::Planks] ? CarryType::Planks : CarryType::Stone;
         const BuildingType alt = aiPlanFor(f, e, lack, 0);
         if (alt == BuildingType::Count || alt == next || !e.have.canAfford(buildingDef(alt).cost)) return;   // czekamy
+        // Producentów tego materiału jest już co najmniej dwóch - brak to kwestia czasu/transportu, nie liczby
+        // producentów. Bez tego AI stawiało kopalnię za kopalnią "na wieżę brakuje kamienia" (6 kopalń zjadało
+        // jedzenie i deski, osada stawała).
+        const int producers = lack == CarryType::Stone ? n(BuildingType::Quarry) + n(BuildingType::Mine)
+                                                       : n(BuildingType::Sawmill) + n(BuildingType::Woodcutter) / 2;
+        if (producers >= 2) return;   // czekamy na materiał
         why = std::string("na ") + bname(next) + " brakuje: " + goodName(lack);
         next = alt;
     }
@@ -538,6 +660,20 @@ void World::aiBuildNext(int f) {
         next = BuildingType::Mine;
         found = aiFindSpot(f, next, spot);
     }
+    if (!found && next == BuildingType::Tower && aiDefenseTower_) {
+        aiLogDecision(f, "nie ma miejsca na wieżę obronną przy froncie (" + why + ")");
+        return;
+    }
+    if (!found && next == BuildingType::Tower) {
+        // Nie ma miejsca, w którym wieża dodałaby ląd - przez minutę bez wież poszerzających (bez prób co 3 s,
+        // które blokowałyby inne budowy i zalewały log).
+        fs.aiPlacementFailures = 0;
+        fs.aiNoTowerUntil = gameTime + 60.0f;
+        aiLogDecision(f, std::string("żadna wieża nie poszerzy już lądu (najlepsze miejsce: ") +
+                             std::to_string(static_cast<int>(aiTowerBestGain_ * 100.0f)) + "% nowego lądu; " + why +
+                             ") - rezygnuje z wieży");
+        return;
+    }
     if (!found) {
         fs.aiPlacementFailures++;
         if (next != BuildingType::Tower) fs.aiExpandFor = static_cast<int>(next);
@@ -545,6 +681,7 @@ void World::aiBuildNext(int f) {
         return;
     }
     if (next == BuildingType::Tower) {
+        if (!aiDefenseTower_) why += " (nowy ląd " + std::to_string(static_cast<int>(aiTowerGain(f, spot) * 100.0f)) + "% zasięgu)";
         fs.aiPlacementFailures = 0;
         fs.aiExpandFor = -1;
     } else {
@@ -564,12 +701,7 @@ void World::aiBuildNext(int f) {
 // i najwyżej 1 magazyn na 8 budynków - inaczej deski bez limitu zapełniałyby kolejne magazyny w nieskończoność.
 bool World::aiNeedsWarehouse(int f, const AiEconomy& e) const {
     if (e.inProgress[static_cast<size_t>(BuildingType::Warehouse)] > 0) return false;
-    int total = 0, storeFull = 0;
-    for (const auto& b : buildings) {
-        if (!b.alive || b.faction != f) continue;
-        ++total;
-        if (b.constructed && b.outputBlocked && flagBlockReason(b.flag) == FlagBlock::StorageFull) ++storeFull;
-    }
+    const int total = e.buildingCount, storeFull = e.storageBlocked;
     const int stores = e.total[static_cast<size_t>(BuildingType::Warehouse)];
     if (stores >= 1 + total / 8) return false;
     return storeFull > 0 || storageUsedOf(f) * 10 >= storageCapacityOf(f) * 9 || (e.onFlags > 30 && stores < 2);
@@ -596,12 +728,11 @@ void World::aiConnectRoads(int f) {
 // Każde koszary szkolą wojsko (kolejka do 2): dwóch mieczników na jednego łucznika.
 void World::aiTrainArmy(int f) {
     FactionState& fs = factions[f];
-    for (size_t i = 0; i < buildings.size(); ++i) {
+    for (int i : aiEco_[f].own[static_cast<size_t>(BuildingType::Barracks)]) {
         const Building& b = buildings[i];
-        if (!b.alive || b.faction != f || b.type != BuildingType::Barracks || !b.constructed) continue;
-        if (b.trainQueue.size() >= 2) continue;
+        if (!b.alive || !b.constructed || b.trainQueue.size() >= 2) continue;
         const UnitType type = (fs.soldiersTrained % 3 == 2) ? UnitType::Archer : UnitType::Swordsman;
-        queueTraining(static_cast<int>(i), type);
+        queueTraining(i, type);
     }
 }
 
@@ -616,41 +747,189 @@ void World::aiLaunchAttackWave(int f, float dt) {
     std::vector<int> army;
     for (size_t i = 0; i < units.size(); ++i) {
         const Unit& u = units[i];
-        if (u.alive && u.faction == f && u.type != UnitType::Settler &&
+        if (u.alive && u.faction == f && u.type != UnitType::Settler && static_cast<int>(i) != fs.aiScout &&
             (u.state == UnitState::Idle || (u.state == UnitState::Moving && !u.attackMove))) {
             army.push_back(static_cast<int>(i));
         }
     }
-    const int minWave = (difficulty == Difficulty::Easy ? 4 : (difficulty == Difficulty::Normal ? 5 : 6)) + fs.waveNumber;
-    if (static_cast<int>(army.size()) < minWave + 2) {
+    // Pierwsza fala mała (3 / 4 / 5 wg poziomu), kolejne większe - najwyżej o 4. Obrońców: 1 przy małej armii, 2 przy większej.
+    const int minWave = (difficulty == Difficulty::Easy ? 3 : (difficulty == Difficulty::Normal ? 4 : 5)) + std::min(fs.waveNumber, 4);
+    const int defenders = army.size() >= 8 ? 2 : 1;
+    if (static_cast<int>(army.size()) < minWave + defenders) {
         fs.waveTimer = 20.0f;   // za mało wojska - sprawdzimy za 20 s
         return;
     }
 
-    // Dwóch żołnierzy najbliżej zamku zostaje na obronie.
+    // Żołnierze najbliżej zamku zostają na obronie.
     const Vec3 home = aiHome(f);
     std::sort(army.begin(), army.end(), [&](int a, int b) { return dist2D(units[a].pos, home) < dist2D(units[b].pos, home); });
-    army.erase(army.begin(), army.begin() + 2);
+    army.erase(army.begin(), army.begin() + defenders);
 
-    // Cel: budynek przeciwnika najbliższy naszemu zamkowi.
+    // Cel: ZNANY budynek przeciwnika (na terenie odkrytym przez AI) najbliższy naszemu zamkowi.
+    // Nie znamy żadnego - zwiadowca szuka dalej, fala poczeka.
     int target = -1;
     float best = std::numeric_limits<float>::max();
     for (size_t i = 0; i < buildings.size(); ++i) {
         const Building& b = buildings[i];
-        if (!b.alive || b.faction == f) continue;
+        if (!b.alive || b.faction == f || !aiKnows(f, b.pos)) continue;
         const float d = dist2D(b.pos, home);
         if (d < best) {
             best = d;
             target = static_cast<int>(i);
         }
     }
+    if (target < 0) {
+        aiLogDecision(f, "armia gotowa, ale nie zna jeszcze żadnego budynku wroga - czeka na zwiad");
+        fs.waveTimer = 20.0f;
+        return;
+    }
     if (target >= 0) {
         commandAttackBuilding(army, target);
         fs.waveNumber++;
+        aiLogDecision(f, "fala ataku nr " + std::to_string(fs.waveNumber) + ": " + std::to_string(army.size()) + " żołnierzy na " +
+                             bname(buildings[target].type));
         pushMessage("Armia wroga wyrusza do ataku! (" + std::to_string(army.size()) + " żołnierzy)",
                     {1.0f, 0.35f, 0.3f, 1.0f});
     }
     fs.waveTimer = difficulty == Difficulty::Easy ? 260.0f : (difficulty == Difficulty::Normal ? 180.0f : 120.0f);
+}
+
+} // namespace settlers
+
+namespace settlers {
+
+// Najbliższy (od zamku) nieodkryty ląd: pierścienie co 40 jednostek, 24 kierunki. Woda i szczyty odpadają.
+bool World::aiUnexploredTarget(int f, const Vec3& from, Vec3& target) const {
+    const Vec3 home = aiHome(f);
+    const auto& failed = aiScoutFailed_[static_cast<size_t>(f)];
+    for (float r = 120.0f; r < 2.0f * kWorldHalf; r += 40.0f) {
+        for (int k = 0; k < 24; ++k) {
+            const float a = static_cast<float>(k) * 2.0f * PI / 24.0f + r * 0.013f;   // przesunięcie: pierścienie nie w jednej linii
+            const Vec3 p{home.x + std::cos(a) * r, 0.0f, home.z + std::sin(a) * r};
+            if (std::abs(p.x) > kWorldHalf - 10.0f || std::abs(p.z) > kWorldHalf - 10.0f) continue;
+            const float h = heightAt(p.x, p.z);
+            if (h < kWaterLevel + 2.0f || h > kMountainLevel + 15.0f) continue;
+            if (exploredBy(f, p)) continue;
+            if (!nav_.sameRegion(from, p)) continue;   // za wodą / w zamkniętej dolinie - pieszo się nie dojdzie
+            bool tried = false;
+            for (const Vec3& q : failed) tried |= dist2D(q, p) < 60.0f;
+            if (tried) continue;
+            target = p;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Zwiad (mgła wojny AI): dopóki AI nie zna wroga albo zna mniej niż 40% mapy, jeden żołnierz (najchętniej łucznik -
+// widzi najdalej) chodzi na kolejne nieodkryte miejsca. Bez mgły AI zwiad jest zbędny.
+void World::aiScout(int f, float dt) {
+    if (!aiFogOfWar) return;
+    FactionState& fs = factions[f];
+    fs.aiScoutTimer -= dt;
+    if (fs.aiScoutTimer > 0.0f) return;
+    fs.aiScoutTimer = 6.0f;
+    const bool enemyKnown = !aiEco_[f].knownEnemyBuildings.empty();
+    if (enemyKnown && exploredFraction(f) >= 0.4f) {
+        fs.aiScout.reset();   // zwiad skończony - żołnierz wraca do armii
+        return;
+    }
+    // Zwiadowca żyje i jeszcze idzie - nie przeszkadzamy.
+    if (fs.aiScout >= 0 && units[fs.aiScout].alive && units[fs.aiScout].state == UnitState::Moving) return;
+    // Stanął, a cel wciąż nieodkryty - nie doszedł (zablokowana droga); następnym razem inny cel.
+    auto& failed = aiScoutFailed_[static_cast<size_t>(f)];
+    if (fs.aiScout >= 0 && units[fs.aiScout].alive && !exploredBy(f, aiScoutGoal_[static_cast<size_t>(f)]) &&
+        dist2D(aiScoutGoal_[static_cast<size_t>(f)], Vec3{}) > 0.0f) {
+        failed.push_back(aiScoutGoal_[static_cast<size_t>(f)]);
+        if (failed.size() > 64) failed.erase(failed.begin());
+    }
+    if (fs.aiScout < 0 || !units[fs.aiScout].alive) {
+        int best = -1;
+        for (size_t i = 0; i < units.size(); ++i) {
+            const Unit& u = units[i];
+            if (!u.alive || u.faction != f || u.type == UnitType::Settler || u.state != UnitState::Idle) continue;
+            if (best < 0 || (u.type == UnitType::Archer && units[best].type != UnitType::Archer)) best = static_cast<int>(i);
+        }
+        if (best < 0) return;   // nie ma wolnego żołnierza
+        fs.aiScout = best;
+        aiLogDecision(f, std::string("wysyła zwiadowcę (") + unitDef(units[best].type).name + ") - " +
+                             (enemyKnown ? "mało znanej mapy" : "nie wie, gdzie jest wróg"));
+    }
+    Vec3 target;
+    if (!aiUnexploredTarget(f, units[fs.aiScout].pos, target)) {
+        fs.aiScout.reset();
+        return;
+    }
+    aiScoutGoal_[static_cast<size_t>(f)] = target;
+    commandMove({fs.aiScout.get()}, target, false);
+}
+
+} // namespace settlers
+
+namespace settlers {
+
+// Próbki w kole zasięgu wieży (3 pierścienie x 16 kierunków): ląd nad wodą, nie nasz, osiągalny z zamku.
+// Teren nieodkryty też się liczy - wieża go odsłoni (kształt terenu AI może znać, mgła ukrywa obiekty).
+float World::aiTowerGain(int f, const Vec3& p) const {
+    const float R = buildingDef(BuildingType::Tower).territoryRadius;
+    const Vec3 home = aiHome(f);
+    int total = 0, gain = 0;
+    for (float k : {0.4f, 0.7f, 0.95f}) {
+        for (int a = 0; a < 16; ++a) {
+            const float ang = static_cast<float>(a) * 2.0f * PI / 16.0f;
+            const Vec3 q{p.x + std::cos(ang) * R * k, 0.0f, p.z + std::sin(ang) * R * k};
+            ++total;
+            if (std::abs(q.x) > kWorldHalf || std::abs(q.z) > kWorldHalf) continue;
+            if (heightAt(q.x, q.z) < kWaterLevel + 1.0f || territoryOwnerAt(q) == f) continue;
+            if (landReachable(home, q)) ++gain;
+        }
+    }
+    return total > 0 ? static_cast<float>(gain) / static_cast<float>(total) : 0.0f;
+}
+
+} // namespace settlers
+
+namespace settlers {
+
+bool World::aiDefenseFront(int f, Vec3& front, int& level) const {
+    const Vec3 home = aiHome(f);
+    const FactionState& fs = factions[f];
+    Vec3 threat;
+    level = 0;
+    if (gameTime - fs.lastAttackTime < 180.0f) {
+        threat = fs.lastAttackPos;   // stąd przyszedł ostatni atak
+        level = 2;
+    } else {
+        // Najbliższy znany budynek wroga - jeśli blisko, stamtąd najpewniej przyjdzie atak.
+        float best = 650.0f;
+        for (int bi : aiEco_[f].knownEnemyBuildings) {
+            const float d = dist2D(buildings[bi].pos, home);
+            if (d < best) {
+                best = d;
+                threat = buildings[bi].pos;
+                level = 1;
+            }
+        }
+    }
+    if (level == 0) return false;
+    // Od zagrożenia w stronę zamku do pierwszego punktu na naszym terenie, potem kawałek w głąb.
+    Vec3 dir = subtract(home, threat);
+    dir.y = 0.0f;
+    const float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
+    if (len < 1.0f) {
+        front = home;
+        return true;
+    }
+    dir = multiply(dir, 1.0f / len);
+    for (float d = 0.0f; d < len; d += 10.0f) {
+        const Vec3 p = add(threat, multiply(dir, d));
+        if (territoryOwnerAt(p) == f) {
+            front = add(p, multiply(dir, 20.0f));
+            return true;
+        }
+    }
+    front = home;   // atak w środku naszego terenu - bronimy zamku
+    return true;
 }
 
 } // namespace settlers

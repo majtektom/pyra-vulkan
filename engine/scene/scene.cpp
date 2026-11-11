@@ -228,14 +228,6 @@ bool Scene::removeEntity(const std::string& name, HierarchyRemovalPolicy policy)
     return false;
 }
 
-void Scene::clearEntities() {
-    entities_.clear();
-    entityMap_.clear();
-    entityIdMap_.clear();
-    activeCamera_ = nullptr;
-    nextEntityId_ = 1;
-}
-
 bool Scene::setParent(Entity* child, Entity* parent) {
     if (!child) {
         return false;

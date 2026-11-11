@@ -18,14 +18,21 @@ add_library(engine3d SHARED
     feature/audio/audio_system.cpp
     feature/audio/stb_vorbis_impl.cpp
     platform/platform.cpp
+    core/crash_handler.cpp
     render/renderer_core.cpp
+    render/renderer_shadow_pass.cpp
+    render/renderer_gbuffer_pass.cpp
+    render/renderer_deferred_pass.cpp
+    render/renderer_scene_copy.cpp
+    render/renderer_overlay_pass.cpp
+    render/renderer_textures.cpp
+    render/renderer_fog_of_war.cpp
     render/vulkan_util.cpp
     render/texture_asset_loader.cpp
     render/texture_manager.cpp
     render/shader_manager.cpp
     render/material_manager.cpp
     render/material_compiler.cpp
-    render/render_orchestrator.cpp
     render/opaque_pass.cpp
     render/transparent_pass.cpp
     render/packet_draw.cpp
@@ -71,13 +78,10 @@ add_library(engine3d SHARED
     feature/fog/volumetric_fog_renderer.cpp
     scene/scene.cpp
     scene/camera_extraction_system.cpp
-    scene/layer_manager.cpp
     scene/light_system.cpp
     scene/render_frame_prep_system.cpp
     scene/render_extraction_system.cpp
-    scene/prefab_serializer.cpp
     object/vegetation/vegetation_system.cpp
-    scene/scene_serializer.cpp
     scene/transform_system.cpp
     scene/scene_manager.cpp
 )

@@ -87,8 +87,6 @@ public:
     bool load(const std::string& name);
     bool unload();
 
-    void setCurrentFrame(int frame);
-
 private:
     int getString(char* buffer);
     void readChunk(tChunk* chunk);

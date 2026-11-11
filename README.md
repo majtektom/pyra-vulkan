@@ -101,6 +101,8 @@ Komputerowy przeciwnik rozbudowuje swoją osadę i wysyła fale ataku. Wygrywa t
 **Mgła wojny**: teren poza zasięgiem wzroku twoich ludzi jest czarny, dopóki go nie odkryjesz; odkryty, ale bez
 zwiadu - przyciemniony (widać teren i zapamiętane budynki wroga, nie widać jego wojska). Najdalej widzą łucznicy,
 wieże i zamek. Teren, roślinność, budynki, morze i minimapa są przyciemniane tą samą teksturą widoczności.
+Komputer też gra w mgle: zna tylko teren odkryty przez swoich ludzi - wysyła zwiadowcę (łucznika), rozbudowuje się
+w stronę znanych lasów i skał, a falę ataku kieruje dopiero na budynek, który już zobaczył.
 Po zwycięstwie przycisk **Graj dalej** przełącza w wolną grę - osadę można rozbudowywać bez końca (zapis też działa).
 AI nie ma listy budowy: co kilka sekund czyta te same statystyki co gracz (braki towarów, przestoje, zapasy,
 ludność) i stawia to, czego brakuje, pilnując proporcji warsztatów (1 tartak obsługuje 4 drwali, 1 leśniczy
@@ -167,3 +169,9 @@ cd bin
 - `AudioSystem` (`Engine::getAudio()`) — efekty WAV/OGG z wariantami i limitami, dźwięk przestrzenny, strumieniowana muzyka OGG z przenikaniem (SDL3 + stb_vorbis)
 - HUD w trybie immediate (`GuiMgr::addOverlayRect/addOverlayFrame`)
 - Obsługa tekstur: DDS (DXT1/3/5), BMP, TGA
+
+## Gdy gra się wywali
+
+Opis awarii trafia do katalogu `crash/` (plik `<program>_<data>.log`): przyczyna, miejsce w kodzie (plik:linia),
+stos wywołań i ostatnie wpisy logu. Pliki i linie pojawiają się, gdy w systemie jest `addr2line` (pakiet binutils).
+Taki plik wystarczy dołączyć do zgłoszenia błędu.

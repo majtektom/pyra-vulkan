@@ -26,7 +26,6 @@ void CameraController::rotateYaw(float degrees) {
 void CameraController::moveForward(float v) { forwardVelocity_ = std::clamp(forwardVelocity_ + v, -1.0f, 1.0f); }
 void CameraController::moveRight(float v)   { strafeVelocity_ = std::clamp(strafeVelocity_ + v, -1.0f, 1.0f); }
 void CameraController::moveUp(float v)      { verticalVelocity_ = std::clamp(verticalVelocity_ + v, -1.0f, 1.0f); }
-void CameraController::stop() { forwardVelocity_ = strafeVelocity_ = verticalVelocity_ = 0.0f; }
 
 void CameraController::setPosition(const Vec3& pos) { position_ = realPosition_ = pos; }
 

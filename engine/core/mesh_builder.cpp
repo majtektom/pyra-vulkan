@@ -18,32 +18,10 @@ Vertex makeVertex(const Vec3& p, const Vec3& n, const Vec3& c, float u, float v)
 
 } // namespace
 
-MeshBuilder& MeshBuilder::setTransform(const Vec3& offset, float rotationYRadians, float uniformScale) {
-    offset_ = offset;
-    rotY_ = rotationYRadians;
-    scale_ = uniformScale;
-    return *this;
-}
-
-MeshBuilder& MeshBuilder::resetTransform() {
-    return setTransform({}, 0.0f, 1.0f);
-}
-
-Vec3 MeshBuilder::applyDir(const Vec3& d) const {
-    const float c = std::cos(rotY_);
-    const float s = std::sin(rotY_);
-    return {c * d.x + s * d.z, d.y, -s * d.x + c * d.z};
-}
-
-Vec3 MeshBuilder::applyPoint(const Vec3& p) const {
-    const Vec3 r = applyDir(multiply(p, scale_));
-    return add(r, offset_);
-}
-
 void MeshBuilder::addTriangleFacing(const Vec3& a, const Vec3& b, const Vec3& c,
                                     const Vec3& normal, const Vec3& color) {
-    Vec3 pa = applyPoint(a), pb = applyPoint(b), pc = applyPoint(c);
-    const Vec3 n = normalize(applyDir(normal));
+    Vec3 pa = a, pb = b, pc = c;
+    const Vec3 n = normalize(normal);
     // Konwencja silnika: cross(b - a, c - a) wskazuje na zewnątrz (strona widoczna).
     const Vec3 geo = cross(subtract(pb, pa), subtract(pc, pa));
     if (dot(geo, n) < 0.0f) {
@@ -224,9 +202,7 @@ MeshBuilder& MeshBuilder::append(const MeshData& mesh) {
     const auto base = static_cast<uint32_t>(mesh_.vertices.size());
     for (const auto& v : mesh.vertices) {
         Vertex out = v;
-        const Vec3 p = applyPoint({v.position[0], v.position[1], v.position[2]});
-        const Vec3 n = normalize(applyDir({v.normal[0], v.normal[1], v.normal[2]}));
-        out.position = {p.x, p.y, p.z};
+        const Vec3 n = normalize(Vec3{v.normal[0], v.normal[1], v.normal[2]});
         out.normal = {n.x, n.y, n.z};
         mesh_.vertices.push_back(out);
     }

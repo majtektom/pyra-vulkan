@@ -226,21 +226,34 @@ void SettlersApp::drawMinimap() {
     const World& w = *world_;
     const MinimapRect r = minimapRect();
     gui_->addOverlayRect(r.x - 3, r.y - 3, r.size + 6, r.size + 6, {0.55f, 0.45f, 0.25f, 0.95f}, 0.97f);
+    // Teren minimapy to jeden obrazek (tekstura GUI) przeliczany tylko po zmianie mgły wojny albo świata -
+    // wcześniej 64 x 64 = 4096 prostokątów co klatkę.
     const int n = w.minimapSize();
-    const float cell = r.size / static_cast<float>(n);
-    const auto& colors = w.minimapColors();
-    for (int y = 0; y < n; ++y) {
-        for (int x = 0; x < n; ++x) {
-            Vec3 c = colors[static_cast<size_t>(y) * n + x];
-            if (w.fogOfWar) {   // mgła wojny: jak na terenie - nieodkryte prawie czarne, odkryte przyciemnione
-                const Vec3 p{(static_cast<float>(x) + 0.5f) / n * 2.0f * kWorldHalf - kWorldHalf, 0.0f,
-                             (static_cast<float>(y) + 0.5f) / n * 2.0f * kWorldHalf - kWorldHalf};
-                const float k = w.visibleToPlayer(p) ? 1.0f : (w.exploredByPlayer(p) ? 0.45f : 0.0f);
-                c = multiply(c, k);
+    if (minimapImage_ < 0) minimapImage_ = gui_->createImage(static_cast<uint32_t>(n), static_cast<uint32_t>(n));
+    const uint64_t fogKey = w.fogOfWar ? w.fogVersion() : 0;
+    if (minimapImage_ >= 0 && minimapFogVersion_ != fogKey) {
+        minimapFogVersion_ = fogKey;
+        const auto& colors = w.minimapColors();
+        std::vector<uint8_t> rgba(static_cast<size_t>(n) * n * 4);
+        for (int y = 0; y < n; ++y) {
+            for (int x = 0; x < n; ++x) {
+                Vec3 c = colors[static_cast<size_t>(y) * n + x];
+                if (w.fogOfWar) {   // mgła wojny: jak na terenie - nieodkryte czarne, odkryte przyciemnione
+                    const Vec3 p{(static_cast<float>(x) + 0.5f) / n * 2.0f * kWorldHalf - kWorldHalf, 0.0f,
+                                 (static_cast<float>(y) + 0.5f) / n * 2.0f * kWorldHalf - kWorldHalf};
+                    const float k = w.visibleToPlayer(p) ? 1.0f : (w.exploredByPlayer(p) ? 0.45f : 0.0f);
+                    c = multiply(c, k);
+                }
+                uint8_t* px = &rgba[(static_cast<size_t>(y) * n + x) * 4];
+                px[0] = static_cast<uint8_t>(std::clamp(c.x, 0.0f, 1.0f) * 255.0f);
+                px[1] = static_cast<uint8_t>(std::clamp(c.y, 0.0f, 1.0f) * 255.0f);
+                px[2] = static_cast<uint8_t>(std::clamp(c.z, 0.0f, 1.0f) * 255.0f);
+                px[3] = 255;
             }
-            gui_->addOverlayRect(r.x + x * cell, r.y + y * cell, cell + 0.5f, cell + 0.5f, {c.x, c.y, c.z, 1.0f}, 0.965f);
         }
+        gui_->updateImage(minimapImage_, rgba);
     }
+    gui_->addOverlayImage(minimapImage_, r.x, r.y, r.size, r.size, 0.965f);
     auto toMap = [&](const Vec3& p, float& mx, float& my) {
         mx = r.x + (p.x + kWorldHalf) / (kWorldHalf * 2.0f) * r.size;
         my = r.y + (p.z + kWorldHalf) / (kWorldHalf * 2.0f) * r.size;
@@ -545,6 +558,7 @@ void SettlersApp::drawHelp() {
                 "Kopalnie zjadają żywność; Huta + Kuźnia robią broń dla Koszar.",
                 "Koszary: Auto-rekrutacja szkoli sama (proporcja mieczników -/+).",
                 "Jednostki poza walką leczą się - najszybciej przy zamku i koszarach.",
+                "Wróg też ma mgłę wojny: zna tylko to, co zobaczyli jego zwiadowcy.",
                 "Zniszcz wrogi zamek, by wygrać!",
             };
             ly += 8.0f;

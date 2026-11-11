@@ -63,7 +63,6 @@ public:
     [[nodiscard]] VkPipelineLayout getPipelineLayout() const { return pipelineLayout_; }
  
     [[nodiscard]] bool isReady() const { return ready_; }
-    [[nodiscard]] bool isEnabled() const { return enabled_; }
     void setEnabled(bool e) { enabled_ = e; }
  
 private:

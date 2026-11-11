@@ -120,7 +120,6 @@ int main() {
     renderer->setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     engine.loadFont("times", "assets/fonts/times.ttf", 28);
     auto* mats = engine.getMaterialManager();
-    auto* assets = engine.getAssetRegistry();
 
     // KROK 1: DODANIE OCEANU
     auto ocean = std::make_shared<OceanRenderer>();

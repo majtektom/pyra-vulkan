@@ -48,11 +48,6 @@ public:
     void setSunDirection(const Vec3& direction) { sunDirection_ = normalize(direction); }
     void setLocalVolumes(std::vector<LocalFogVolume> volumes);
     const std::vector<LocalFogVolume>& localVolumes() const { return localVolumes_; }
-    float getFogDensity() const { return fogDensity_; }
-    float getHeightFalloff() const { return fogHeightFalloff_; }
-    float getSeaLevel() const { return seaLevel_; }
-    float getFogRadius() const { return fogRadius_; }
-    const Vec3& getFogColor() const { return fogColor_; }
     const Vec3& getSunDirection() const { return sunDirection_; }
 
 private:

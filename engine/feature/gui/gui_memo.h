@@ -17,7 +17,6 @@ public:
     int x() const { return x_; } int y() const { return y_; }
     int w() const { return w_; } int h() const { return h_; }
     bool isHovered(int mx, int my) const;
-    int lineCount() const;
 
     void update(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta) override;
     void draw(GuiRenderer& r, TextDrawFn textFn, int winX, int winY, float sw, float sh) const override;

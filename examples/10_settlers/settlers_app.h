@@ -288,8 +288,14 @@ private:
     void continueAfterGameOver();
     // Czy symulacja biegnie: gra trwa albo wolna gra po zwycięstwie.
     [[nodiscard]] bool simulationRunning() const { return world_ && (world_->winner < 0 || freePlay_); }
+    // Krok gry w trakcie partii: symulacja w krótkich krokach (prędkość gry) + prezentacja raz na klatkę.
+    void advanceSimulation(float dt);
     void freePlayTest();
     void fogOfWarTest();
+    void spatialGridTest();
+    void slotReuseTest();
+    void aiFogTest();
+    void staleRefTest();
     bool loadGame(const std::string& path = kSavePath);
     [[nodiscard]] bool saveExists(const std::string& path = kSavePath) const;
     // Rozpoczyna partię z poziomem trudności z menu. spectator = pokaz "AI kontra AI".
@@ -606,6 +612,9 @@ private:
     // Wolna gra po zwycięstwie ("Graj dalej"): symulacja biegnie dalej, okno końca gry się nie pokazuje.
     bool freePlay_ = false;
     uint64_t fogVersionSent_ = ~0ull;   // wersja tekstury mgły wojny wysłana do renderera
+    // Minimapa jako obrazek GUI: przeliczany po zmianie świata / mgły wojny.
+    int minimapImage_ = -1;
+    uint64_t minimapFogVersion_ = ~0ull;   // ~0 = do przeliczenia (nowy świat)
     GuiButton* btnGameOverContinue_ = nullptr;
     int selectedFlag_ = -1;
 

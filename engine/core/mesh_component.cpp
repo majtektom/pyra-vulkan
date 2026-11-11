@@ -46,13 +46,18 @@ void MeshComponent::collectRenderPackets(std::vector<RenderPacket>& packets, Mes
     packet.boneDescriptorSet = boneDescriptorSet;
     packet.instanceBuffer = gpuMesh->instanceBuffer ? gpuMesh->instanceBuffer->handle() : VK_NULL_HANDLE;
     packet.instanceCount = gpuMesh->instanceCount;
-    packet.layerBlendEnabled = layerBlendEnabled;
-    packet.layerCount = layerCount;
-    packet.layerTextureHandles = layerTextureHandles;
-    packet.layerMaskHandles = layerMaskHandles;
-    packet.layerWorldSize = layerWorldSize;
-    
-    packets.push_back(packet);
+    if (layerBlendEnabled) {
+        // Siatka z warstwami tekstur (np. teren z jednej siatki) - dane warstw we wspólnej strukturze.
+        if (!surface_) surface_ = std::make_shared<TerrainSurface>();
+        surface_->layerBlendEnabled = true;
+        surface_->layerCount = std::min(layerCount, kMaxTerrainLayers);
+        surface_->layerTextureHandles = layerTextureHandles;
+        surface_->layerMaskHandles = layerMaskHandles;
+        surface_->layerWorldSize = layerWorldSize;
+        packet.terrain = surface_;
+    }
+
+    packets.push_back(std::move(packet));
 }
 
 } // namespace engine3d

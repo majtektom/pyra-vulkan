@@ -9,7 +9,6 @@ GuiMemo::GuiMemo(GuiWindow* parent, const std::string& name, int x, int y, int w
 GuiMemo::~GuiMemo() = default;
 
 bool GuiMemo::isHovered(int mx, int my) const { return mx >= x_ && mx <= x_ + w_ && my >= y_ && my <= y_ + h_; }
-int GuiMemo::lineCount() const { return 1 + (int)std::count(text_.begin(), text_.end(), '\n'); }
 
 std::vector<std::string> GuiMemo::wrappedLines() const {
     std::vector<std::string> out;

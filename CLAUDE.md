@@ -20,6 +20,9 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
   (użytkownik woli biblioteki z rodziny SDL3 zamiast własnych/nagłówkowych zamienników - czcionki SDL3_ttf, obrazy
   SDL3_image; OGG zostaje na stb_vorbis, bo SDL3_sound/SDL3_mixer nie ma w pakietach Ubuntu). Nie budować paczki na
   hoście: glibc Fedory jest za nowa dla Ubuntu.
+- Awaria programu: raport w `crash/<program>_<data>.log` (miejsce awarii plik:linia, stos, ostatnie wpisy logu) -
+  zacznij od niego; test raportu: `ENGINE_CRASH_TEST=segv|abort|throw`. `-Werror=format`: argumenty printf muszą
+  pasować do formatu (`Ref<T>` -> `.get()`).
 - Walidacja Vulkan jest WYŁĄCZONA w buildzie Release (zjadała ~90% czasu klatki na CPU) - po zmianach w renderze
   uruchomić z `ENGINE_VALIDATION=1` i sprawdzić log pod kątem `Validation`.
 - Profiler klatki: `ENGINE_PROFILE=1` (co 3 s `[profil]` - czasy sekcji: update gry, sekcje świata, nagrywanie
@@ -32,7 +35,7 @@ cmake --build build -j11          # cały projekt (silnik, shadery, przykłady)
 |---|---|
 | `core/` | `Engine` (pętla, `onUpdate`, wejście/akcje, tekst HUD, ustawienia), `Entity`/`Component`/`TransformComponent`, `MeshManager`, `MeshBuilder` (proceduralne low-poly z kolorem w wierzchołkach), `math.h` (Vec3: `add/subtract/multiply/normalize/dot/cross/lerp`, dla gier: `distanceXZ`, `smoothstep`, `rotateY`, `angleLerp`), `noise.h` (`ValueNoise`: value noise + fbm), `game_settings` (`GameSettings`: dźwięk/okno/VSync/FPS/cienie, JSON load/save, apply), logger (`LOG_INFO/WARN/ERROR`) |
 | `camera/` | `CameraComponent` (`autoAspect`), `camera_picking` (`screenPointToRay`, `worldToScreen`, `rayPlaneY`, `raySphere`), `RtsCameraController` |
-| `render/` | `renderer_core.cpp` (G-Buffer, cienie: 4 kaskady słońca + atlas 2x2 dla 4 świateł lokalnych), materiały (`MaterialManager::add(Material)`), shadery |
+| `render/` | renderer: `renderer_impl.h` (prywatna klasa `RendererImpl`, opis plików) + `renderer_core.cpp` (inicjalizacja, pętla klatki, UBO) i pliki przebiegów `renderer_shadow_pass` (4 kaskady słońca + atlas 2x2 dla 4 świateł lokalnych), `renderer_gbuffer_pass`, `renderer_deferred_pass`, `renderer_scene_copy`, `renderer_overlay_pass`, `renderer_textures`, `renderer_fog_of_war`; `push_constants.h` (układ push constants = bloki w shaderach), materiały (`MaterialManager::add(Material)`), shadery |
 | `scene/` | `Scene` (`createEntity`, `createDirectionalLight`, `setActiveCamera`), `SceneManager` |
 | `feature/` | `ai/nav_grid` (A*, przeszkody zliczane, regiony), `audio/audio_system` (SDL3 + stb_vorbis OGG, dźwięk 3D, muzyka), `gui/` (okna i widgety; overlay HUD: `addOverlayRect/Frame/Line/Bar/Text/TextCentered`; `GuiToolbar` - pasek z grupami ikon i kartą `GuiCard`; `PixelIcon` - ikony pixel-art z tekstu), `particle/`, `font/`, `fog/` |
 | `object/` | teren (`Terrain::raycast/getNormal/setHeightmap`), ocean, skydome, roślinność, modele 3ds/md2/gltf |
@@ -54,7 +57,7 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
   (użytkownik ogląda cienie z wyłączonym światłem i mgłą - tryb `lightingEnabled == 0` w deferred.hlsl).
 - Shadery - jedno miejsce na każdą rzecz (`assets/shaders/shared/`):
   `globals.hlsl` (UBO klatki + tablica tekstur bindless + mapa cieni; nowe pole UBO = tu i w `GlobalUBO` w
-  `renderer_core.cpp`), `surface.hlsl` (`SurfaceData`, `perturbNormal`), `gbuffer_output.hlsl` (`packGBuffer`),
+  `renderer_impl.h`), `surface.hlsl` (`SurfaceData`, `perturbNormal`), `gbuffer_output.hlsl` (`packGBuffer`),
   `surface_lighting.hlsl` (`shadeSurface` - światła/cienie/otoczenie, `applyAtmosphere` - mgła i mgła wojny,
   `shadeSurfaceForward`). Obiekty nieprzezroczyste (też teren - `MaterialCompiler::writesGBuffer`) zapisują
   G-Buffer, oświetlenie liczy raz deferred; przezroczyste i woda wołają te same funkcje. NIE kopiować oświetlenia
@@ -67,7 +70,31 @@ Dokumentacja architektury: `doc/01_architektura.md` … `doc/10_logger.md`. Hist
 - Obiekty półprzezroczyste nie zapisują głębokości (w TransparentPass depth jest tylko do odczytu), więc złożony model
   z alfą pokazuje swoje wnętrze warstwami. Dla podglądów/hologramów ustaw `Material::depthPrepass = true`
   (`TransparentDepthPrepass` zapisuje głębokość w części 1 klatki, potem widać tylko najbliższą powierzchnię).
-- `MeshManager::loadMesh` z unikalną nazwą przy częstych zmianach siatki (np. drogi) — bezpieczniej niż nadpisywanie.
+- `JobSystem::parallelFor` wykonuje też wątek wywołujący - bufory "na wątek" indeksować `jobs.currentSlot()`
+  (rozmiar `threadCount() + 1`), nie `currentWorkerIndex()`.
+- Podmiana tekstury / samplera, który mogą czytać klatki w locie: `retireTexture` + `queueDescriptorWrite`
+  (renderer_textures.cpp), nie `vkDeviceWaitIdle`. Feature czytający kopię koloru sceny: `needsSceneColor() = true`.
+- Push constants: struktury w `render/push_constants.h` (static_assert na rozmiar) muszą mieć ten sam układ co blok
+  `[[vk::push_constant]]` w shaderze - nowe pole dopisać w obu miejscach.
+- Dane terenu w paczce to `RenderPacket::terrain` (`TerrainSurface`, wspólny dla paczek jednego terenu); indeksy
+  tekstur warstw ustala `resolveTerrainSurfaces` w `render()` (jeden wątek) - nie zmieniać go w `prepareRenderPacket`
+  (wołane równolegle).
+- Bufory siatek z `loadMesh` są DEVICE_LOCAL (CPU nie może ich mapować) - dane trafiają do GPU w
+  `MeshManager::flushUploads` przed renderem. Siatka zmieniana co klatkę: `updateMesh` (pamięć hosta).
+- `AudioSystem`: wątek audio nie bierze muteksu i nie alokuje - nowe funkcje wysyłają mu `Command` przez kolejkę;
+  muzyka idzie przez wątek strumienia (`fillTrack`) i bufor pierścieniowy.
+- Siatki tworzone w trakcie gry: stała nazwa + `loadMesh` (nadpisanie jest bezpieczne - stare bufory idą do retire),
+  a przy usuwaniu obiektu `MeshManager::removeMesh`. Unikalne nazwy bez zwalniania = wyciek VRAM. Osadnicy: siatki
+  świata mają prefiks `meshPrefix_`, `~World` zwalnia je i teren (`Terrain::releaseMeshes`).
+- Osadnicy: odwołania między obiektami to `Ref<T>` (`slot_ref.h`, indeks + generacja) - nowe pole-odwołanie
+  deklarować jako `Ref<...>`, nie `int`. Nowy obiekt = `freeX_.allocate(wektor, gameTime)` (ponowne użycie slotu),
+  śmierć = `freeX_.release(id, gameTime)`; nie `push_back`. Indeks trzymany poza strukturami świata (lokalne listy)
+  może po kwarantannie (5 s gry) wskazywać inny obiekt - sprawdzać alive na bieżąco.
+- Osadnicy: AI zna mapę tylko przez `aiKnows(f, p)` (mgła wojny AI, `fog_[f]`) - nowa decyzja AI o surowcach albo
+  wrogu musi filtrować przez `aiKnows`, inaczej AI "widzi przez mgłę". Budynki frakcji: `aiEco_[f].own[typ]`.
+- Osadnicy: `World::simulate` (stan gry, kilka razy na klatkę) vs `World::present` (modele, mgła, słupki - raz na
+  klatkę). Zmiana terytorium → `markTerritoryChanged()` (mapa właścicieli), zmiana flag/dróg → `roadGraphChanged()`
+  (pamięć odległości `networkFrom`) - inaczej zapytania zwrócą stare wyniki.
 
 ## Przykład 10_settlers (gra RTS w stylu Osadników)
 
@@ -102,6 +129,8 @@ Tryby uruchomienia (zmienne środowiskowe):
 | `SETTLERS_SHOWCASE=1` | wszystkie budynki obok siebie |
 | `SETTLERS_SAVEAT=<s>` | z autoplay: zapis w tej chwili gry do `save/settlers_autoplay_save.json` |
 | `SETTLERS_OPEN=load` (+ `SETTLERS_LOAD=<plik>`) | start od wczytania zapisu (domyślnie `save/settlers_save.json`) |
+| `SETTLERS_SEED=<n>` | stała mapa (ziarno w logu "Nowa gra: ziarno mapy") - porównania AI przed/po zmianie |
+| `SETTLERS_AIFOG=0` | AI bez mgły wojny (zna całą mapę) |
 | `SETTLERS_NOFOG=1` | bez mgły wojny (zrzuty całej mapy; w pokazie AI i autoplay mgły i tak nie ma) |
 | `SETTLERS_STRESS=<n>` | każda strona dostaje n osadników więcej (wydajność; FPS w logu autoplay) |
 | `SETTLERS_SELECT=barracks` | z `OPEN=game`: gotowe koszary obok zamku, zaznaczone (zrzut okna koszar) |

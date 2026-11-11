@@ -168,8 +168,6 @@ uint32_t Platform::height() const { return height_; }
 
 SDL_Window* Platform::nativeWindow() const { return window_; }
 
-bool Platform::pointerGrabbed() const { return pointerGrabbed_; }
-
 void Platform::setFullscreen(bool fullscreen) {
     if (fullscreen_ == fullscreen) return;
     fullscreen_ = fullscreen;

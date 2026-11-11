@@ -61,17 +61,6 @@ enum class UiMode {
 };
 
 /**
- * @brief Pomocnicze pobieranie nazwy tekstury z zasobów.
- */
-std::string textureNameFromHandle(AssetRegistry* assets, TextureHandle textureHandle, const std::string& fallback = "") {
-    if (!assets || !textureHandle.isValid()) {
-        return fallback;
-    }
-    const auto name = assets->textureName(textureHandle);
-    return name.has_value() ? *name : fallback;
-}
-
-/**
  * @brief Wysyła żądanie zamknięcia aplikacji (SDL Quit Event).
  */
 void pushQuitEvent() {

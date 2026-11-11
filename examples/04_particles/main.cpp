@@ -124,7 +124,8 @@ int main() {
                            *engine.getMaterialManager(),
                            *engine.getMaterialSystem(),
                            *renderer,
-                           *engine.getAssetRegistry());
+                           *engine.getAssetRegistry(),
+                           &engine.getJobSystem());   // ruch cząsteczek na puli wątków silnika
 
     // Wczytanie sprite'ów do animacji 2D
     const auto firenTextureHandle = renderer->loadTexture("sprite_firen", "assets/sprite/firen.tga");

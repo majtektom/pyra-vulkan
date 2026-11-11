@@ -1,9 +1,40 @@
 #include "logger.h"
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstring>
+#include <unistd.h>
 #include <iomanip>
 #include <sstream>
 
 namespace engine::core {
+
+namespace {
+    // Pierścień ostatnich wpisów logu (raport awarii). Bez std::string - odczyt w obsłudze sygnału nie może alokować.
+    constexpr int kRecentLines = 64;
+    constexpr int kRecentLineSize = 240;
+    char g_recent[kRecentLines][kRecentLineSize] = {};
+    std::atomic<unsigned> g_recentNext{0};
+}
+
+void Logger::remember(std::string_view message) {
+    const unsigned slot = g_recentNext.fetch_add(1, std::memory_order_relaxed) % kRecentLines;
+    const size_t n = std::min(message.size(), static_cast<size_t>(kRecentLineSize - 1));
+    std::memcpy(g_recent[slot], message.data(), n);
+    g_recent[slot][n] = '\0';
+}
+
+void Logger::writeRecentLines(int fd) {
+    const unsigned next = g_recentNext.load(std::memory_order_relaxed);
+    const unsigned count = next < kRecentLines ? next : kRecentLines;
+    for (unsigned k = next - count; k != next; ++k) {
+        const char* line = g_recent[k % kRecentLines];
+        const ssize_t written = ::write(fd, line, std::strlen(line));
+        (void)written;
+        const ssize_t nl = ::write(fd, "\n", 1);
+        (void)nl;
+    }
+}
 
 namespace {
     std::string levelToString(LogLevel level) {

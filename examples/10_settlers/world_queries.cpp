@@ -69,20 +69,53 @@ int World::pickBuilding(const Ray& ray) const {
 // Właściciel terenu: spośród ukończonych zamków i wież, w których zasięgu leży punkt, wygrywa ten,
 // w którego zasięgu punkt leży najgłębiej (największe "promień - odległość"). Granica dwóch frakcji
 // wypada więc w środku pasa, gdzie ich zasięgi się nakładają - nie ma ziemi wspólnej ani niczyjej.
-int World::territoryOwnerAt(const Vec3& p) const {
+// Dokładnie: spośród źródeł terytorium (zamki, wieże) wygrywa najgłębsze.
+int World::territoryOwnerExact(const Vec3& p) const {
     int owner = -1;
     float bestDepth = 0.0f;
-    for (const auto& b : buildings) {
-        if (!b.alive || !b.constructed) continue;
-        const float r = buildingDef(b.type).territoryRadius;
-        if (r <= 0.0f) continue;
-        const float depth = r - dist2D(p, b.pos);
+    for (const auto& s : territorySources_) {
+        const float depth = s.radius - dist2D(p, s.pos);
         if (depth > bestDepth) {
             bestDepth = depth;
-            owner = b.faction;
+            owner = s.faction;
         }
     }
     return owner;
+}
+
+// Lista źródeł (tylko budynki wojskowe - kilkanaście zamiast setek budynków) i mapa właścicieli komórek.
+void World::rebuildTerritoryGrid() const {
+    territoryGridDirty_ = false;
+    territorySources_.clear();
+    for (const auto& b : buildings) {
+        if (!b.alive || !b.constructed) continue;
+        const float r = buildingDef(b.type).territoryRadius;
+        if (r > 0.0f) territorySources_.push_back({b.pos, r, b.faction});
+    }
+    const float cell = 2.0f * kWorldHalf / static_cast<float>(kFowSize);
+    territoryGrid_.assign(static_cast<size_t>(kFowSize) * kFowSize, -1);
+    for (int z = 0; z < kFowSize; ++z) {
+        for (int x = 0; x < kFowSize; ++x) {
+            const Vec3 c{-kWorldHalf + (static_cast<float>(x) + 0.5f) * cell, 0.0f, -kWorldHalf + (static_cast<float>(z) + 0.5f) * cell};
+            territoryGrid_[static_cast<size_t>(z) * kFowSize + x] = static_cast<int8_t>(territoryOwnerExact(c));
+        }
+    }
+}
+
+int World::territoryOwnerAt(const Vec3& p) const {
+    if (territoryGridDirty_) rebuildTerritoryGrid();
+    const float cell = 2.0f * kWorldHalf / static_cast<float>(kFowSize);
+    const int x = static_cast<int>((p.x + kWorldHalf) / cell), z = static_cast<int>((p.z + kWorldHalf) / cell);
+    if (x < 1 || z < 1 || x >= kFowSize - 1 || z >= kFowSize - 1) return territoryOwnerExact(p);
+    const size_t i = static_cast<size_t>(z) * kFowSize + x;
+    const int8_t o = territoryGrid_[i];
+    // Komórka wewnątrz jednolitego obszaru (sąsiedzi mają tego samego właściciela) - wynik z mapy;
+    // przy granicy - dokładne liczenie (granica przecina komórkę).
+    if (territoryGrid_[i - 1] == o && territoryGrid_[i + 1] == o && territoryGrid_[i - kFowSize] == o &&
+        territoryGrid_[i + kFowSize] == o) {
+        return o;
+    }
+    return territoryOwnerExact(p);
 }
 
 // Czy punkt leży na terytorium frakcji. Margines sprawdzamy próbkami na dwóch okręgach wokół punktu:
@@ -162,7 +195,21 @@ bool World::canPlace(BuildingType type, const Vec3& pos, int faction, std::strin
 
     // Drogi i flagi: budynek nie może stać na drodze ani na fladze.
     const float hr = h + 1.5f;
-    for (const auto& r : roads) {
+    // Drogi w pobliżu wybieramy z mapy komórek dróg (zamiast przeglądać punkty wszystkich dróg), a dokładny test
+    // punktów robimy tylko dla nich (komórka 4 j. byłaby zbyt zgrubna - budynek stawia się drzwiami do drogi).
+    // Lista bez limitu (wcześniej tablica na 16 dróg - przy gęstej sieci dalsze drogi były po cichu pomijane
+    // i budynek dawał się postawić na drodze). Pamięć wektora zostaje między wywołaniami.
+    auto& nearRoads = placeRoadScratch_;
+    nearRoads.clear();
+    for (float z = pos.z - hr; z <= pos.z + hr + kNavCell; z += kNavCell) {
+        for (float x = pos.x - hr; x <= pos.x + hr + kNavCell; x += kNavCell) {
+            const int r = roadAtCell(std::min(x, pos.x + hr), std::min(z, pos.z + hr));
+            if (r < 0 || std::find(nearRoads.begin(), nearRoads.end(), r) != nearRoads.end()) continue;
+            nearRoads.push_back(r);
+        }
+    }
+    for (int ri : nearRoads) {
+        const Road& r = roads[static_cast<size_t>(ri)];
         if (!r.alive) continue;
         for (const auto& p : r.points) {
             if (std::abs(p.x - pos.x) < hr && std::abs(p.z - pos.z) < hr) return fail("Na drodze - postaw obok drogi");
@@ -373,19 +420,48 @@ int World::findIdleSettler(int faction, const Vec3& near) const {
 int World::findEnemyUnitNear(int faction, const Vec3& p, float radius) const {
     int best = -1;
     float bestScore = std::numeric_limits<float>::max();
-    for (size_t i = 0; i < units.size(); ++i) {
-        const auto& u = units[i];
-        if (!u.alive || u.faction == faction || u.state == UnitState::Garrison) continue;   // załoga wieży jest w środku
+    auto consider = [&](int i) {
+        const auto& u = units[static_cast<size_t>(i)];
+        if (!u.alive || u.faction == faction || u.state == UnitState::Garrison) return;   // załoga wieży jest w środku
         const float d = dist2D(u.pos, p);
-        if (d > radius) continue;
+        if (d > radius) return;
         // Żołnierze mają pierwszeństwo przed osadnikami
         const float score = d + (u.type == UnitType::Settler ? 40.0f : 0.0f);
-        if (score < bestScore) {
+        if (score < bestScore || (score == bestScore && i < best)) {   // remis: mniejszy indeks (jak pełny przegląd)
             bestScore = score;
-            best = static_cast<int>(i);
+            best = i;
+        }
+    };
+    // Tylko kubełki w zasięgu (+zapas na ruch od przebudowy kubełków), przeglądane wprost - bez listy kandydatów
+    // (w bitwie to setki wywołań na krok, każde z alokacją). Bez kubełków (przed pierwszym krokiem) - wszystkie.
+    if (unitBuckets_.empty()) {
+        for (size_t i = 0; i < units.size(); ++i) consider(static_cast<int>(i));
+        return best;
+    }
+    const float r = radius + 8.0f;
+    const int x0 = std::max(0, static_cast<int>((p.x - r + kWorldHalf) / kUnitBucketSize));
+    const int x1 = std::min(kUnitBuckets - 1, static_cast<int>((p.x + r + kWorldHalf) / kUnitBucketSize));
+    const int z0 = std::max(0, static_cast<int>((p.z - r + kWorldHalf) / kUnitBucketSize));
+    const int z1 = std::min(kUnitBuckets - 1, static_cast<int>((p.z + r + kWorldHalf) / kUnitBucketSize));
+    for (int z = z0; z <= z1; ++z) {
+        for (int x = x0; x <= x1; ++x) {
+            for (int i : unitBuckets_[static_cast<size_t>(z) * kUnitBuckets + x]) consider(i);
         }
     }
     return best;
+}
+
+// Kubełki jednostek - raz na krok symulacji (World::simulate).
+void World::rebuildUnitBuckets() {
+    unitBuckets_.resize(static_cast<size_t>(kUnitBuckets) * kUnitBuckets);
+    for (auto& b : unitBuckets_) b.clear();
+    for (size_t i = 0; i < units.size(); ++i) {
+        const Unit& u = units[i];
+        if (!u.alive) continue;
+        const int x = std::clamp(static_cast<int>((u.pos.x + kWorldHalf) / kUnitBucketSize), 0, kUnitBuckets - 1);
+        const int z = std::clamp(static_cast<int>((u.pos.z + kWorldHalf) / kUnitBucketSize), 0, kUnitBuckets - 1);
+        unitBuckets_[static_cast<size_t>(z) * kUnitBuckets + x].push_back(static_cast<int>(i));
+    }
 }
 
 // Najbliższy wrogi budynek w promieniu.
@@ -405,17 +481,44 @@ int World::findEnemyBuildingNear(int faction, const Vec3& p, float radius) const
 }
 
 // Losuje do 120 punktów w pierścieniu wokół center i zwraca pierwszy, w którym można budować.
-bool World::findPlacementNear(BuildingType type, int faction, const Vec3& center, float minR, float maxR, Vec3& out) {
-    for (int attempt = 0; attempt < 120; ++attempt) {
-        const float a = randf(0.0f, 2.0f * PI);
-        const float r = randf(minR, maxR);
-        const Vec3 p = snapToGrid({center.x + std::cos(a) * r, 0.0f, center.z + std::sin(a) * r});
-        if (canPlace(type, p, faction)) {
-            out = p;
-            return true;
+// Deterministycznie: pierścienie od minR do maxR (najbliższe miejsce najpierw), na każdym pierścieniu punkty co ~10
+// jednostek. Wcześniej 120 losowych prób - wynik zależał od losowania (czasem "nie ma miejsca", choć było),
+// a budynki rozrzucało po całym pierścieniu. Pierwszy pasujący punkt = najbliższy środka: zwarta osada, krótkie drogi.
+bool World::findPlacementNear(BuildingType type, int faction, const Vec3& center, float minR, float maxR, Vec3& out,
+                              const std::function<bool(const Vec3&)>& accept) {
+    const float ringStep = std::max(6.0f, (maxR - minR) / 16.0f);
+    int ring = 0;
+    for (float r = minR; r <= maxR + 0.01f; r += ringStep, ++ring) {
+        const int samples = r < 1.0f ? 1 : std::clamp(static_cast<int>(2.0f * PI * r / 10.0f), 8, 48);
+        const float start = static_cast<float>(ring) * 2.39996f;   // złoty kąt - punkty kolejnych pierścieni nie w jednej linii
+        for (int k = 0; k < samples; ++k) {
+            const float a = start + static_cast<float>(k) * 2.0f * PI / static_cast<float>(samples);
+            const Vec3 p = snapToGrid({center.x + std::cos(a) * r, 0.0f, center.z + std::sin(a) * r});
+            if (canPlace(type, p, faction) && (!accept || accept(p))) {
+                out = p;
+                return true;
+            }
         }
     }
     return false;
+}
+
+bool World::landReachable(const Vec3& from, const Vec3& p) const {
+    // Oba punkty mogą leżeć na przeszkodzie (zamek, drzewo, skała) - bierzemy najbliższą przechodnią komórkę obok.
+    auto walkable = [&](const Vec3& q, Vec3& out) {
+        int cx, cz;
+        if (!nav_.worldToCell(q.x, q.z, cx, cz)) return false;
+        if (nav_.isWalkable(cx, cz)) {
+            out = q;
+            return true;
+        }
+        int nx, nz;
+        if (!nav_.findNearestWalkable(cx, cz, 12, nx, nz)) return false;
+        out = nav_.cellCenter(nx, nz);
+        return true;
+    };
+    Vec3 a, b;
+    return walkable(from, a) && walkable(p, b) && nav_.sameRegion(a, b);
 }
 
 // Nazwa stanu do debugowania i logów.
@@ -452,7 +555,7 @@ std::string World::describeUnit(int id) const {
                   id, unitDef(u.type).name, u.faction, stateNames[static_cast<int>(u.state)], u.pos.x, u.pos.z, cx, cz,
                   nav_.isWalkable(cx, cz) ? "wolna" : "ZABL", u.goal.x, u.goal.z, gx, gz, nav_.isWalkable(gx, gz) ? "wolna" : "ZABL",
                   nav_.regionAt(u.pos.x, u.pos.z), nav_.regionAt(u.goal.x, u.goal.z), u.pathIndex, u.path.size(), u.stallTime,
-                  u.building, u.resourceNode);
+                  u.building.get(), u.resourceNode.get());
     std::string out = buf;
     if (u.building >= 0 && u.building < static_cast<int>(buildings.size())) {
         const Building& b = buildings[u.building];

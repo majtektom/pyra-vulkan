@@ -105,9 +105,20 @@ void World::updateHealing(Unit& u, float dt) {
 
 // JEDEN KROK SYMULACJI. dt jest ograniczane do 0,1 s, żeby przy zacięciu klatki
 // jednostki nie 'przeskakiwały' przez przeszkody.
+// Wygodny krok "wszystko naraz" (testy, menu): symulacja + prezentacja.
 void World::update(float dt) {
+    simulate(dt);
+    present(dt);
+}
+
+// Jeden krok symulacji o dt sekund czasu gry - sam stan gry, bez modeli i grafiki. Przy przyspieszeniu czasu
+// aplikacja woła go kilka razy na klatkę (krótkie kroki), a present() - raz.
+void World::simulate(float dt) {
+    activate();
     dt = std::min(dt, 0.1f);
     gameTime += dt;
+
+    rebuildUnitBuckets();   // do szukania wrogów w pobliżu (findEnemyUnitNear)
 
     // Pomiar sekcji (ENGINE_PROFILE=1) - przy przyspieszeniu xN sumują się wszystkie kroki z klatki.
     {
@@ -152,23 +163,35 @@ void World::update(float dt) {
     }
     {
         PROFILE_SCOPE("świat.terytorium/regiony");
-        if (territoryDirty_) rebuildTerritory();
+        // Skutki zmiany terytorium dla gry (pożary budynków, usunięte drogi) - od razu; słupki granic w present().
+        if (territoryDirty_) applyTerritoryChanges();
         if (regionsDirty_) {
             nav_.computeRegions(true);
             regionsDirty_ = false;
         }
     }
-    {
-        PROFILE_SCOPE("świat.mgła wojny");
-        updateFogOfWar(dt);
-    }
-    {
-        PROFILE_SCOPE("świat.modele (sync)");
-        syncVisuals(dt);
-    }
     checkVictory();
 
     while (!messages.empty() && gameTime - messages.front().time > 9.0f) messages.pop_front();
+}
+
+// Raz na klatkę: modele jednostek, budynków i towarów, mgła wojny, słupki granic terytorium.
+// realDt - czas rzeczywisty klatki (mgła odświeża się kilka razy na sekundę niezależnie od prędkości gry).
+void World::present(float realDt) {
+    activate();
+    {
+        PROFILE_SCOPE("świat.mgła wojny");
+        updateFogOfWar(realDt);
+    }
+    if (territoryMeshDirty_) {
+        PROFILE_SCOPE("świat.słupki granic");
+        rebuildTerritoryMesh();
+    }
+    {
+        PROFILE_SCOPE("świat.modele (sync)");
+        syncVisuals(realDt);
+        presentNodes();
+    }
 }
 
 // Dla każdej frakcji: liczy populację i limit ludności, zamek przyjmuje nowych osadników
@@ -415,45 +438,61 @@ void World::updateEffects(float dt) {
 
 // Drzewa: drżenie przy ścinaniu, przewracanie po ścięciu ostatniej porcji.
 // Skały: zmniejszają się w miarę wydobycia; wyczerpana skała znika i przestaje blokować nawigację.
+// Stan surowców (symulacja): wzrost sadzonek, przewracanie ściętych drzew, wyczerpanie skał.
 void World::updateNodes(float dt) {
+    for (auto& n : nodes) {
+        if (!n.alive || !n.entity) continue;
+        if (n.kind == NodeKind::Tree) {
+            if (n.growth < 1.0f) {
+                n.growth = std::min(1.0f, n.growth + dt / kTreeGrowSeconds);   // sadzonka rośnie
+            } else if (n.fallTimer >= 0.0f) {
+                n.fallTimer += dt;
+                if (n.fallTimer > 3.4f) {
+                    n.alive = false;
+                    destroyEntity(n.entity);
+                    releaseNode(static_cast<int>(&n - nodes.data()));
+                }
+            } else if (n.shake > 0.0f) {
+                n.shake = std::max(0.0f, n.shake - dt);
+            }
+        } else if (n.amount <= 0) {
+            n.alive = false;
+            const float r = n.radius * 0.7f;
+            nav_.removeObstacle(n.pos.x - r, n.pos.z - r, n.pos.x + r, n.pos.z + r);
+            regionsDirty_ = true;
+            destroyEntity(n.entity);
+            releaseNode(static_cast<int>(&n - nodes.data()));
+        }
+    }
+}
+
+// Wygląd surowców (prezentacja, raz na klatkę): skala i obrót wynikają wprost ze stanu - przy przyspieszeniu x24
+// nie zapisujemy transformów 24 razy na klatkę.
+void World::presentNodes() {
     for (auto& n : nodes) {
         if (!n.alive || !n.entity) continue;
         auto& tr = n.entity->transform();
         if (n.kind == NodeKind::Tree) {
             if (n.growth < 1.0f) {
-                // Sadzonka rośnie: od 15% do pełnego rozmiaru w kTreeGrowSeconds.
-                n.growth = std::min(1.0f, n.growth + dt / kTreeGrowSeconds);
+                // Sadzonka: od 15% do pełnego rozmiaru w kTreeGrowSeconds.
                 const float s = n.baseScale * (0.15f + 0.85f * n.growth);
                 tr.scale = {s, s, s};
             } else if (n.fallTimer >= 0.0f) {
-                n.fallTimer += dt;
                 const float k = std::min(1.0f, n.fallTimer / 1.4f);
                 tr.rotation.x = k * k * (PI * 0.5f);
-                if (n.fallTimer > 2.6f) {
-                    tr.scale = multiply(tr.scale, std::max(0.0f, 1.0f - dt * 3.0f));
-                }
-                if (n.fallTimer > 3.4f) {
-                    n.alive = false;
-                    destroyEntity(n.entity);
-                }
+                const float shrink = std::clamp(1.0f - (n.fallTimer - 2.6f) / 0.8f, 0.0f, 1.0f);   // znika po upadku
+                tr.scale = {n.baseScale * shrink, n.baseScale * n.heightJitter * shrink, n.baseScale * shrink};
             } else if (n.shake > 0.0f) {
-                n.shake = std::max(0.0f, n.shake - dt);
                 tr.rotation.z = std::sin(gameTime * 32.0f) * 0.035f;
             } else {
+                if (tr.scale.x != n.baseScale) tr.scale = {n.baseScale, n.baseScale * n.heightJitter, n.baseScale};   // dorosła sadzonka
                 tr.rotation.z = 0.0f;
             }
         } else {
             // Skała maleje w miarę wydobycia
-            const float k = 0.35f + 0.65f * static_cast<float>(n.amount) / static_cast<float>(n.maxAmount);
+            const float k = 0.35f + 0.65f * static_cast<float>(std::max(0, n.amount)) / static_cast<float>(n.maxAmount);
             const float s = n.baseScale * k;
             tr.scale = {s, s, s};
-            if (n.amount <= 0) {
-                n.alive = false;
-                const float r = n.radius * 0.7f;
-                nav_.removeObstacle(n.pos.x - r, n.pos.z - r, n.pos.x + r, n.pos.z + r);
-                regionsDirty_ = true;
-                destroyEntity(n.entity);
-            }
         }
     }
 }
@@ -627,10 +666,22 @@ void World::syncVisuals(float dt) {
 //     Szukamy jej na siatce co 4 jednostki, a dokładne miejsce na krawędzi siatki - bisekcją.
 //     Każda frakcja stawia słupki po swojej stronie linii, więc widać podwójną, dwukolorową granicę.
 // Wszystkie słupki frakcji to jedna siatka (jedna encja).
-void World::rebuildTerritory() {
+// Terytorium zmieniło się (nowa / zburzona / zdobyta wieża): skutki dla gry od razu, słupki granic w present().
+void World::applyTerritoryChanges() {
     territoryDirty_ = false;
     burnBuildingsOnLostLand();
     removeRoadsOnLostLand();
+    territoryMeshDirty_ = true;
+}
+
+void World::rebuildTerritory() {
+    applyTerritoryChanges();
+    rebuildTerritoryMesh();
+}
+
+// Słupki granic terytorium (grafika) - po zmianie terytorium albo odkryciu terenu (granice wroga we mgle).
+void World::rebuildTerritoryMesh() {
+    territoryMeshDirty_ = false;
     auto* mm = engine_.getMeshManager();
     ++territoryMeshVersion_;
 
@@ -725,7 +776,7 @@ void World::rebuildTerritory() {
 
         auto* mc = territoryEntity_[f]->getComponent<MeshComponent>();
         if (!posts.empty()) {
-            const std::string name = "territory_" + std::to_string(f) + "_" + std::to_string(seed_);
+            const std::string name = meshPrefix_ + "territory_" + std::to_string(f);
             mm->loadMesh(name, mb.build());
             mc->meshName = name;
             territoryEntity_[f]->setActive(true);
@@ -766,6 +817,14 @@ void World::checkVictory() {
     } else if (factions[kEnemy].defeated) {
         winner = kPlayer;
     }
+}
+
+} // namespace settlers
+
+namespace settlers {
+
+void World::releaseNode(int id) {
+    if (static_cast<size_t>(id) >= nodesGenerated_) freeNodes_.release(id, gameTime);
 }
 
 } // namespace settlers

@@ -10,7 +10,7 @@ Witamy w dokumentacji technicznej silnika `engine3d`. Silnik jest nowoczesną, e
 | [02_pipeline_vulkan.md](02_pipeline_vulkan.md) | Detale backendu: Deferred Shading, Bindless Textures, Dynamic Rendering. |
 | [03_system_materialow.md](03_system_materialow.md) | Materiały PBR, kompilacja shaderów HLSL i system uchwytów. |
 | [04_modele_3ds.md](04_modele_3ds.md) | Obsługa formatu 3DS i specyfika importu geometrii. |
-| [05_scena_komponenty.md](05_scena_komponenty.md) | Zarządzanie światem: Encje (ECS), hierarchia, prefaby i serializacja JSON. |
+| [05_scena_komponenty.md](05_scena_komponenty.md) | Zarządzanie światem: Encje (ECS), hierarchia, komponenty. |
 | [06_kamera_sterowanie.md](06_kamera_sterowanie.md) | System kamer, ekstrakcja widoku i mapowanie wejścia (Input Actions). |
 | [07_czastki.md](07_czastki.md) | System cząsteczek, emitery i wielowątkowa aktualizacja. |
 | [08_tekstury_fonty.md](08_tekstury_fonty.md) | Zarządzanie teksturami (DDS/BMP/TGA) oraz renderowanie tekstu (SDL3_ttf). |
@@ -22,7 +22,6 @@ Witamy w dokumentacji technicznej silnika `engine3d`. Silnik jest nowoczesną, e
 - **Vulkan 1.4**: Wykorzystanie nowoczesnych funkcji jak Dynamic Rendering, Timeline Semaphores i Descriptor Indexing (Bindless).
 - **Deferred PBR Renderer**: Potok renderujący dzielący geometrię (G-Buffer) od oświetlenia.
 - **System ECS**: Encje i komponenty z jawnym podziałem na dane i systemy przetwarzające (`TransformSystem`, `LightSystem`, itp.).
-- **Data-Driven**: Sceny i prefaby definiowane w formacie JSON.
 - **Asset Registry**: Zarządzanie zasobami poprzez bezpieczne, typowane uchwyty (`Handle`).
 - **Skeletal Animation**: Wsparcie dla animacji szkieletowych w formacie glTF.
 - **Advanced Terrain**: System terenu z generacją proceduralną, wielowarstwowym teksturowaniem i LOD.

@@ -78,7 +78,7 @@ engine.getMeshManager()->loadMesh("nazwa", b.build());
 ## 5. Wejście
 
 - Akcje zamiast kodów klawiszy: `engine.inputActions().bindKey("build.road", SDL_SCANCODE_T)`,
-  potem `e.actionPressed("build.road")` / `actionDown` / `actionReleased`. Mysz: `e.mouseDown(0..2)`,
+  potem `e.actionPressed("build.road")` / `actionDown`. Mysz: `e.mouseDown(0..2)`,
   `mousePressed`, `mouseReleased`; stan: `e.input()` (`mouseX/Y`, `mouseDeltaX/Y`, `mouseWheelF`, `keys[]`).
 - Przed pierwszym ruchem mysz ma pozycję (0,0) - przewijanie krawędzią włączaj dopiero po ruchu.
 - Kliknięcie nad GUI nie może trafiać w świat: `gui->isPointerOverGui()` + własne prostokąty HUD.

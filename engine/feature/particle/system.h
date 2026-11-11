@@ -15,6 +15,7 @@ class MeshManager;
 class Renderer;
 class Scene;
 class AssetRegistry;
+class JobSystem;
 
 namespace particles {
 
@@ -54,7 +55,7 @@ public:
     /**
      * @brief Aktualizuje fizykę cząsteczek z użyciem puli wątków procesora (Parallel Update).
      */
-    void updateParallel(float time, int threadCount);
+    void updateParallel(float time);   // na puli wątków podanej w initialize (bez niej - jednowątkowo)
     
     // Zwraca informacje tekstowe o cząsteczkach dla celów debugowania.
     std::string infoParticles(int index);
@@ -67,15 +68,14 @@ public:
                     MaterialManager& materialManager,
                     MaterialSystem& materialSystem,
                     Renderer& renderer,
-                    AssetRegistry& assetRegistry);
+                    AssetRegistry& assetRegistry,
+                    JobSystem* jobSystem = nullptr);   // pula wątków silnika: Engine::getJobSystem()
     
     /**
      * @brief Główny update wywoływany przez ECS w każdej klatce.
      */
     void update(float dt);
 
-    // Konfiguracja parametrów kamery potrzebnych do zorientowania billboardów cząsteczek.
-    void setCameraVectors(const Vec3& right, const Vec3& up) { camRight_ = right; camUp_ = up; }
     void setCameraPosition(const Vec3& pos) { camPos_ = pos; }
     
     // Dodawanie i pobieranie emiterów cząsteczek (ParticleEmitter).
@@ -103,11 +103,11 @@ private:
     bool processEvent(ParticleEmitter* emitter, float fadeMin, float fadeMax, const std::string& line);
 
     std::vector<ParticleEmitter*> emitters_;
+    JobSystem* jobSystem_ = nullptr;
+    std::vector<ParticleInstanceData> instanceScratch_;   // dane instancji - jeden wektor na wszystkie klatki
     using EmitterIter = std::vector<ParticleEmitter*>::iterator;
     EmitterIter emittersBegin_, emittersEnd_;
     Vec3 position_{0, 0, 0};
-    Vec3 camRight_{1, 0, 0};
-    Vec3 camUp_{0, 1, 0};
     Vec3 camPos_{0, 0, 0};
     std::vector<std::string> meshNames_;
     Scene* scene_ = nullptr;
@@ -116,7 +116,6 @@ private:
     MaterialSystem* materialSystem_ = nullptr;
     Renderer* renderer_ = nullptr;
     AssetRegistry* assetRegistry_ = nullptr;
-    int numThreads_ = 1;
     bool initialized_ = false;
 };
 

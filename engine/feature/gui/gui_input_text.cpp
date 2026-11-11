@@ -12,12 +12,6 @@ bool GuiInputText::isHovered(int mx, int my) const {
     return mx >= x_ && mx <= x_ + w_ && my >= y_ && my <= y_ + h_;
 }
 
-void GuiInputText::processChar(char c) { history_[0] += c; }
-
-void GuiInputText::processBackspace() {
-    if (!history_[0].empty()) history_[0].pop_back();
-}
-
 void GuiInputText::update(int mx, int my, bool, bool, int) {
     bool h = isHovered(mx, my);
     if (h != hovered_) {

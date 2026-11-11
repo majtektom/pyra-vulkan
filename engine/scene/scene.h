@@ -68,7 +68,7 @@ public:
     Entity* createEntity(const std::string& name);
 
     /**
-     * @brief Tworzy encję z określonym ID (używane głównie przy ładowaniu/deserializacji sceny z pliku).
+     * @brief Tworzy encję z określonym ID (createEntity(name) woła ją z kolejnym wolnym ID).
      */
     Entity* createEntity(EntityId id, const std::string& name);
 
@@ -112,9 +112,6 @@ public:
     std::vector<Entity*> childrenOf(Entity* parent);
     std::vector<const Entity*> childrenOf(const Entity* parent) const;
 
-    // Usuwa wszystkie encje i czyści rejestry sceny.
-    void clearEntities();
-
     // Funkcje pomocnicze do szybkiego tworzenia encji reprezentujących światła:
     Entity* createDirectionalLight(const std::string& name, const Vec3& direction,
                                    const Vec3& color, float intensity);
@@ -138,9 +135,6 @@ public:
 
     // Wywołuje metodę update na wszystkich komponentach wszystkich encji.
     void updateEntities(std::chrono::milliseconds deltaTime);
-
-    // Zwraca wyekstrahowane paczki geometrii przygotowane do wysłania na GPU w tej klatce.
-    const std::vector<RenderPacket>& renderPackets() const { return renderPackets_; }
 
     // Dostęp mutowalny dla systemow renderowania w celu zapisu paczek.
     std::vector<RenderPacket>& mutableRenderPackets() { return renderPackets_; }

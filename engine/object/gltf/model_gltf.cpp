@@ -53,20 +53,6 @@ bool loadGltfImage(tinygltf::Image* image, const int, std::string* err, std::str
     return true;
 }
 
-Matrix4 inverseMatrix4(const Matrix4& m) {
-    Matrix4 inv = Matrix4::identity();
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < 3; c++)
-            inv.values[c * 4 + r] = m.values[r * 4 + c];
-    for (int r = 0; r < 3; r++) {
-        float dot = 0;
-        for (int c = 0; c < 3; c++)
-            dot += inv.values[c * 4 + r] * m.values[3 * 4 + c];
-        inv.values[3 * 4 + r] = -dot;
-    }
-    return inv;
-}
-
 template <typename T>
 const T* accessorData(const tinygltf::Model& model, int accessorIdx) {
     if (accessorIdx < 0 || accessorIdx >= (int)model.accessors.size()) return nullptr;
@@ -291,7 +277,6 @@ GltfModel loadGltfModel(const std::string& path) {
                 v.texCoord = texData ? std::array<float,2>{texData[i*2], 1.0f - texData[i*2+1]} : std::array<float,2>{0,0};
             }
 
-            const uint8_t* jointData = accessorData<uint8_t>(model, prim.attributes.count("JOINTS_0") ? prim.attributes.at("JOINTS_0") : -1);
             const float* weightData = accessorData<float>(model, prim.attributes.count("WEIGHTS_0") ? prim.attributes.at("WEIGHTS_0") : -1);
             int jointAcc = prim.attributes.count("JOINTS_0") ? prim.attributes.at("JOINTS_0") : -1;
             if (jointAcc >= 0) {

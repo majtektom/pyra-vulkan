@@ -139,7 +139,6 @@ VulkanContext::~VulkanContext() {
     if (device_) {
         // Czekamy na zakończenie wszystkich operacji GPU przed zniszczeniem interfejsu logicznego.
         vkDeviceWaitIdle(device_);
-        if (computeCommandPool_) vkDestroyCommandPool(device_, computeCommandPool_, nullptr);
         if (commandPool_) vkDestroyCommandPool(device_, commandPool_, nullptr);
         vkDestroyDevice(device_, nullptr);
     }
@@ -183,7 +182,6 @@ void VulkanContext::createSurface(SDL_Window* window) {
     
     // Krok 6: Tworzenie pul komend (Command Pools) do rejestrowania instrukcji przesyłanych na GPU.
     createCommandPool();
-    createComputeCommandPool();
 
     // Krok 7: Inicjalizacja alokatora pamięci GPU (Vulkan Memory Allocator).
     // VMA automatycznie grupuje małe alokacje w większe bloki pamięci GPU, co drastycznie zwiększa wydajność.
@@ -281,8 +279,6 @@ void VulkanContext::pickPhysicalDevice() {
 
 void VulkanContext::createLogicalDevice() {
     auto indices = findQueueFamilies(physicalDevice_, surface_);
-    graphicsQueueFamily_ = indices.graphicsFamily.value();
-    computeQueueFamily_ = indices.computeFamily.value();
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
     // Używamy std::set, aby wyeliminować duplikaty rodzin kolejek (często kolejka graficzna i prezentacji to ta sama rodzina).
@@ -356,7 +352,6 @@ void VulkanContext::createLogicalDevice() {
     // Pobieramy uchwyty do poszczególnych kolejek urządzenia logicznego.
     vkGetDeviceQueue(device_, indices.graphicsFamily.value(), 0, &graphicsQueue_);
     vkGetDeviceQueue(device_, indices.presentFamily.value(), 0, &presentQueue_);
-    vkGetDeviceQueue(device_, indices.computeFamily.value(), 0, &computeQueue_);
 }
 
 void VulkanContext::createCommandPool() {
@@ -369,18 +364,6 @@ void VulkanContext::createCommandPool() {
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     if (vkCreateCommandPool(device_, &poolInfo, nullptr, &commandPool_) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool");
-    }
-}
-
-void VulkanContext::createComputeCommandPool() {
-    auto indices = findQueueFamilies(physicalDevice_, surface_);
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    // Pula komend obliczeniowych powiązana z indeksami rodziny compute.
-    poolInfo.queueFamilyIndex = indices.computeFamily.value();
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    if (vkCreateCommandPool(device_, &poolInfo, nullptr, &computeCommandPool_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create compute command pool");
     }
 }
 

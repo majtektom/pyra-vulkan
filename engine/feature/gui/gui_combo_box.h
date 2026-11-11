@@ -24,7 +24,6 @@ public:
     void close() override { open_ = false; }
     bool isInside(int mx, int my) const override;
     bool isHovered(int mx, int my) const;
-    int itemCount() const { return (int)items_.size(); }
 
     void setOnSelect(std::function<void(const std::string&)> fn) { onSelect_ = fn; }
     void update(int mx, int my, bool leftClicked, bool leftDown, int wheelDelta) override;

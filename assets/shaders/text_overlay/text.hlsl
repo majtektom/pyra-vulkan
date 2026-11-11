@@ -53,8 +53,13 @@ VertexOutput vertexMain(VertexInput input)
  */
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
+    float4 texel = fontAtlasSampler.Sample(fontAtlasSamplerState, input.texCoord);
+    // Obrazek GUI (GuiRenderer::addImage oznacza go alfą wierzchołka 2) - kolor wprost z tekstury RGBA.
+    if (input.color.a > 1.5)
+        return float4(texel.rgb, texel.a);
+
     // Odczytanie stopnia pokrycia piksela przez glif z kanału czerwonego (R)
-    float coverage = fontAtlasSampler.Sample(fontAtlasSamplerState, input.texCoord).r;
+    float coverage = texel.r;
     
     // Zwrócenie docelowego koloru z modulacją alfy
     return float4(input.color.rgb, input.color.a * coverage);

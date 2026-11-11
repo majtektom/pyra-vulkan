@@ -30,10 +30,6 @@ public:
         }
     }
 
-    void clearBindings(std::string_view action) {
-        bindings_.erase(std::string(action));
-    }
-
     bool isDown(const InputSnapshot& snapshot, std::string_view action) const {
         const auto it = bindings_.find(std::string(action));
         if (it == bindings_.end()) {
@@ -44,10 +40,6 @@ public:
 
     bool wasPressed(const InputSnapshot& previous, const InputSnapshot& current, std::string_view action) const {
         return !isDown(previous, action) && isDown(current, action);
-    }
-
-    bool wasReleased(const InputSnapshot& previous, const InputSnapshot& current, std::string_view action) const {
-        return isDown(previous, action) && !isDown(current, action);
     }
 
 private:

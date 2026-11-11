@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,6 +46,26 @@ inline VkFormat gbufferAttachmentFormat(int attachment) {
     return attachment == 3 ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R16G16B16A16_SFLOAT;
 }
 
+/**
+ * Powierzchnia terenu: warstwy tekstur i mapa wysokości. Jedna na teren (albo siatkę z warstwami), wspólna
+ * dla wszystkich jego paczek - paczka trzyma tylko wskaźnik, zamiast kopiować ~300 B danych w każdej klatce.
+ * Indeksy bindless (część "uzupełnia renderer") ustala Renderer raz na klatkę na wątku renderowania.
+ */
+struct TerrainSurface {
+    bool layerBlendEnabled = false;
+    uint32_t layerCount = 0;
+    std::array<TextureHandle, kMaxTerrainLayers> layerTextureHandles{};
+    std::array<TextureHandle, kMaxTerrainLayers> layerMaskHandles{};
+    float layerWorldSize = 1.0f;
+    TextureHandle heightmapTextureHandle{};
+    bool heightmapEnabled = false;
+    float scaleY = 1.0f;
+    // uzupełnia renderer:
+    std::array<uint32_t, kMaxTerrainLayers> layerTextureIndices{};
+    std::array<uint32_t, kMaxTerrainLayers> layerMaskIndices{};
+    uint32_t heightmapTextureIndex = 0;
+};
+
 struct RenderPacket {
     VkBuffer vertexBuffer;
     VkBuffer indexBuffer;
@@ -65,22 +86,12 @@ struct RenderPacket {
     uint32_t occlusionTextureIndex = 0;
     TextureHandle emissiveTextureHandle{};
     uint32_t emissiveTextureIndex = 0;
-    bool layerBlendEnabled = false;
-    uint32_t layerCount = 0;
-    std::array<TextureHandle, kMaxTerrainLayers> layerTextureHandles{};
-    std::array<TextureHandle, kMaxTerrainLayers> layerMaskHandles{};
-    std::array<uint32_t, kMaxTerrainLayers> layerTextureIndices{};
-    std::array<uint32_t, kMaxTerrainLayers> layerMaskIndices{};
-    float layerWorldSize = 1.0f;
+    std::shared_ptr<TerrainSurface> terrain;   // teren / siatka z warstwami tekstur (nullptr - zwykła siatka)
     float bumpIntensity = 1.0f;
     float metallicFactor = 0.0f;
     float roughnessFactor = 1.0f;
     std::array<float,4> materialColor{1,1,1,1};
-    TextureHandle heightmapTextureHandle{};
-    uint32_t heightmapTextureIndex = 0;
-    float scaleY = 1.0f;
-    float tessellationFactor = 1.0f;
-    bool heightmapEnabled = false;
+    float tessellationFactor = 1.0f;           // teren: teselacja węzła (zależna od jego LOD)
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
     float distanceToCamera = 0.0f;
     int renderPriority = 0;
@@ -96,6 +107,9 @@ struct RenderPacket {
     // Prostopadłościan otaczający w układzie świata (false = nieznany, np. instancje) - do dopasowania cieni.
     bool hasBounds = false;
     Vec3 boundsMin{}, boundsMax{};
+
+    bool layerBlendEnabled() const { return terrain && terrain->layerBlendEnabled; }
+    bool heightmapEnabled() const { return terrain && terrain->heightmapEnabled; }
 };
 
 // Granice w świecie: 8 narożników lokalnego prostopadłościanu przekształconych macierzą.

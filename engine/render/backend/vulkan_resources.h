@@ -19,6 +19,8 @@ public:
     VkBuffer handle() const { return buffer_; }
     VkDeviceSize size() const { return size_; }
     VkBufferUsageFlags usage() const { return usage_; }
+    // Pamięć widoczna dla CPU (można map/upload). Bufor DEVICE_LOCAL wypełnia się kopią z bufora pośredniego.
+    bool hostVisible() const { return hostVisible_; }
     void* map();
     void unmap();
     void upload(const void* data, VkDeviceSize size);
@@ -29,6 +31,7 @@ private:
     VmaAllocation allocation_ = VK_NULL_HANDLE;
     VkDeviceSize size_;
     VkBufferUsageFlags usage_ = 0;
+    bool hostVisible_ = true;
 };
 
 class VulkanImage {

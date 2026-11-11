@@ -135,7 +135,7 @@ void SettlersApp::drawDebug(const InputSnapshot& in) {
         }
         if (detailed && project(onGround(b.pos, buildingDef(b.type).height * 0.5f), sx, sy)) {
             char buf[128];
-            std::snprintf(buf, sizeof(buf), "#%zu %s prac=%d obszar=%d%s%s", i, buildingDef(b.type).name, b.worker,
+            std::snprintf(buf, sizeof(buf), "#%zu %s prac=%d obszar=%d%s%s", i, buildingDef(b.type).name, b.worker.get(),
                           w.nav().regionAt(door.x, door.z), b.unreachable ? " BRAK DOJŚCIA" : "",
                           b.lacksResources ? " BRAK SUROWCA" : "");
             text(buf, sx - 60.0f, sy, 0.4f, {1.0f, 1.0f, 0.75f, 1.0f});

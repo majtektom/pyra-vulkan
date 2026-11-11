@@ -10,6 +10,10 @@
 #include "feature/particle/particle.h"
 #include "feature/particle/recycling_array.h"
 
+namespace engine3d {
+class JobSystem;
+}
+
 namespace engine3d::particles {
 
 class ParticleSystem;
@@ -25,14 +29,13 @@ public:
     bool createParticles();
     bool destroy();
     void update(float time);
-    void updateParallel(float time, int totalThreads);
+    void updateParallel(float time, JobSystem* jobs);   // jobs == nullptr: jednowątkowo
     void fillInstanceData(std::vector<ParticleInstanceData>& out);
-    void fillInstanceDataParallel(std::vector<ParticleInstanceData>& out, int threadCount);
+    void fillInstanceDataParallel(std::vector<ParticleInstanceData>& out, JobSystem* jobs);
     void sortEvents();
     void addEvent(ParticleEvent* e) { events_.push_back(e); }
 
     void setName(const std::string& n) { name_ = n; }
-    void setTexturePath(const std::string& path) { texturePath_ = path; }
     void setTextureHandle(TextureHandle handle) { textureHandle_ = handle; }
     void setNumParticles(int n) { numParticles_ = n; }
     void setEmitRate(int r) { emitRate_ = r; }
@@ -46,7 +49,6 @@ public:
 
     const std::string& name() const { return name_; }
     int numParticles() const { return numParticles_; }
-    int activeParticles() const { return particles_ ? particles_->GetNumUsedElements() : 0; }
     const std::string& texturePath() const { return texturePath_; }
     TextureHandle textureHandle() const { return textureHandle_; }
 
@@ -70,6 +72,7 @@ private:
     float minMass_ = 1, maxMass_ = 1;
     RecyclingArray<Particle>* particles_ = nullptr;
     int lastActiveCount_ = -1;
+    std::vector<int> activeIdx_;   // indeksy żywych cząsteczek (fillInstanceDataParallel)
 };
 
 } // namespace engine3d::particles

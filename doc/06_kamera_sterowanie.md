@@ -36,7 +36,7 @@ Akcje mapują fizyczne przyciski (klawiatura, mysz) na logiczne nazwy:
 W każdej klatce `Engine` pobiera migawkę stanu wejścia (`InputSnapshot`). Dzięki temu:
 - Logika gry korzysta ze spójnego stanu przez całą klatkę.
 - Można łatwo zaimplementować pauzę lub blokowanie sterowania (np. gdy otwarte jest okno GUI).
-- Obsługiwane są stany: `isDown` (przycisk wciśnięty), `wasPressed` (kliknięcie), `wasReleased` (puszczenie).
+- Obsługiwane są stany: `isDown` (przycisk wciśnięty) i `wasPressed` (kliknięcie).
 
 ---
 

@@ -135,6 +135,12 @@ void Terrain::smoothEdges() {
     }
 }
 
+void Terrain::releaseMeshes(MeshManager& mgr) {
+    if (meshName_.empty()) return;
+    mgr.removeMesh(meshName_);
+    mgr.removeMeshesWithPrefix(meshName_ + "_");   // węzły i indeksy LOD: <nazwa>_node_*, <nazwa>_indices_*
+}
+
 void Terrain::uploadTo(MeshManager& mgr) {
     if (meshName_.empty()) {
         static int id = 0;
@@ -470,6 +476,17 @@ void Terrain::collectRenderPackets(
     bool tessellationActive,
     float tessellationLevel) 
 {
+    // Jedna powierzchnia (warstwy, mapa wysokości) dla wszystkich węzłów - paczki trzymają tylko wskaźnik.
+    if (!surface_) surface_ = std::make_shared<TerrainSurface>();
+    surface_->layerBlendEnabled = layerBlendEnabled;
+    surface_->layerCount = std::min(layerCount, kMaxTerrainLayers);
+    surface_->layerTextureHandles = layerTextureHandles;
+    surface_->layerMaskHandles = layerMaskHandles;
+    surface_->layerWorldSize = layerWorldSize;
+    surface_->heightmapTextureHandle = heightmapTextureHandle;
+    surface_->heightmapEnabled = heightmapEnabled;
+    surface_->scaleY = scaleY_;
+
     // Najpierw węzły widoczne, potem węzły tylko do cieni (poza kadrem).
     std::vector<Node*> nodes = visibleNodes_;
     const size_t visibleEnd = nodes.size();
@@ -553,20 +570,11 @@ void Terrain::collectRenderPackets(
         packet.boneDescriptorSet = VK_NULL_HANDLE;
         packet.instanceBuffer = VK_NULL_HANDLE;
         packet.instanceCount = 0;
-        packet.layerBlendEnabled = layerBlendEnabled;
-        packet.layerCount = layerCount;
-        packet.layerTextureHandles = layerTextureHandles;
-        packet.layerMaskHandles = layerMaskHandles;
-        packet.layerWorldSize = layerWorldSize;
-
-        // Tessellation and heightmap parameters
-        packet.heightmapTextureHandle = heightmapTextureHandle;
-        packet.scaleY = scaleY_;
-        packet.tessellationFactor = tessFactor;
-        packet.heightmapEnabled = heightmapEnabled;
+        packet.terrain = surface_;
+        packet.tessellationFactor = tessFactor;   // teselacja zależna od LOD węzła
 
         // Teren teselowany rzuca cień przez potok terrain_shadow (renderer), z tej samej geometrii co na ekranie.
-        packets.push_back(packet);
+        packets.push_back(std::move(packet));
     }
 }
 

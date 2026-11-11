@@ -41,20 +41,6 @@ SpriteInstanceData buildInstanceData(const SpriteSystem::Sprite& s) {
     return inst;
 }
 
-std::string requireTextureName(AssetRegistry& assetRegistry, TextureHandle handle, const std::string& context) {
-    if (!handle.isValid()) {
-        LOG_WARN("[SpriteSystem] Invalid TextureHandle for: {}", context);
-        return "default";
-    }
-
-    const auto textureName = assetRegistry.textureName(handle);
-    if (!textureName.has_value()) {
-        LOG_WARN("[SpriteSystem] Missing texture name for handle ({}) in: {}", handle.value, context);
-        return "default";
-    }
-    return *textureName;
-}
-
 }  // namespace
 
 SpriteSystem::SpriteSystem() = default;
@@ -69,18 +55,6 @@ int SpriteSystem::addSprite(const Sprite& sprite) {
     sprites_[id] = sprite;
     sprites_[id].active = true;
     return id;
-}
-
-SpriteSystem::Sprite& SpriteSystem::getSprite(int id) {
-    return sprites_[id];
-}
-
-int SpriteSystem::spriteCount() const {
-    return spriteCount_;
-}
-
-void SpriteSystem::removeSprite(int id) {
-    if (id >= 0 && id < spriteCount_) sprites_[id].active = false;
 }
 
 void SpriteSystem::clear() {
@@ -100,15 +74,6 @@ void SpriteSystem::setColor(int id, const std::array<float, 4>& color) {
     if (id >= 0 && id < spriteCount_) sprites_[id].color = color;
 }
 
-void SpriteSystem::setUV(int id, float offsetU, float offsetV, float scaleU, float scaleV) {
-    if (id >= 0 && id < spriteCount_) {
-        sprites_[id].uvOffsetU = offsetU;
-        sprites_[id].uvOffsetV = offsetV;
-        sprites_[id].uvScaleU = scaleU;
-        sprites_[id].uvScaleV = scaleV;
-    }
-}
-
 void SpriteSystem::setAnim(int id, int framesX, int framesY, float timePerFrame,
                            int startFrame, int endFrame, bool loop) {
     if (id < 0 || id >= spriteCount_) return;
@@ -124,26 +89,6 @@ void SpriteSystem::setAnim(int id, int framesX, int framesY, float timePerFrame,
     s.loop = loop;
     if (!s.isSequence) {
         applyFrameUV(id);
-    }
-}
-
-void SpriteSystem::playAnim(int id) {
-    if (id >= 0 && id < spriteCount_) sprites_[id].playing = true;
-}
-
-void SpriteSystem::pauseAnim(int id) {
-    if (id >= 0 && id < spriteCount_) sprites_[id].playing = false;
-}
-
-void SpriteSystem::stopAnim(int id) {
-    if (id >= 0 && id < spriteCount_) {
-        auto& s = sprites_[id];
-        s.playing = false;
-        s.currentFrame = s.startFrame;
-        s.elapsed = 0.0f;
-        if (!s.isSequence) {
-            applyFrameUV(id);
-        }
     }
 }
 

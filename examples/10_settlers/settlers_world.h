@@ -9,9 +9,11 @@
  *
  * IDENTYFIKATORY
  * --------------
- * Jednostki, budynki i surowce leżą w wektorach (units, buildings, nodes), a ich indeks jest
- * identyfikatorem. Martwych obiektów nie usuwamy z wektora - mają alive = false. Dzięki temu
- * odwołania typu "cel ataku = jednostka nr 17" pozostają poprawne; zawsze sprawdzaj alive.
+ * Jednostki, budynki, flagi, drogi, zlecenia i surowce leżą w wektorach, a ich indeks jest identyfikatorem.
+ * Martwy obiekt ma alive = false; po kwarantannie (kilka sekund gry) jego slot zajmuje nowy obiekt
+ * (SlotFreeList) - wektory nie rosną przez całą partię. Odwołania między obiektami to Ref<T> (slot_ref.h):
+ * pamiętają generację slotu, więc odwołanie do obiektu, którego slot zajął już inny, zachowuje się jak -1.
+ * Zawsze sprawdzaj też alive (w czasie kwarantanny martwy obiekt dalej jest pod swoim indeksem).
  *
  * GRAFIKA
  * -------
@@ -46,15 +48,18 @@
 #include <nlohmann/json_fwd.hpp>
 #include <array>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "camera/camera_picking.h"
 #include "feature/ai/nav_grid.h"
 #include "settlers_assets.h"
 #include "settlers_defs.h"
+#include "slot_ref.h"
 
 namespace engine3d {
 class Engine;
@@ -64,6 +69,13 @@ class Terrain;
 }
 
 namespace settlers {
+
+struct Unit;
+struct Building;
+struct Flag;
+struct Road;
+struct TransportOrder;
+struct ResourceNode;
 
 using engine3d::Entity;
 using engine3d::Ray;
@@ -94,6 +106,7 @@ constexpr int kUnitStateCount = static_cast<int>(UnitState::Garrison) + 1;
 
 struct Unit {
     bool alive = false;
+    uint32_t gen = 0;            // generacja slotu (slot_ref.h)
     UnitType type = UnitType::Settler;
     int faction = 0;
     Entity* entity = nullptr;    // model postaci
@@ -113,24 +126,24 @@ struct Unit {
     float stuckTimer = 0.0f;     // jak długo nie udaje się dojść do celu
 
     // --- Praca (osadnicy) ---
-    int building = -1;           // plac budowy lub warsztat
-    int resourceNode = -1;       // drzewo / skała, do której idzie lub którą obrabia
+    Ref<Building> building;      // plac budowy lub warsztat
+    Ref<ResourceNode> resourceNode;   // drzewo / skała, do której idzie lub którą obrabia
     CarryType carry = CarryType::None;
     Vec3 workSpot{};             // rolnik: miejsce na polu
 
     // --- Transport (tragarze) ---
-    int atFlag = -1;             // flaga, przy której stoi (albo do której właśnie idzie)
-    int jobFlag = -1;            // zlecenie odbioru: flaga, z której zabiera towar
-    int jobOrder = -1;           // zlecenie dostawy: indeks w World::orders
-    int jobDest = -1;            // budynek docelowy (magazyn przy odbiorze, odbiorca przy dostawie)
+    Ref<Flag> atFlag;            // flaga, przy której stoi (albo do której właśnie idzie)
+    Ref<Flag> jobFlag;           // zlecenie odbioru: flaga, z której zabiera towar
+    Ref<TransportOrder> jobOrder;   // zlecenie dostawy: indeks w World::orders
+    Ref<Building> jobDest;       // budynek docelowy (magazyn przy odbiorze, odbiorca przy dostawie)
     int carryCount = 0;          // ile towarów niesie / ma podnieść (1-2, wszystkie typu carry)
 
     // --- Walka (żołnierze) ---
-    int targetUnit = -1;
-    int targetBuilding = -1;
+    Ref<Unit> targetUnit;
+    Ref<Building> targetBuilding;
     float attackCooldown = 0.0f; // czas do kolejnego ciosu / strzału
     Vec3 guardPos{};             // posterunek - tu wraca po walce
-    int homeTower = -1;          // wieża, w której załodze jest (lub do której idzie / wraca po wypadzie)
+    Ref<Building> homeTower;     // wieża, w której załodze jest (lub do której idzie / wraca po wypadzie)
 
     // --- Liczniki czasu i animacja ---
     float timer = 0.0f;          // wielozadaniowy licznik (czas pracy, odpoczynku, wykrywania wrogów)
@@ -157,6 +170,7 @@ struct Unit {
 
 struct Building {
     bool alive = false;
+    uint32_t gen = 0;            // generacja slotu (slot_ref.h)
     BuildingType type = BuildingType::House;
     int faction = 0;
     Entity* entity = nullptr;    // model budynku
@@ -167,7 +181,7 @@ struct Building {
     float hp = 1.0f;
     bool constructed = false;
     float progress = 0.0f;       // postęp budowy 0..1
-    int worker = -1;             // pracownik warsztatu (indeks jednostki)
+    Ref<Unit> worker;            // pracownik warsztatu
     int produced = 0;            // ile razy pracownik dostarczył surowiec
     float lastDamagedTime = -100.0f;
     float placedTime = 0.0f;     // kiedy postawiono (plac budowy) - AI burzy place, które długo stoją bez drogi
@@ -204,7 +218,7 @@ struct Building {
     float unreachableTime = -100.0f;
 
     // Transport i magazyn
-    int flag = -1;                   // flaga przed wejściem (tu pracownik odkłada towary)
+    Ref<Flag> flag;                  // flaga przed wejściem (tu pracownik odkłada towary)
     Resources stock;                 // zapasy (tylko zamek i magazyn)
     int incoming = 0;                // magazyn: towary w drodze do niego (zarezerwowane miejsce)
     Resources delivered;             // dowiezione materiały (plac budowy, koszary)
@@ -226,9 +240,10 @@ struct Building {
 // Flaga: węzeł sieci dróg. Leży przed wejściem budynku albo na drodze (skrzyżowanie, podział drogi).
 struct Flag {
     bool alive = false;
+    uint32_t gen = 0;            // generacja slotu (slot_ref.h)
     int faction = 0;
     Vec3 pos{};
-    int building = -1;               // budynek, którego to flaga (-1 = zwykła flaga na drodze)
+    Ref<Building> building;          // budynek, którego to flaga (-1 = zwykła flaga na drodze)
     std::vector<CarryType> goods;    // towary czekające na odbiór (najwyżej kFlagCapacity)
     std::array<int, kGoodTypeCount + 1> reserved{};   // ile towarów danego rodzaju zarezerwowali tragarze
     std::vector<int> roads;          // odcinki dróg zaczynające się / kończące na tej fladze
@@ -242,8 +257,9 @@ struct Flag {
 // Odcinek drogi między dwiema flagami. Obsługuje go jeden tragarz.
 struct Road {
     bool alive = false;
+    uint32_t gen = 0;            // generacja slotu (slot_ref.h)
     int faction = 0;
-    int flagA = -1, flagB = -1;
+    Ref<Flag> flagA, flagB;
     std::vector<Vec3> points;        // trasa od flagA do flagB (punkty co ok. 2 jednostki)
     float length = 0.0f;
     Entity* entity = nullptr;        // ubity trakt na terenie
@@ -253,13 +269,14 @@ struct Road {
 // "Opłacone" (funded) = towar został już zdjęty z zapasu magazynu source.
 struct TransportOrder {
     bool alive = false;
+    uint32_t gen = 0;            // generacja slotu (slot_ref.h)
     int faction = 0;
     CarryType type = CarryType::Wood;
     int amount = 1;                  // 1-2 sztuki
-    int source = -1;                 // magazyn, z którego tragarz zabierze towar
-    int sourceFlag = -1;             // albo flaga, na której towar leży (zarezerwowany w Flag::reserved)
-    int dest = -1;                   // odbiorca
-    int carrier = -1;                // tragarz realizujący zlecenie
+    Ref<Building> source;            // magazyn, z którego tragarz zabierze towar
+    Ref<Flag> sourceFlag;            // albo flaga, na której towar leży (zarezerwowany w Flag::reserved)
+    Ref<Building> dest;              // odbiorca
+    Ref<Unit> carrier;               // tragarz realizujący zlecenie
     bool funded = false;
     bool picked = false;             // tragarz już niesie towar
 };
@@ -283,6 +300,7 @@ enum class NodeKind { Tree, Rock };
 // Surowiec na mapie: drzewo albo skała.
 struct ResourceNode {
     bool alive = false;
+    uint32_t gen = 0;            // generacja slotu (slot_ref.h)
     NodeKind kind = NodeKind::Tree;
     Entity* entity = nullptr;
     Vec3 pos{};
@@ -294,6 +312,7 @@ struct ResourceNode {
     float fallTimer = -1.0f;     // >= 0: animacja przewracania ściętego drzewa
     float blockedUntil = -1.0f;  // surowiec chwilowo nieosiągalny (pracownik nie mógł dojść)
     float shake = 0.0f;          // drganie drzewa przy ścinaniu
+    float heightJitter = 1.0f;   // losowe wydłużenie modelu w pionie (tylko wygląd)
     float growth = 1.0f;         // < 1: sadzonka posadzona przez leśniczego (rośnie, nie można jej ściąć)
     int variant = 0;             // wariant modelu (do odtworzenia sadzonki po wczytaniu zapisu)
 };
@@ -308,9 +327,9 @@ struct Projectile {
     float duration = 1.0f;
     float arcHeight = 8.0f;
     int faction = 0;
-    int targetUnit = -1;
-    int targetBuilding = -1;
-    int shooter = -1;            // kto strzelił (zaatakowany może odpowiedzieć)
+    Ref<Unit> targetUnit;
+    Ref<Building> targetBuilding;
+    Ref<Unit> shooter;           // kto strzelił (zaatakowany może odpowiedzieć)
     float damage = 0.0f;
 };
 
@@ -330,7 +349,7 @@ struct FactionState {
     int popCap = 0;              // limit ludności (zamek + domy)
     int population = 0;
     bool defeated = false;
-    int castle = -1;
+    Ref<Building> castle;
     float jobTimer = 0.0f;       // odliczanie do kolejnego przydziału prac
     float garrisonTimer = 0.0f;  // odliczanie do obsadzania pustych wież
     float underAttackMsgTime = -100.0f;
@@ -344,6 +363,11 @@ struct FactionState {
     float waveTimer = 0.0f;
     int waveNumber = 0;
     int soldiersTrained = 0;
+    float aiScoutTimer = 0.0f;     // odliczanie do kolejnego rozkazu dla zwiadowcy
+    float aiNoTowerUntil = 0.0f;   // po "żadna wieża nie doda lądu" - do tego czasu bez wież poszerzających
+    Vec3 lastAttackPos{};          // skąd ostatnio zaatakował wróg (pozycja napastnika) - front obrony AI
+    float lastAttackTime = -1000.0f;
+    Ref<Unit> aiScout;             // żołnierz na zwiadzie (nie bierze udziału w falach ataku)
     // Tragarze: docelowa liczba (gracz ustawia w oknie gospodarki) albo dobierana automatycznie.
     int carrierTarget = 6;
     bool carrierAuto = true;
@@ -383,8 +407,13 @@ public:
     void saveState(nlohmann::json& out) const;
     bool loadState(engine3d::Scene* scene, const nlohmann::json& in, std::string* error = nullptr);
     [[nodiscard]] uint32_t seed() const { return seed_; }
-    // Jeden krok symulacji o dt sekund.                                     [world_update.cpp]
+    // Krok gry: simulate (stan gry, można wołać kilka razy na klatkę przy przyspieszeniu) + present (raz na
+    // klatkę: modele, mgła wojny, słupki granic). update = oba naraz (testy, menu).   [world_update.cpp]
     void update(float dt);
+    void simulate(float dt);
+    // Uchwyty Ref<T> przypisywane od teraz wskazują wektory tego świata (gdy istnieje kilka światów naraz).
+    void activate();
+    void present(float realDt);
 
     // ----------------------------------------------------------------------------------
     // Zapytania                                                             [world_queries.cpp]
@@ -457,9 +486,24 @@ public:
     // Towary do wydania: zapas magazynów + wolne towary na flagach połączonych drogami (tragarz dowiezie je
     // prosto do odbiorcy). Tym sprawdzamy "czy stać nas" na budynek i szkolenie.
     [[nodiscard]] Resources spendable(int faction) const;
+    // Testy siatek przestrzennych: dokładny właściciel terenu (pełne liczenie, bez mapy komórek).
+    [[nodiscard]] int territoryOwnerExactPublic(const Vec3& p) const {
+        if (territoryGridDirty_) rebuildTerritoryGrid();
+        return territoryOwnerExact(p);
+    }
+    [[nodiscard]] int findEnemyUnitNearPublic(int faction, const Vec3& p, float radius) const { return findEnemyUnitNear(faction, p, radius); }
     // Testy planisty AI.
     [[nodiscard]] int countNodesInRangePublic(NodeKind kind, const Vec3& p, float r) const { return countNodesInRange(kind, p, r); }
-    BuildingType aiPlanForPublic(int faction, CarryType good) { return aiPlanFor(faction, aiEconomy(faction), good, 0); }
+    // Testy mgły wojny AI i szukania miejsca.
+    bool aiKnowsPublic(int faction, const Vec3& p) const { return aiKnows(faction, p); }
+    std::vector<int> aiKnownEnemyBuildingsPublic(int faction) const { return aiEconomy(faction).knownEnemyBuildings; }
+    bool findPlacementNearPublic(BuildingType t, int faction, const Vec3& c, float minR, float maxR, Vec3& out) {
+        return findPlacementNear(t, faction, c, minR, maxR, out);
+    }
+    BuildingType aiPlanForPublic(int faction, CarryType good) {
+        aiEco_[faction] = aiEconomy(faction);   // jak w updateAI: pamięć ekonomii z bieżącego stanu
+        return aiPlanFor(faction, aiEco_[faction], good, 0);
+    }
     // Odległości po drogach od flagi (diagnostyka, testy).
     void networkDistancesPublic(int fromFlag, std::vector<float>& dist, std::vector<int>& prevRoad) const {
         networkDistances(fromFlag, dist, prevRoad);
@@ -533,9 +577,15 @@ public:
     bool aiLog = false;              // decyzje AI do logu ([ai] ...) - autoplay
     // Mgła wojny (world_fog.cpp): teren i jednostki wroga widać tylko tam, gdzie dotarli ludzie gracza.
     bool fogOfWar = false;
+    // Mgła wojny dla AI: komputer zna tylko teren odkryty przez swoich ludzi (surowce, góry, budynki wroga)
+    // i musi go zwiadować - niezależnie od fogOfWar (to tylko widok gracza).
+    bool aiFogOfWar = true;
     static constexpr int kFowSize = 256;   // siatka widoczności kFowSize^2 (= Renderer::kFogOfWarSize)
     [[nodiscard]] bool visibleToPlayer(const Vec3& p) const;   // w zasięgu wzroku teraz
     [[nodiscard]] bool exploredByPlayer(const Vec3& p) const;  // kiedyś widziane
+    [[nodiscard]] bool exploredBy(int faction, const Vec3& p) const;   // teren odkryty przez frakcję (bez względu na flagi)
+    [[nodiscard]] bool visibleTo(int faction, const Vec3& p) const;
+    [[nodiscard]] float exploredFraction(int faction) const;   // jaka część mapy jest odkryta (0..1)
     // Tekstura widoczności dla renderera (0 / 128 / 255) i jej wersja (zmienia się, gdy dane się zmienią).
     [[nodiscard]] const std::vector<uint8_t>& fogTexture() const { return fowTexture_; }
     [[nodiscard]] uint64_t fogVersion() const { return fowVersion_; }
@@ -569,19 +619,55 @@ public:
     void debugKillUnit(int id) { killUnit(id, -1); }
 
 private:
+    // Wolne sloty (slot_ref.h): martwe obiekty, których miejsce zajmie kolejny nowy obiekt danego rodzaju.
+    // Kwarantanna w sekundach gry - przez ten czas martwy obiekt jest jeszcze widoczny pod swoim indeksem.
+    // Budynki, flagi i drogi: dłuższa kwarantanna - tragarz w długim marszu dalej "widzi" zniszczony magazyn jako martwy.
+    SlotFreeList freeUnits_{5.0f}, freeBuildings_{30.0f}, freeFlags_{30.0f}, freeRoads_{30.0f};
+    SlotFreeList freeOrders_{1.0f}, freeNodes_{5.0f};
+    void releaseOrder(TransportOrder& o);   // zlecenie wykonane / anulowane -> slot wolny
+    // Budynek o indeksie id albo martwa atrapa (alive = false, flag = -1), gdy odwołanie jest puste / nieaktualne.
+    // Dla miejsc, które i tak obsługują "budynek zniknął" - bez ryzyka buildings[-1].
+    Building& buildingOrDead(int id) {
+        if (id >= 0 && id < static_cast<int>(buildings.size())) return buildings[static_cast<size_t>(id)];
+        deadBuilding_ = Building{};
+        return deadBuilding_;
+    }
+    Building deadBuilding_;
+    void releaseNode(int id);               // surowiec wyczerpany -> slot wolny (tylko sadzonki, patrz addNode)
+public:
+    // Po wczytaniu zapisu (i dla testów): wolne sloty = wszystkie martwe obiekty.
+    void rebuildFreeLists();
+    [[nodiscard]] size_t freeSlotCount() const {
+        return freeUnits_.size() + freeBuildings_.size() + freeFlags_.size() + freeRoads_.size() + freeOrders_.size() + freeNodes_.size();
+    }
+private:
     std::vector<std::pair<int64_t, int>> sepKeys_;   // separateUnits: (komórka siatki, jednostka), posortowane
     float separateTimer_ = 0.0f;   // odliczanie do kolejnego rozpychania jednostek
     size_t nodesGenerated_ = 0;
-    // Mgła wojny (world_fog.cpp)
-    std::vector<uint8_t> fowExplored_, fowVisible_, fowTexture_;
+    // Mgła wojny (world_fog.cpp) - osobna dla każdej frakcji (gracz: obraz i minimapa, AI: jego wiedza o mapie).
+    struct FowObserver {
+        int cx = -1, cz = -1, r = 0;   // komórka i promień (w komórkach), z których obserwator ostatnio patrzył
+    };
+    struct FactionFog {
+        std::vector<uint8_t> explored, visible;   // kiedyś widziane / widziane teraz
+        std::vector<uint16_t> count;              // ilu obserwatorów widzi komórkę
+        std::vector<FowObserver> unitObs, buildingObs;   // indeks = jednostka / budynek
+        int dirtyX0 = 0, dirtyZ0 = 0, dirtyX1 = World::kFowSize - 1, dirtyZ1 = World::kFowSize - 1;
+        int newlyExplored = 0;
+        int exploredCells = 0;
+    };
+    std::array<FactionFog, kFactionCount> fog_;
+    std::vector<uint8_t> fowTexture_;   // tekstura gracza dla renderera
     uint64_t fowVersion_ = 0;
     float fowTimer_ = 0.0f;
-    int fowNewlyExplored_ = 0;
     [[nodiscard]] int fowCellOf(float x, float z) const;
-    void revealCircle(const Vec3& center, float radius);
+    void resetFog(FactionFog& fog);
+    void stampSight(FactionFog& fog, int cx, int cz, int r, int delta);
+    void moveObserver(FactionFog& fog, FowObserver& o, int cx, int cz, int r);
+    void updateFactionFog(int faction);
     void updateFogOfWar(float dt);
-    [[nodiscard]] std::string fogExploredRle() const;
-    void setFogExploredRle(const std::string& rle);    // ile surowców wygenerowano z ziarna (dalsze to sadzonki leśniczych)
+    [[nodiscard]] std::string fogExploredRle(int faction) const;
+    void setFogExploredRle(int faction, const std::string& rle);    // ile surowców wygenerowano z ziarna (dalsze to sadzonki leśniczych)
     void createLand(engine3d::Scene* scene, uint32_t seed, Difficulty difficulty);
     void createStartingBases(Difficulty difficulty);
     void finishCreate();
@@ -637,12 +723,15 @@ private:
     void updateBuildings(float dt);
     void updateEffects(float dt);
     // Przewracanie ściętych drzew, zmniejszanie się skał.
-    void updateNodes(float dt);
+    void updateNodes(float dt);   // stan (symulacja)
+    void presentNodes();          // skala i obrót modeli (prezentacja)
     // Przepisuje pozycje/obroty/animacje obiektów do encji 3D.
     void syncVisuals(float dt);
     // Słupki granic terytorium obu frakcji (jedna siatka na frakcję); budynki, które znalazły
     // się na terenie przejętym przez wroga, płoną.
     void rebuildTerritory();
+    void applyTerritoryChanges();
+    void rebuildTerritoryMesh();
     void burnBuildingsOnLostLand();
     void checkVictory();
     // Drwal/kamieniarz: liczy surowce w zasięgu, ostrzega o ich końcu.
@@ -718,7 +807,10 @@ private:
     int splitRoad(int road, size_t index);
     void buildRoadMesh(int road);
     // Mapa komórek nawigacji zajętych przez drogi (do wykrywania skrzyżowań i blokowania budowy).
-    void rebuildRoadCells();
+    // Mapa komórka -> droga: przebudowywana leniwie (raz po serii zmian, przy pierwszym odczycie).
+    void rebuildRoadCells() const;
+    void markRoadCellsDirty() { roadCellsDirty_ = true; }
+    [[nodiscard]] std::string roadMeshName(int road) const { return meshPrefix_ + "road_" + std::to_string(road); }
     [[nodiscard]] int roadAtCell(float x, float z) const;
     // Spójność sieci: które flagi mają drogę do magazynu (connected) i do zamku (castleLinked).
     void updateRouting();
@@ -728,6 +820,18 @@ private:
     bool depositAtWorkshopFlag(Unit& u, Building& b);
     // Dijkstra po sieci dróg od flagi: odległości do wszystkich flag i odcinek, którym do nich doszliśmy.
     void networkDistances(int fromFlag, std::vector<float>& dist, std::vector<int>& prevRoad) const;
+    // Odległości po drogach od flagi - z pamięci podręcznej (Dijkstra liczona raz na flagę startową, dopóki
+    // sieć dróg się nie zmieni). Wcześniej przydział zleceń liczył Dijkstrę dla każdego tragarza i zlecenia.
+    struct NetDistances {
+        std::vector<float> dist;     // odległość od flagi startowej (>= 1e8 = brak połączenia)
+        std::vector<int> prev;       // odcinek drogi, którym doszliśmy do flagi (do odtworzenia trasy)
+        uint64_t version = 0;
+    };
+    const NetDistances& networkFrom(int fromFlag) const;
+    // Zmiana flag lub dróg - pamięć odległości do przeliczenia.
+    void roadGraphChanged() { ++roadGraphVersion_; }
+    mutable std::unordered_map<int, NetDistances> netCache_;   // flaga startowa -> odległości po drogach
+    uint64_t roadGraphVersion_ = 1;
     // Trasa po drogach od flagi do flagi (punkty dróg w kolejności marszu); false = brak połączenia.
     bool networkPath(int fromFlag, int toFlag, std::vector<Vec3>& out) const;
     // Tragarze: nabór wolnych osadników do docelowej liczby albo zwalnianie nadmiaru.
@@ -770,14 +874,30 @@ private:
         bool peopleShort = false;   // za mało tragarzy / brak jedzenia na nowych osadników
         Resources have;      // magazyny + wolne towary na flagach
         Resources waiting;   // dostawy czekające na towar (brak w magazynach)
+        // Pamięć na jeden krok myślenia AI (liczone raz w aiEconomy, zamiast przeglądać wszystkie budynki świata
+        // w każdym zapytaniu aiFindSpot / aiResourceCluster / aiNeedsWarehouse):
+        std::array<std::vector<int>, kBuildingTypeCount> own;   // żywe budynki frakcji według typu
+        int buildingCount = 0;
+        int storageBlocked = 0;     // warsztaty wstrzymane, bo magazyny pełne
+        int soldiers = 0;           // żołnierze frakcji (załogi wież)
+        std::vector<int> knownEnemyBuildings;   // budynki wroga na terenie odkrytym przez AI
     };
+    std::array<AiEconomy, kFactionCount> aiEco_;   // stan z ostatniego kroku myślenia AI (updateAI)
+    // Czy AI frakcji zna ten punkt mapy (mgła wojny AI): własne terytorium albo teren odkryty przez jej ludzi.
+    [[nodiscard]] bool aiKnows(int faction, const Vec3& p) const;
+    // Zwiad: jeden żołnierz idzie na najbliższy nieodkryty ląd, dopóki AI nie zna wroga i większej części mapy.
+    void aiScout(int faction, float dt);
+    bool aiUnexploredTarget(int faction, const Vec3& from, Vec3& target) const;
+    std::array<std::vector<Vec3>, kFactionCount> aiScoutFailed_;   // cele zwiadu, do których nie dało się dojść
+    std::array<Vec3, kFactionCount> aiScoutGoal_{};                 // ostatni cel zwiadowcy
     [[nodiscard]] AiEconomy aiEconomy(int faction) const;
     [[nodiscard]] bool aiProducerReady(const AiEconomy& e, BuildingType t) const;
     BuildingType aiPlanFor(int faction, const AiEconomy& e, CarryType good, int depth);
     int aiResourceCluster(int faction, NodeKind kind, BuildingType worker, Vec3& center) const;
     bool aiFindSpot(int faction, BuildingType type, Vec3& spot);
     // Punkt poza terytorium, w stronę którego warto postawić wieżę (las / skały / góry / wolny teren).
-    bool aiExpansionTarget(int faction, BuildingType wanted, Vec3& target) const;
+    // blind (opcjonalnie): cel "na ślepo" - AI nie zna miejsca z potrzebnym surowcem (mgła wojny AI).
+    bool aiExpansionTarget(int faction, BuildingType wanted, Vec3& target, bool* blind = nullptr) const;
     void aiLogDecision(int faction, const std::string& text);
     [[nodiscard]] bool aiNeedsWarehouse(int faction, const AiEconomy& e) const;
     // Łączy drogami warsztaty i magazyny, które nie mają połączenia z magazynem.
@@ -820,7 +940,18 @@ private:
     int findEnemyUnitNear(int faction, const Vec3& p, float radius) const;
     int findEnemyBuildingNear(int faction, const Vec3& p, float radius) const;
     // Losowe próby znalezienia miejsca na budynek w pierścieniu [minR, maxR] wokół center.
-    bool findPlacementNear(BuildingType type, int faction, const Vec3& center, float minR, float maxR, Vec3& out);
+    // accept (opcjonalnie): dodatkowy warunek dla miejsca, które przeszło canPlace (np. "wieża musi dodać ląd").
+    bool findPlacementNear(BuildingType type, int faction, const Vec3& center, float minR, float maxR, Vec3& out,
+                           const std::function<bool(const Vec3&)>& accept = {});
+    // Czy z punktu "from" da się dojść pieszo w okolice p (ten sam obszar nawigacji; p może leżeć na przeszkodzie).
+    [[nodiscard]] bool landReachable(const Vec3& from, const Vec3& p) const;
+    // Jaka część zasięgu wieży w punkcie p to nowy ląd dla frakcji (nie jej teren, nie woda, osiągalny z zamku).
+    [[nodiscard]] float aiTowerGain(int faction, const Vec3& p) const;
+    // Front obrony: punkt na naszej granicy od strony zagrożenia (ostatni atak albo najbliższy znany budynek wroga).
+    // level: 0 = brak zagrożenia, 1 = wróg w pobliżu, 2 = niedawny atak.
+    bool aiDefenseFront(int faction, Vec3& front, int& level) const;
+    bool aiDefenseTower_ = false;    // aiFindSpot: wieża obronna (gęsto przy froncie) zamiast poszerzającej teren
+    float aiTowerBestGain_ = 0.0f;   // diagnostyka: najlepszy zysk lądu z ostatniego szukania miejsca na wieżę
     // Odległość od punktu do ściany budynku (0 = wewnątrz obrysu).
     [[nodiscard]] float distanceToBuilding(const Vec3& p, const Building& b) const;
     [[nodiscard]] bool buildingAreaFree(BuildingType type, const Vec3& pos) const;
@@ -843,10 +974,37 @@ private:
     std::mt19937 rng_;                           // generator losowy (ziarno = seed mapy)
     uint64_t entityCounter_ = 0;                 // do unikalnych nazw encji
     Entity* territoryEntity_[kFactionCount]{};   // słupki granic terytorium
-    bool territoryDirty_ = true;                 // terytorium się zmieniło - przebuduj słupki
+    bool territoryDirty_ = true;                 // terytorium się zmieniło - skutki dla gry (pożary, drogi)
+    bool territoryMeshDirty_ = true;             // słupki granic do przebudowy (present)
+    // Terytorium zmieniło się (wieża / zamek powstał, padł, zdobyty): skutki dla gry, słupki i mapa właścicieli.
+    void markTerritoryChanged() {
+        territoryDirty_ = true;
+        territoryGridDirty_ = true;
+    }
+    // Mapa właścicieli terenu (komórki kFowSize^2 po 4 j.) i lista źródeł terytorium - przeliczane leniwie po zmianie.
+    // territoryOwnerAt czyta komórkę; w komórkach granicznych liczy dokładnie (wynik identyczny jak pełny skan).
+    struct TerritorySource {
+        Vec3 pos;
+        float radius;
+        int faction;
+    };
+    mutable std::vector<TerritorySource> territorySources_;
+    mutable std::vector<int8_t> territoryGrid_;
+    mutable bool territoryGridDirty_ = true;
+    void rebuildTerritoryGrid() const;
+    [[nodiscard]] int territoryOwnerExact(const Vec3& p) const;
+    // Kubełki jednostek (siatka 32 x 32 j.) - przebudowywane raz na krok symulacji, do szukania wrogów w pobliżu.
+    static constexpr float kUnitBucketSize = 32.0f;
+    static constexpr int kUnitBuckets = static_cast<int>(2.0f * kWorldHalf / kUnitBucketSize);
+    std::vector<std::vector<int>> unitBuckets_;
+    void rebuildUnitBuckets();
     bool regionsDirty_ = true;                   // przeszkody się zmieniły - przelicz obszary dostępności
     int territoryMeshVersion_ = 0;
-    std::vector<int> roadCells_;                 // komórka nawigacji -> indeks drogi + 1 (0 = brak drogi)
+    mutable std::vector<int> placeRoadScratch_;  // canPlace: drogi w pobliżu (pamięć między wywołaniami)
+    mutable std::vector<int> roadCells_;         // komórka nawigacji -> indeks drogi + 1 (0 = brak drogi)
+    mutable bool roadCellsDirty_ = true;
+    // Prefiks nazw siatek tworzonych przez ten świat (drogi, granice) - destruktor zwalnia je z MeshManager.
+    std::string meshPrefix_;
     bool routingDirty_ = true;                   // sieć dróg lub magazyny się zmieniły - przelicz spójność
     float transportTimer_ = 0.0f;                // odliczanie do kolejnego przydziału zleceń
     std::vector<Vec3> minimapColors_;

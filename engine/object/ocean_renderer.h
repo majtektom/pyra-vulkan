@@ -22,6 +22,7 @@ public:
     bool isActive() const override { return enabled_ && ready_; }
     const std::string& getName() const override { return name_; }
     Stage getStage() const override { return Stage::AfterTransparent; }
+    bool needsSceneColor() const override { return true; }   // odbicia i załamanie z kopii koloru sceny
 
     void configure(const OceanConfig& config, const std::string& shaderDir, const std::string& descName);
     void cleanup(VkDevice device);

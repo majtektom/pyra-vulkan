@@ -31,6 +31,9 @@ public:
     std::shared_ptr<MaterialInstance> materialInstance;
     VkBuffer skinVertexBuffer = VK_NULL_HANDLE;
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
+
+private:
+    std::shared_ptr<TerrainSurface> surface_;   // warstwy tekstur dla paczek (gdy layerBlendEnabled)
 };
 
 } // namespace engine3d

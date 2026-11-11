@@ -37,7 +37,6 @@ public:
     void moveForward(float velocityDelta);
     void moveRight(float velocityDelta);
     void moveUp(float velocityDelta);
-    void stop();
 
     /**
      * @brief Aktualizuje fizykę ruchu kontrolera i pozycjonuje powiązaną kamerę.
@@ -53,12 +52,8 @@ public:
     void setPositionAndTarget(const Vec3& pos, const Vec3& target);
     void setPosition(const Vec3& pos);
     
-    [[nodiscard]] Vec3 getPosition() const { return position_; }
-
     void setYaw(float deg) { headingDegrees_ = deg; }
-    [[nodiscard]] float getYaw() const { return headingDegrees_; }
     void setPitch(float deg) { pitchDegrees_ = deg; }
-    [[nodiscard]] float getPitch() const { return pitchDegrees_; }
 
     float moveSpeed = 2.0f;          // Prędkość poruszania się kamery.
     float mouseSensitivity = 0.25f;  // Czułość ruchów myszy.

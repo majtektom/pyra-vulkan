@@ -472,10 +472,6 @@ void Model3ds::buildMeshData(t3DObject* object) {
     }
 }
 
-void Model3ds::setCurrentFrame(int frame) {
-    currentFrame = frame;
-}
-
 void Model3ds::cleanUp() {
     if (filePointer) {
         fclose(filePointer);
@@ -660,7 +656,6 @@ void Model3ds::processNextMaterialChunk(tChunk* previousChunk) {
     currentChunk = new tChunk;
     std::array<float, 4> color{0, 0, 0, 1};
     char n[256];
-    float ff;
 
 
     while (previousChunk->bytesRead < previousChunk->length) {
@@ -810,7 +805,7 @@ void Model3ds::readObjectMaterial(t3DObject* object, tChunk* previousChunk) {
 }
 
 void Model3ds::readKeyFramePositions(tChunk* previousChunk) {
-    short frameNumber = 0, flags = 0, ignored = 0;
+    short frameNumber = 0, ignored = 0;
     long lunknown = 0;
 
     previousChunk->bytesRead += fread(&ignored, 1, sizeof(short), filePointer);
@@ -843,7 +838,7 @@ void Model3ds::readKeyFramePositions(tChunk* previousChunk) {
 }
 
 void Model3ds::readKeyFrameRotations(tChunk* previousChunk) {
-    short frameNumber = 0, flags = 0, rotkeys = 0, ignored = 0;
+    short frameNumber = 0, ignored = 0;
     long lunknown = 0;
     float rotationDegree = 0;
     std::vector<int> vFrameNumber;
@@ -908,7 +903,7 @@ void Model3ds::readKeyFrameRotations(tChunk* previousChunk) {
 }
 
 void Model3ds::readKeyFrameScales(tChunk* previousChunk) {
-    short frameNumber = 0, ignore = 0, flags = 0;
+    short frameNumber = 0, ignore = 0;
     long lunknown = 0;
 
     previousChunk->bytesRead += fread(&ignore, 1, sizeof(short), filePointer);

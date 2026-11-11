@@ -1,106 +1,76 @@
 #include "render/packet_draw.h"
+#include "render/push_constants.h"
 
 #include <array>
 
 namespace engine3d {
 
+void DrawBindCache::bindPipeline(VkCommandBuffer cmd, VkPipeline p) {
+    if (p == pipeline) { ++skipped; return; }
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    pipeline = p;
+}
+
+void DrawBindCache::bindGlobalSet(VkCommandBuffer cmd, VkPipelineLayout l, VkDescriptorSet set) {
+    if (l == layout && set == set0) { ++skipped; return; }
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, l, 0, 1, &set, 0, nullptr);
+    if (l != layout) set1 = VK_NULL_HANDLE;   // inny layout - nie zakładamy, że set 1 przetrwał
+    layout = l;
+    set0 = set;
+}
+
+void DrawBindCache::bindSet1(VkCommandBuffer cmd, VkPipelineLayout l, VkDescriptorSet set) {
+    if (l == layout && set == set1) { ++skipped; return; }
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, l, 1, 1, &set, 0, nullptr);
+    set1 = set;
+}
+
+void DrawBindCache::bindVertexBuffer(VkCommandBuffer cmd, uint32_t slot, VkBuffer buffer) {
+    if (vertex[slot] == buffer) { ++skipped; return; }
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, slot, 1, &buffer, &offset);
+    vertex[slot] = buffer;
+}
+
+void DrawBindCache::bindIndexBuffer(VkCommandBuffer cmd, VkBuffer buffer) {
+    if (index == buffer) { ++skipped; return; }
+    vkCmdBindIndexBuffer(cmd, buffer, 0, VK_INDEX_TYPE_UINT32);
+    index = buffer;
+}
+
 void drawRenderPacket(VkCommandBuffer commandBuffer, const RenderPacket& packet, const VulkanPipeline& pipeline,
-                      VkDescriptorSet globalDescriptorSet, VkPipelineLayout& boundLayout) {
+                      VkDescriptorSet globalDescriptorSet, DrawBindCache& bound) {
     VkPipelineLayout matLayout = pipeline.layout;
 
-    // Set 0 (UBO + bindless) musi być zbindowany layoutem zgodnym z potokiem materiału.
-    // Layouty są zgodne tylko przy identycznych zakresach push constants, więc set
-    // zbindowany wcześniej innym layoutem (np. deferred) nie jest tu ważny.
-    if (matLayout != boundLayout) {
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                matLayout, 0, 1, &globalDescriptorSet, 0, nullptr);
-        boundLayout = matLayout;
-    }
-    
-    // Krok 1: Bindowanie potoku graficznego (Pipeline) dla materiału (ustawienia shaderów, blendingu, depth testu).
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+    // Set 0 (UBO + bindless) musi być zbindowany layoutem zgodnym z potokiem materiału - DrawBindCache
+    // binduje go ponownie, gdy zmienia się layout (np. po przebiegu deferred), a pomija, gdy jest ten sam.
+    bound.bindGlobalSet(commandBuffer, matLayout, globalDescriptorSet);
 
-    // Krok 2: Bindowanie descriptor setów kości (jeśli to obiekt animowany szkieletowo, set 1).
-    // Globalny descriptor set (tekstury i bufory globalne, set 0) jest bindowany raz dla całej klatki w Rendererze.
+    // Krok 1: Potok graficzny (Pipeline) materiału - ustawienia shaderów, blendingu, depth testu.
+    bound.bindPipeline(commandBuffer, pipeline.pipeline);
+
+    // Krok 2: Descriptor set kości (obiekt animowany szkieletowo, set 1).
     if (packet.boneDescriptorSet != VK_NULL_HANDLE)
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                matLayout, 1, 1, &packet.boneDescriptorSet, 0, nullptr);
+        bound.bindSet1(commandBuffer, matLayout, packet.boneDescriptorSet);
 
-    // Krok 3: Bindowanie bufora wierzchołków (slot 0).
-    VkBuffer vertexBuffers[] = {packet.vertexBuffer};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+    // Krok 3: Bufor wierzchołków (slot 0) - kolejne paczki tej samej siatki używają go bez ponownego bindowania.
+    bound.bindVertexBuffer(commandBuffer, 0, packet.vertexBuffer);
 
-    // Krok 4: Bindowanie opcjonalnych buforów (instancjonowanie lub wierzchołki animacji szkieletowej, slot 1).
-    if (packet.instanceBuffer != VK_NULL_HANDLE) {
-        VkBuffer instVBs[] = {packet.instanceBuffer};
-        VkDeviceSize instOffs[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 1, 1, instVBs, instOffs);
-    } else if (packet.skinVertexBuffer != VK_NULL_HANDLE) {
-        VkBuffer skinVBs[] = {packet.skinVertexBuffer};
-        VkDeviceSize skinOffs[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 1, 1, skinVBs, skinOffs);
-    }
-    
-    // Krok 5: Bindowanie bufora indeksów.
-    if (packet.indexBuffer != VK_NULL_HANDLE) {
-        vkCmdBindIndexBuffer(commandBuffer, packet.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    }
+    // Krok 4: Opcjonalny slot 1: instancje albo wierzchołki animacji szkieletowej.
+    if (packet.instanceBuffer != VK_NULL_HANDLE)
+        bound.bindVertexBuffer(commandBuffer, 1, packet.instanceBuffer);
+    else if (packet.skinVertexBuffer != VK_NULL_HANDLE)
+        bound.bindVertexBuffer(commandBuffer, 1, packet.skinVertexBuffer);
 
-    // Krok 6: Wypełnianie struktury Push Constants przesyłającej unikalne parametry obiektu bezpośrednio do rejestrów GPU.
-    struct PushConstants {
-        Matrix4 model;                          // Macierz świata (Model Matrix) obiektu.
-        std::array<float, 4> baseColorFactor;   // Kolor bazowy materiału.
-        float metallicFactor;                   // Metaliczność.
-        float roughnessFactor;                  // Szorstkość.
-        float bumpIntensity;                    // Siła mapowania normalnych.
-        uint32_t baseColorTextureSet;           // Indeks tekstury albedo w tablicy bindless.
-        uint32_t physicalDescriptorTextureSet;  // Indeks tekstury metallic-roughness.
-        uint32_t normalTextureSet;              // Indeks tekstury normalnych.
-        uint32_t occlusionTextureSet;           // Indeks tekstury okluzji.
-        uint32_t emissiveTextureSet;            // Indeks tekstury emisji.
-        float alphaMaskCutoff;                  // Próg odrzucania przezroczystości (alpha clipping).
-        uint32_t layerBlendEnabled;             // Czy włączone mieszanie warstw (dla terenu).
-        uint32_t layerCount;
-        float layerWorldSize;
-        uint32_t layerBaseTextureSets[3][4];
-        uint32_t layerMaskTextureSets[3][4];
-        uint32_t heightmapTextureSet;
-        float scaleY;
-        float tessellationFactor;
-        uint32_t heightmapEnabled;
-    } push;
-    push.model = packet.transform;
-    push.baseColorFactor = packet.materialColor;
-    push.metallicFactor = packet.metallicFactor;
-    push.roughnessFactor = packet.roughnessFactor;
-    push.bumpIntensity = packet.bumpIntensity;
-    push.baseColorTextureSet = packet.diffuseTextureIndex;
-    push.physicalDescriptorTextureSet = packet.metallicRoughnessTextureIndex;
-    push.normalTextureSet = packet.normalTextureIndex;
-    push.occlusionTextureSet = packet.occlusionTextureIndex;
-    push.emissiveTextureSet = packet.emissiveTextureIndex;
-    push.alphaMaskCutoff = 0.5f;
-    push.layerBlendEnabled = packet.layerBlendEnabled ? 1u : 0u;
-    push.layerCount = packet.layerCount;
-    push.layerWorldSize = packet.layerWorldSize;
-    for (uint32_t group = 0; group < 3; ++group) {
-        for (uint32_t lane = 0; lane < 4; ++lane) {
-            const uint32_t index = group * 4 + lane;
-            push.layerBaseTextureSets[group][lane] = packet.layerTextureIndices[index];
-            push.layerMaskTextureSets[group][lane] = packet.layerMaskIndices[index];
-        }
-    }
-    push.heightmapTextureSet = packet.heightmapTextureIndex;
-    push.scaleY = packet.scaleY;
-    push.tessellationFactor = packet.tessellationFactor;
-    push.heightmapEnabled = packet.heightmapEnabled ? 1u : 0u;
+    // Krok 5: Bufor indeksów.
+    if (packet.indexBuffer != VK_NULL_HANDLE) bound.bindIndexBuffer(commandBuffer, packet.indexBuffer);
 
-    // Przesyłamy stałe (Push Constants) do shadera.
+    // Krok 6: Push Constants - parametry obiektu przesyłane razem z poleceniem rysowania (układ: push_constants.h).
+    const MaterialPushConstants push = makeMaterialPush(packet);
     vkCmdPushConstants(commandBuffer, matLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
                        VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
-                       0, sizeof(PushConstants), &push);
+                       0, sizeof(push), &push);
 
     // Krok 7: Wywołanie rysowania (Draw Call).
     if (packet.indexBuffer != VK_NULL_HANDLE) {

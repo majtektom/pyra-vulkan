@@ -84,39 +84,6 @@ public:
         return nullptr;
     }
 
-    template <typename T>
-    // Udostepnia odczyt wszystkich komponentow danego typu,
-    // co ulatwia prace systemom ECS (np. Render/Light).
-    std::vector<T*> getComponents() const {
-        static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
-        std::vector<T*> result;
-        result.reserve(components_.size());
-        for (const auto& component : components_) {
-            if (auto* casted = dynamic_cast<T*>(component.get())) {
-                result.push_back(casted);
-            }
-        }
-        return result;
-    }
-
-    template <typename T>
-    bool removeComponent() {
-        static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
-        for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
-            if (dynamic_cast<T*>(it->get()) != nullptr) {
-                components_.erase(std::next(it).base());
-                return true;
-            }
-        }
-        return false;
-    }
-
-    template <typename T>
-    bool hasComponent() const {
-        static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
-        return getComponent<T>() != nullptr;
-    }
-
 private:
     EntityId id_ = 0;
     std::string name_;

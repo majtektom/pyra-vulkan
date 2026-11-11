@@ -11,7 +11,6 @@
 #include "camera/camera_controller.h"
 #include "render/material_manager.h"
 #include "platform/platform.h"
-#include "scene/layer_manager.h"
 #include "scene/scene_manager.h"
 #include "render/shader_manager.h"
 #include "render/texture_manager.h"
@@ -84,23 +83,19 @@ public:
     Platform* getPlatform() { return platform.get(); }
     MaterialManager* getMaterialManager() { return &materialManager; }
     AssetRegistry* getAssetRegistry() { return assetRegistry.get(); }
-    ShaderManager* getShaderManager() { return shaderManager.get(); }
-    TextureManager* getTextureManager() { return textureManager.get(); }
-    FontManager* getFontManager() { return fontManager.get(); }
     SceneManager* getSceneManager() { return &sceneManager; }
-    LayerManager* getLayerManager() { return &layerManager; }
     MaterialSystem* getMaterialSystem() { return materialSystem.get(); }
     MeshManager* getMeshManager() { return meshManager.get(); }
+    // Pula wątków silnika - do równoległych obliczeń gry (parallelFor) zamiast tworzenia wątków co klatkę.
+    JobSystem& getJobSystem() { return jobSystem_; }
     CameraController* getCameraController() { return &cameraController; }
     // System dźwięku (zawsze dostępny; gdy brak urządzenia audio - wywołania są no-op).
     AudioSystem* getAudio() { return audio_.get(); }
 
     float getCurrentFPS() const { return currentFPS; }
     const InputSnapshot& input() const { return currentInput_; }
-    void bindActionKey(std::string_view action, int scancode);
     bool actionDown(std::string_view action) const;
     bool actionPressed(std::string_view action) const;
-    bool actionReleased(std::string_view action) const;
 
     // Stan przycisków myszy: 0 = lewy, 1 = prawy, 2 = środkowy.
     bool mouseDown(int button) const;
@@ -121,14 +116,11 @@ public:
     void enableShaderHotReload(bool enable);
     void reloadShader(const std::string& shaderName);
 
-    void setShaderManifest(const ShaderManifest& manifest);
-    void addShader(const std::string& name, const ShaderProgram& program);
     void configureScene(Scene& scene);
 
     void setSynchronizationMode(SynchronizationMode mode);
     SynchronizationMode synchronizationMode() const;
     void setFrameRateLimit(int fps);
-    int frameRateLimit() const { return frameRateLimit_; }
     void setPresentMode(PresentMode mode);
     PresentMode presentMode() const;
 
@@ -176,11 +168,8 @@ public:
     bool loadMap(const std::string& path, Scene* scene);
     std::shared_ptr<SkydomeRenderer> getSkydome() const { return currentSkydome_; }
     std::shared_ptr<OceanRenderer> getOcean() const { return currentOcean_; }
-    std::shared_ptr<VolumetricFogRenderer> getVolumetricFog() const { return volumetricFogRenderer_; }
     std::shared_ptr<Md2ModelData> getMd2Model() const { return currentMd2Model_; }
     std::shared_ptr<Md2AnimationState> getMd2Anim() const { return currentMd2Anim_; }
-    GltfSkinnedModel* getBrainModel() const { return currentBrainModel_.get(); }
-    const std::vector<std::unique_ptr<GltfSkinnedInstance>>& getBrainInstances() const { return currentBrainInstances_; }
 
     std::function<void(float, Engine&)> onUpdate;
 
@@ -199,7 +188,6 @@ private:
     std::unique_ptr<FontManager> fontManager;
     MaterialManager materialManager;
     SceneManager sceneManager;
-    LayerManager layerManager;
     RenderScene renderScene;
 
     bool initialized = false;
@@ -244,6 +232,7 @@ private:
         std::shared_ptr<Md2AnimationState> anim;
     };
     std::vector<Md2Instance> md2Instances_;
+    std::vector<MeshData> md2Results_;   // wyniki animacji MD2 z bieżącej klatki (pamięć zostaje między klatkami)
 
     float tessellationLevel_ = 4.0f;
 };

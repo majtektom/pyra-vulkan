@@ -27,13 +27,13 @@ void OpaquePass::execute(VkCommandBuffer commandBuffer, uint32_t currentFrame, c
     });
     
     // Rysowanie każdej nieprzezroczystej paczki geometrii:
-    VkPipelineLayout boundLayout = VK_NULL_HANDLE;
+    DrawBindCache bound;
     for (const auto* packetPtr : sortedPackets) {
         const auto& packet = *packetPtr;
         if (!packet.forwardOpaquePass) continue;
         if (!packet.material || packet.vertexBuffer == VK_NULL_HANDLE) continue;
         
-        drawRenderPacket(commandBuffer, packet, packet.material->getPipeline(), globalDescriptorSet, boundLayout);
+        drawRenderPacket(commandBuffer, packet, packet.material->getPipeline(), globalDescriptorSet, bound);
     }
 }
 

@@ -67,7 +67,6 @@ void Profiler::endFrame() {
         report += buf;
         s.totalMs = 0.0;
     }
-    lastReport_ = report;
     LOG_INFO("[profil] {}", report);
     frameTotalMs_ = 0.0;
     frames_ = 0;
