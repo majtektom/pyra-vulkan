@@ -107,15 +107,18 @@ Dokumentacja architektury: `doc/README.md` … `doc/24_rozwiazywanie_problemow.m
   deklarować jako `Ref<...>`, nie `int`. Nowy obiekt = `freeX_.allocate(wektor, gameTime)` (ponowne użycie slotu),
   śmierć = `freeX_.release(id, gameTime)`; nie `push_back`. Indeks trzymany poza strukturami świata (lokalne listy)
   może po kwarantannie (5 s gry) wskazywać inny obiekt - sprawdzać alive na bieżąco.
-- Osadnicy: AI zna mapę tylko przez `aiKnows(f, p)` (mgła wojny AI, `fog_[f]`) - nowa decyzja AI o surowcach albo
-  wrogu musi filtrować przez `aiKnows`, inaczej AI "widzi przez mgłę". Budynki frakcji: `aiEco_[f].own[typ]`.
+- Osadnicy: AI (klasa `AiPlanner`, `ai_planner.h/.cpp`, w World pole `ai_`) zna mapę tylko przez
+  `knows(f, p)` (mgła wojny AI, `fog_[f]`) - nowa decyzja AI o surowcach albo
+  wrogu musi filtrować przez `knows`, inaczej AI "widzi przez mgłę". Budynki frakcji: `eco_[f].own[typ]`.
 - Osadnicy: `World::simulate` (stan gry, kilka razy na klatkę) vs `World::present` (modele, mgła, słupki - raz na
-  klatkę). Zmiana terytorium → `markTerritoryChanged()` (mapa właścicieli), zmiana flag/dróg → `roadGraphChanged()`
+  klatkę). Zmiana terytorium → `markTerritoryChanged()` (mapa właścicieli), zmiana flag/dróg → `transport_.roadGraphChanged()`
   (pamięć odległości `networkFrom`) - inaczej zapytania zwrócą stare wyniki.
 
 ## Przykład 10_settlers (gra RTS w stylu Osadników)
 
-Podział: `World` (`settlers_world.h`, pliki `world_*.cpp`) = symulacja, bez wejścia i GUI;
+Podział: `World` (`settlers_world.h`, pliki `world_*.cpp`) = symulacja, bez wejścia i GUI; wydzielone z niej klasy
+`AiPlanner` (komputerowy przeciwnik) i `Transport` (trasy po drogach, zlecenia, tragarze - `transport.h/.cpp`)
+czytają i zmieniają świat przez referencję `w_` (są `friend` World);
 `SettlersApp` (`settlers_app.h`, pliki `app_*.cpp`) = prezentacja, wejście, HUD, dźwięk, debug, testy.
 Panel budowy to `GuiToolbar` z silnika (`app_buildbar.cpp` dostarcza tylko ikony i treść kart).
 Zasada: elementy przydatne innym grom (GUI, ustawienia, szum, matematyka) trafiają do `engine/`, a nie do przykładu.
@@ -126,7 +129,7 @@ Mapa plików i opis każdego modułu: komentarz na górze `main.cpp`, `settlers_
 Wszystkie liczby balansu: `settlers_defs.h/.cpp` (budynki, `productionDef` - co produkuje i zużywa warsztat,
 jednostki, nazwy/kolory towarów). Nowy warsztat = wpis w obu tabelach + model (`settlers_assets.cpp`) + ikona
 (`app_buildbar.cpp`) + pozycja w `kBuildMenu`; zachowanie wynika z `WorkKind`; dla AI: producent towaru w
-`aiPlanFor`, ewentualnie proporcja w `kAiRatios` (`world_ai.cpp`) - czasy pracy dostroić pomiarem (log "wydajność").
+`AiPlanner::planFor`, ewentualnie proporcja w `kAiRatios` (`ai_planner.cpp`) - czasy pracy dostroić pomiarem (log "wydajność").
 AI to planista potrzeb (bez listy budowy) - decyzje w logu `[ai]` (`SETTLERS_AILOG=1` lub autoplay).
 
 Tryby uruchomienia (zmienne środowiskowe):

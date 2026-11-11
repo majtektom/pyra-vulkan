@@ -1,150 +1,118 @@
 # TODO — engine3d
 
-Legenda: `[x]` zrobione, `[ ]` do zrobienia. Odnośniki do plików względem katalogu głównego repo.
-
-Wszystkie przykłady (01–09) przechodzą walidację Vulkana bez błędów i ostrzeżeń (także wydajnościowych),
-również z walidacją synchronizacji. Uruchamianie z pełnym logiem:
-
-```sh
-VK_LAYER_VALIDATE_SYNC=1 VK_LAYER_DUPLICATE_MESSAGE_LIMIT=1000 ./bin/09_vegetation
-```
+Wewnętrzny backlog zadań technicznych. `[ ]` = do zrobienia. Historia
+wykonanych prac jest w [changelog.md](changelog.md), a dokumentacja użytkownika
+w [doc/README.md](doc/README.md) (zbiorczo ograniczenia i plan:
+[doc/26_ograniczenia_i_plan.md](doc/26_ograniczenia_i_plan.md)).
 
 ---
 
-## 1. Błędy działania
+## 1. Błędy i ograniczenia
 
-### Swapchain i synchronizacja
+### Renderowanie i zasoby
 
-- [x] `VK_SUBOPTIMAL_KHR` przy acquire traktowany jak błąd (semafor zostawał zasygnalizowany)
-- [x] Bariera obrazu swapchaina z `TOP_OF_PIPE` zamiast `COLOR_ATTACHMENT_OUTPUT`
-- [x] Semafory prezentacji per klatka zamiast per obraz swapchaina
-- [x] Minimalizacja okna (swapchain 0×0) — renderowanie wstrzymane
-- [x] Fallback formatu swapchaina
-- [x] Początkowe przejścia layoutu mapy cieni i buforów głębi
-- [x] Brakujące bariery przed przebiegiem 2 (ocean/przezroczyste) i przed overlayem
-- [x] Głębia read-only w przebiegu 2 ze `storeOp = STORE` → `STORE_OP_NONE`
-- [x] Przełączanie trybu synchronizacji (Standard ↔ Timeline) w trakcie działania
+- [ ] Mipmapy tekstur DXT/BC przez blit — `vkCmdBlitImage` nie obsługuje
+  formatów skompresowanych; sprawdzać `VK_FORMAT_FEATURE_BLIT_DST` /
+  `SAMPLED_IMAGE_FILTER_LINEAR` (`engine/render/renderer_textures.cpp`).
+- [ ] Limit indeksów bindless — `nextTextureIndex_` nie jest porównywany
+  z `kMaxBindlessTextures` (1024), indeksy nie są zwalniane
+  (`renderer_textures.cpp`, `renderer_impl.h`).
+- [ ] Dwie mgły naraz — `"fog": {"enabled": true}` włącza liniową (deferred)
+  i wolumetryczną; potrzebna jedna wspólna konfiguracja.
+- [ ] Ocean nie zapisuje głębi — nad wodą mgła liczy się do dna/nieba.
+- [ ] Skydome to wycinek kuli — w oddali widać ciemną krawędź na horyzoncie.
+- [ ] Push constants materiału mają 240 B, a Vulkan gwarantuje minimum 128 B —
+  przy takiej karcie potrzebne SSBO zamiast push constants.
+- [ ] Ścieżki `bin/assets/...` zależą od katalogu roboczego — dodać ścieżkę
+  bazową z `SDL_GetBasePath`.
+- [ ] Tekstury osadzone w glTF/GLB są zapisywane do `/tmp/gltf_embed_*.bmp`
+  i wczytywane z dysku — wczytywać prosto z pamięci
+  (`engine/object/gltf/model_gltf.cpp`).
+- [ ] Upload tekstur — jeden command buffer zamiast kilku submitów
+  z `vkQueueWaitIdle` na teksturę.
+- [ ] Ostrzeżenia kompilatora — dodać `-Wall -Wextra` w
+  `cmake/ProjectSettings.cmake`; w Debug opcjonalnie ASan/UBSan.
+- [ ] Shadery HLSL kompiluje `glslangValidator` (gdy brak `dxc`); nie obsługuje
+  części atrybutów `[[vk::...]]`. `dxc` jest opcjonalny — doprecyzować
+  wymagania w komentarzach/CMake.
 
-### Zapisy CPU do pamięci czytanej przez GPU (klatki w locie)
+### Logika i synchronizacja
 
-- [x] `MeshManager`: wierzchołki MD2, instancje cząsteczek i sprite'ów — bufory zastępowane, stare zwalniane po `kMaxFrames + 1` klatkach
-- [x] Kości GLTF — pierścień slotów w buforze kości instancji
-- [x] Przeładowanie tekstury / zmiana filtrowania — `vkDeviceWaitIdle` przed zniszczeniem
-- [x] Nowe tekstury w trakcie gry — `UPDATE_UNUSED_WHILE_PENDING` na bindless
-- [x] Przebudowa atlasu fontu przy nowych znakach
-- [x] Bufor lokalnych wolumenów mgły — zapis tylko po zmianie
-- [x] Przykład `03_flyaround` przepisany na `GltfSkinnedModel`/`GltfSkinnedInstance` (usunięta ręczna kopia skinningu)
+- [ ] Delta time w milisekundach — szarpanie przy wysokim FPS, `dt = 0` powyżej
+  ~1000 FPS (`engine/core/engine.cpp`, `calculateDeltaTimeMs`).
+- [ ] `loadMap`: jeden `currentBrainModel_` dla wszystkich wpisów
+  `gltf_skinned_models` (drugi nadpisuje pierwszy); ponowne `loadMap` nie
+  czyści starych encji.
+- [ ] `JobSystem`: przepełnienie, gdy `hardware_concurrency()` zwraca 0
+  (`engine/core/job_system.h`).
+- [ ] Niedeterministyczna kolejność paczek po scaleniu buforów wątków
+  (G-Buffer, cienie) — utrudnia porównywanie zrzutów.
 
-### Niepoprawne użycie API
+### Cienie
 
-- [x] Wireframe bez `fillModeNonSolid`; anizotropia bez sprawdzenia wsparcia
-- [x] Czyszczenie i zapis depth w layoucie read-only (overlay ma teraz własny przebieg)
-- [x] Zapis głębi przez materiały przezroczyste w przebiegu read-only
-- [x] Set 0 bindowany niezgodnym layoutem w `OpaquePass`/`TransparentPass`
-- [x] Brak formatu depth w pipeline'ach deferred i kompozycji mgły
-- [x] Format obrazu mgły niezgodny z shaderem (RGBA16F vs Rgba32f)
-- [x] `vkFreeDescriptorSets` na pulach bez `FREE_DESCRIPTOR_SET_BIT`
-- [x] Wycieki przy zamykaniu (GUI, layouty pipeline'ów przy przełączaniu wireframe)
-- [x] Atrybuty wierzchołka nieczytane przez shader (ostrzeżenia `PERFORMANCE`) — `vk::filterVertexAttributes` odczytuje wejścia z SPIR-V
-- [x] Shader siatki (grid) czytał kolor z lokacji normalnej — siatka i osie były zawsze zielone
-- [ ] Generowanie mipmap przez blit na teksturach DXT/BC — `vkCmdBlitImage` nie działa dla formatów skompresowanych; brak sprawdzenia `VK_FORMAT_FEATURE_BLIT_DST` / `SAMPLED_IMAGE_FILTER_LINEAR` (`engine/render/renderer_core.cpp`, `loadTexture`)
-- [ ] Indeks bindless bez limitu — `nextTextureIndex_` nie jest porównywany z `kMaxBindlessTextures` (1024), indeksy nie są zwalniane
-
-### Mgła wolumetryczna
-
-- [x] Kompozycja z głębi sceny zamiast G-buffera (obejmuje teren rysowany forwardem)
-- [x] Odbicie mgły w pionie (podwójne odwracanie Y)
-- [x] Całkowanie od kamery w głąb (front-to-back)
-- [x] Mgła wysokościowa sumowana z lokalnymi wolumenami
-- [x] Kolor mgły z mapy, kierunek słońca z pierwszego światła kierunkowego
-- [ ] Podwójna mgła — `"fog": {"enabled": true}` włącza naraz liniową (deferred, teren) i wolumetryczną
-- [ ] Ocean nie zapisuje głębi — nad wodą mgła liczy się do dna / nieba (trochę za gęsta)
-
-### Logika
-
-- [ ] Delta time w milisekundach — szarpanie przy wysokim FPS, dt = 0 powyżej 1000 FPS (`engine/core/engine.cpp`, `calculateDeltaTimeMs`)
-- [ ] `loadMap`: jeden `currentBrainModel_` dla wszystkich `gltf_skinned_models` (drugi nadpisuje pierwszy); ponowne `loadMap` nie czyści starych encji
-- [ ] `JobSystem`: przepełnienie, gdy `hardware_concurrency()` zwraca 0 (`engine/core/job_system.h`)
-- [ ] Niedeterministyczna kolejność paczek po scaleniu buforów wątków (G-buffer, cienie)
-- [ ] Skydome to wycinek kuli — w oddali widać jej ciemną krawędź na horyzoncie
+- [ ] Cienie świateł punktowych — teraz jedna perspektywa 120° w dół; potrzebne
+  cube mapy lub dual-paraboloid.
+- [ ] Culling per kaskada cienia (teraz liczone są wszystkie paczki cieni).
 
 ---
 
 ## 2. Wydajność
 
-- [ ] Roślinność: jedna encja = jedno źdźbło = osobny draw call (+4 kaskady cieni). Instancing: jeden draw na gatunek i chunk świata (`MeshManager` ma już `instanceBuffer`; shadery `default`/`gbuffer` muszą czytać macierz z `VK_VERTEX_INPUT_RATE_INSTANCE`)
-- [ ] Frustum culling dla siatek (jest tylko dla terenu) i culling per kaskada cienia
-- [ ] Sortowanie paczek po pipeline/materiale, mniej rebindów
-- [ ] Statyczne siatki w `DEVICE_LOCAL` przez staging (teraz wszystkie host-visible)
-- [ ] Tekstury i render targety przez VMA zamiast surowego `vkAllocateMemory`
-- [ ] Upload tekstur: jeden command buffer zamiast 3–4 submitów z `vkQueueWaitIdle` na teksturę
-- [ ] `TerrainPlacementSystem` co klatkę liczy wysokość dla wszystkich statycznych obiektów
-- [ ] Kopiowanie sceny ze swapchaina do `sceneColor` w każdej klatce, także bez oceanu
-- [ ] Nagrywanie komend z wielu wątków (secondary command buffers, osobna pula komend na wątek)
+- [ ] Roślinność: jedna encja = jedno źdźbło = osobny draw call (+4 kaskady
+  cieni). Instancing: jeden draw na gatunek i chunk świata; shadery
+  `default`/`gbuffer` muszą czytać macierz z `VK_VERTEX_INPUT_RATE_INSTANCE`.
+- [ ] Frustum culling dla siatek (jest tylko dla terenu).
+- [ ] Dalsze sortowanie paczek po pipeline/materiale — mniej rebindów.
+- [ ] Tekstury i render targety przez VMA zamiast surowego `vkAllocateMemory`.
+- [ ] `TerrainPlacementSystem` co klatkę liczy wysokość dla wszystkich
+  statycznych obiektów — przenieść do fazy tworzenia.
+- [ ] Nagrywanie komend z wielu wątków (secondary command buffers, osobna pula
+  komend na wątek).
 
 ---
 
 ## 3. Architektura
 
-- [ ] HDR i tonemapping — render do `R16G16B16A16_SFLOAT`, tonemapping (ACES/AgX), na końcu kopia do swapchaina (usuwa też kopiowanie ze swapchaina)
-- [ ] Spójność forward/deferred — teren i materiały custom idą forwardem z własnym oświetleniem; albo wszystko przez G-buffer, albo wspólna funkcja oświetlenia
-- [ ] `engine/render/renderer_core.cpp` (~3300 linii) — podział; helper `transition(image, from, to)` albo prosty render graph (`RenderOrchestrator`/`renderPlan_` istnieje, ale nieużywany)
-- [ ] Cienie punktowe — teraz jedna perspektywa 120° w dół; potrzebne cube mapy lub dual-paraboloid
-- [ ] Push constants 224 B (gwarantowane minimum 128 B) — dane materiału do SSBO z indeksem
-- [ ] UBO/SSBO per klatka dla danych obiektów zamiast push constants, gdy scena urośnie
-- [ ] Ścieżki `bin/assets/...` zależą od katalogu roboczego — ścieżka bazowa przez `SDL_GetBasePath`
-- [ ] `-Wall -Wextra` w `cmake/ProjectSettings.cmake`, w Debug także `-fsanitize=address,undefined`
-- [ ] Shadery HLSL kompiluje `glslangValidator` (brak `dxc` w PATH, choć README go wymaga) — nie obsługuje części atrybutów `[[vk::...]]`
-- [ ] Tekstury osadzone w GLTF/GLB są zapisywane do `/tmp/gltf_embed_*.bmp` i wczytywane z dysku — wczytywać prosto z pamięci (`engine/object/gltf/model_gltf.cpp`)
+- [ ] HDR i tonemapping — render do `R16G16B16A16_SFLOAT`, ACES/AgX, na końcu
+  kopia do swapchaina.
+- [ ] Render graph — automatyczne bariery i kolejność przebiegów.
+- [ ] Push constants → SSBO z indeksem, gdy scena urośnie (materiały, dane
+  obiektów).
+- [ ] Mesh shaders (task + mesh) — culling i generowanie geometrii na GPU.
+- [ ] Data-oriented ECS — komponenty w ciągłych tablicach, logika w systemach
+  (ewentualnie EnTT).
+- [ ] Równoległa aktualizacja ECS — `Scene::updateEntities` w paczkach na
+  `JobSystem`.
+- [ ] Asynchroniczne ładowanie zasobów — tekstury i modele w tle, placeholdery.
+- [ ] Debug rendering — wireframe węzłów quadtree terenu.
 
 ---
 
-## 4. Teren 3D (porównanie ze starym systemem)
+## 4. Teren
 
-- [x] LOD stitching (`TerrainIndexGenerator`, `computeStitchConfig`)
-- [x] Multi-texturing z maskami (do 12 warstw)
-- [x] Dynamiczny LOD wg odległości od kamery
-- [x] Frustum culling węzłów quadtree
-- [x] Znajdowanie sąsiadów do stitchingu
-- [x] Teselacja zagęszczająca siatkę
-- [x] Wygładzanie krawędzi do poziomu wody, generatory, heightmapa, XML/JSON, zapytania wysokości
-- [ ] Przypinanie obiektów do węzłów quadtree (teraz `TerrainPlacementComponent` tylko dociąga wysokość)
-- [ ] Debug rendering — wireframe węzłów quadtree
+- [ ] Przypinanie obiektów do węzłów quadtree (teraz
+  `TerrainPlacementComponent` tylko dociąga wysokość).
+- [ ] Lepsze dopasowanie zasięgu kaskad cieni do widocznego terenu (dalsza
+  optymalizacja `updateVisibleDepthRange`).
 
 ---
 
-## 5. Pomysły na przyszłość
+## 5. Gra `10_settlers`
 
-- **Mesh shaders** (task + mesh) — culling i generowanie geometrii na GPU z danych w SSBO.
-- **ECS w stylu data-oriented** — encja jako ID, komponenty jako czyste struktury w ciągłych tablicach, logika w systemach (ewentualnie biblioteka EnTT). Hierarchia przez `HierarchyComponent` + `TransformSystem` (częściowo już jest).
-- **Zrównoleglenie aktualizacji ECS** — `Scene::updateEntities` w paczkach na `JobSystem`.
+- [ ] Instancing drzew, słupków granicy i jednostek — jeden draw na typ siatki.
+- [ ] Animacje jednostek — szkieletowe albo proste chodzenie/machanie
+  narzędziem zamiast przesuwania brył.
+- [ ] Cząsteczki — dym z kominów, pożar przy paleniu budynków, kurz przy
+  budowie.
+- [ ] Statystyki na koniec partii (surowce, armia, straty w czasie).
+- [ ] Kolejki w koszarach i punkt zbiórki dla nowych żołnierzy.
+- [ ] Podgląd zasięgu terytorium nowej wieży przy jej stawianiu.
 
-## 6. settlers
+---
 
-Rozgrywka (największy efekt):
+## 6. Pomysły
 
-Instancing: drzewa, słupki granicy i jednostki to setki osobnych obiektów. Rysowanie ich jedną komendą na typ siatki mocno podniesie FPS przy dużych mapach.
-Animacje jednostek: szkieletowe albo proste chodzenie i machanie narzędziem, zamiast przesuwania brył.
-Cząsteczki: dym z kominów, pożar przy paleniu budynków, kurz przy budowie.
-Szybkie usprawnienia (godzina–dwie każde):
-
-statystyki na koniec partii (wykres surowców, armii i strat w czasie);
-skróty i kolejki w koszarach, punkt zbiórki dla nowych żołnierzy;
-podgląd zasięgu terytorium nowej wieży przy jej stawianiu.
-
-
-
- od największego zysku:
-1. Optymalizacje o najlepszym stosunku zysku do pracy
-- [x] Minimapa jako tekstura, nie 4096 prostokątów — app_hud.cpp:232-243 tworzy 64×64 = 4096 addOverlayRect co klatkę (plus ikony). To stały koszt niezależny od sceny. Trzeba dodać do GUI widget obrazka/tekstury i API Renderer::updateTexture (dziś jest tylko loadTextureFromMemory, renderer.h:94), a minimapę odświeżać tylko gdy zmieni się mgła/obiekty. **[ZROBIONE 2026-11-10]** GuiMgr::createImage/updateImage/addOverlayImage (obrazki RGBA w GUI, kopia na klatkę w locie), minimapa przeliczana po zmianie mgły/świata.
-- [x] Rozdzielić symulację od prezentacji — app_core.cpp:495 woła całe World::update gameSpeed_ razy (do x24), a w środku jest syncVisuals (world_update.cpp:166), mgła i przebudowa terytorium/regionów. Przy x24 to 24× zapisy transformów i upload tekstury mgły na klatkę. Wprowadziłbym stały krok z akumulatorem (limit podkroków, np. 8), a sync modeli, upload mgły i rebuildTerritory robił raz na klatkę. To naprawia też rozjazd czasu przy zacięciu (dt obcinane do 0,1 s, world_update.cpp:109). **[ZROBIONE 2026-11-10]** World::simulate (kroki <= 0,05 s, max 12 na klatkę) + World::present raz na klatkę (modele, mgła, słupki granic); skutki zmiany terytorium w symulacji, słupki w prezentacji.
-- [x] Transport: jedna Dijkstra na źródło, nie na zlecenie — world_roads.cpp:964-1080: dla każdego tragarza liczone są networkDistances(u.atFlag), a potem wewnątrz pętli po zleceniach kolejne networkDistances(src) (1006-1008) i jeszcze raz dla wybranej flagi (1037). networkDistances alokuje dwa wektory przy każdym wywołaniu (523-546). Do tego fundOrder robi Dijkstrę dla każdego nieopłaconego zlecenia co 0,5 s (633-703). Rozwiązanie: cache odległości per flaga ważny do routingDirty_, przeliczany raz na tick; zlecenia sortowane po źródle. **[ZROBIONE 2026-11-10]** World::networkFrom - pamięć odległości per flaga startowa, unieważniana wersją grafu dróg (roadGraphChanged).
-- [x] Siatki przestrzenne — dziś: territoryOwnerAt skanuje wszystkie budynki (world_queries.cpp:72-86), isInTerritory robi do 17 takich wywołań (90-106), canPlace dodatkowo skanuje budynki/węzły/wszystkie punkty dróg (117-190) i jest wołane co klatkę w podglądzie stawiania (app_input.cpp:382), a findPlacementNear próbuje 120× (408-419). findEnemyUnitNear/findEnemyBuildingNear (373-405) to O(żołnierze × jednostki). Wzorzec już jest w separateUnits (world_movement.cpp:202-232) — warto go uogólnić na jednostki, budynki, węzły i terytorium. **[ZROBIONE 2026-11-10]** mapa właścicieli terenu + lista źródeł (dokładne liczenie tylko w komórkach granicznych), kubełki jednostek dla findEnemyUnitNear, canPlace sprawdza drogi z mapy komórek; test spatialGridTest (wyniki = pełny skan).
-- [x] Drogi: batchowanie i wyciek siatek — rebuildRoadCells (pełne 256×256 + wszystkie punkty dróg) leci przy każdym createRoad/removeRoad (world_roads.cpp:258,272), a buildRoad tworzy wiele odcinków. Nazwy siatek "road_" + ++meshCounter (327-335) nigdy nie są zwalniane, bo MeshManager nie ma removeMesh (mesh_manager.cpp:64). Każda budowa/rozbiórka drogi i każde wczytanie zapisu zostawia VRAM. Fix: stabilna nazwa + updateMesh albo removeMesh i dirty-flag na przebudowę komórek raz na tick. **[ZROBIONE 2026-11-10]** MeshManager::removeMesh/removeMeshesWithPrefix, stała nazwa siatki drogi, prefiks siatek świata zwalniany w ~World (też teren: Terrain::releaseMeshes), leniwe rebuildRoadCells; testy liczby siatek.
-- [x] Mgła wojny — world_fog.cpp:77-125: co 0,25 s gry pełne fill 65 536 komórek, revealCircle dla każdej jednostki (przy zasięgu 80 j. ~5000 komórek), rozmycie 3×3 (590 tys. operacji), a przy x24 to 96 razy na sekundę realnie. Dodatkowo mgła ustawia territoryDirty_ (121-124), sprzęgając ją z bardzo drogim rebuildTerritory. Rozwiązanie: rozmycie rozdzielne, odświeżanie tylko komórek wokół jednostek, która faktycznie się ruszyły; terytorium debounce raz na klatkę. **[ZROBIONE 2026-11-10]** przyrostowo: liczniki obserwatorów w komórkach, przeliczane tylko obiekty, które zmieniły komórkę, rozmycie w prostokącie zmian; odświeżanie wg czasu rzeczywistego; słupki granic niezależne od logiki terytorium.
-2. Silnik/renderer
-- [x] G-Buffer: brak sortowania i zbędne bindowanie — renderer_core.cpp:493-558: dla każdej paczki ponownie vkCmdBindPipeline, vkCmdBindDescriptorSets (ten sam set 0 dla wszystkich!), vertex/index buffer i push constants. Sortowanie front-to-back + po (pipeline, mesh) i cache „ostatnio bindowane” to zwykle największy zysk CPU przy tysiącach obiektów. **[ZROBIONE 2026-11-10]** `DrawBindCache` (packet_draw.h) pomija powtórne bindowanie potoku/setów/buforów; G-Buffer sortowany: grupa potoku → pierścień odległości 40 j. → siatka → odległość, teren na końcu; cienie raz na klatkę po potoku i siatce. ~1000 paczek: pominięte ~3500 bindowań na klatkę, nagrywanie cieni 0,41 → 0,28 ms, klatka 2,2 → 1,9 ms.
-- [x] Cienie liczone nawet gdy wyłączone — render_pass.h:17-40 kopiuje każdą paczkę do shadowPackets, renderer_core.cpp:211 zawsze woła updateVisibleDepthRange, a assignShadowSlots alokuje i sortuje. Przy shadowsEnabled_ == false cały ten tor powinien być pominięty; cull 8 narożników policzyć raz na światło, nie dla każdej paczki i kaskady. **[ZROBIONE 2026-11-10]** RenderScene trzyma odwołania (lista+indeks) zamiast kopii paczek, przy wyłączonych cieniach nie zbiera ich wcale; updateVisibleDepthRange i assignShadowSlots pomijane (bez alokacji, partial_sort); granice paczek liczone raz na klatkę, test kaskady ortho ze środka i |M|*extent zamiast 8 narożników, dla świateł lokalnych najpierw test odległości. Nagrywanie cieni 0,28 → 0,18 ms.
-- [x] Bufory siatek w pamięci hosta — mesh_manager.cpp:47-73 alokuje wierzchołki/indeksy jako HOST_VISIBLE|HOST_COHERENT. Statyczna geometria powinna iść do DEVICE_LOCAL przez staging. updateMesh (88-116) dodatkowo re-uploaduje niezmienione indeksy MD2 co klatkę. **[ZROBIONE 2026-11-10]** loadMesh → DEVICE_LOCAL przez bufor pośredni, wszystkie kopie klatki jednym zgłoszeniem (MeshManager::flushUploads, bariera TRANSFER→VERTEX_INPUT, fence zwalnia staging); updateMesh zostaje w pamięci hosta. Indeksy MD2 nie były wysyłane co klatkę (animateMd2 nie zwraca indeksów) - bez zmian.
-- [x] Cząsteczki i audio — emitter.cpp:181,342 tworzy std::async co klatkę per emitter (jest przecież JobSystem); audio_system.cpp:292-335 alokuje std::vector i dekoduje OGG w wątku audio pod mutexem trzymanym przez cały mix(). To proszenie się o glitche i blokowanie klatki. Real-time audio wymaga preallokowanych buforów pierścieniowych i kolejki komend z głównego wątku. **[ZROBIONE 2026-11-10]** cząsteczki: JobSystem::parallelFor (Engine::getJobSystem, parametr initialize), wektory robocze bez alokacji co klatkę; audio: wątek audio bez muteksu i alokacji - polecenia przez kolejkę SPSC, muzyka dekodowana przez osobny wątek strumienia do bufora pierścieniowego (1 s), limity instancji liczone po stronie gry.
-- [x] Architektura — renderer_core.cpp ma 3894 linie i miesza alokację, tekstury, mgłę, cienie i UI; RenderOrchestrator/renderPlan_ są martwe (3622-3631); layout push-constants istnieje w trzech kopiach (packet_draw.cpp:51, renderer_core.cpp:325,519). Wydzieliłbym ShadowPass, GBufferPass, DeferredPass, SceneColorCopyPass, OverlayPass i jeden wspólny nagłówek push-constants. RenderPacket z 24 polami terenu w każdej paczce (render_types.h:41-89) to też powód dużych kopii. **[ZROBIONE 2026-11-10]** render() to lista przebiegów (recordShadowPass, recordGBufferPass, recordLightingPass, copySceneColor, recordTransparentPass, recordOverlayPass); klasa RendererImpl w prywatnym renderer_impl.h, metody w plikach renderer_shadow_pass/gbuffer_pass/deferred_pass/scene_copy/overlay_pass/textures/fog_of_war.cpp (renderer_core.cpp: 3970 → 830 linii); RenderOrchestrator usunięty; push_constants.h (MaterialPushConstants + makeMaterialPush, ShadowPushConstants, TerrainShadowPushConstants, static_assert rozmiarów); pola terenu z RenderPacket → wspólny TerrainSurface (shared_ptr), indeksy ustalane raz na teren.
+- Mesh shaders, render graph, HDR, data-oriented ECS.
+- Lepsze cienie lokalne (cube mapy), global illumination w przyszłości.
+- Edytor sceny oparty o GUI silnika (hierarchia, inspektor, gizmos).
+- Skryptowanie logiki gry bez rekompilacji.

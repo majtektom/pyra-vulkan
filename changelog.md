@@ -17,6 +17,9 @@ Czytelność kodu:
  - Osadnicy: planista AI (`aiBuildNext`) jako reguły `aiChoose*` z `AiChoice`; panel zaznaczenia na flagę /
    budynek / jednostkę / grupę; tragarz (`updateCarrier`) według stanów; nazwane stałe leczenia i napraw
    wspólne dla symulacji i HUD (`kRecoveryDelay`, `kRepairBelowHp`)
+ - Osadnicy - podział klasy World: komputerowy przeciwnik to osobna klasa `AiPlanner` (ai_planner.h/.cpp, metody bez
+   przedrostka ai*), a przewóz towarów (trasy po drogach, zlecenia, tragarze) - klasa `Transport` (transport.h/.cpp).
+   Obie czytają świat przez referencję; flagi, drogi i magazyny zostają w World (world_roads.cpp 1400 -> 860 linii)
  - `GuiRenderer` i skybox: czytelne nazwy zmiennych zamiast skrótów (`vb_`, `odl`, `przes`...)
 
 Usunięte duplikaty (ok. 1800 linii kodu mniej; zachowanie bez zmian, sprawdzone walidacją i testami):

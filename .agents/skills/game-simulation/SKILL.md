@@ -87,7 +87,7 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
 ## 7. AI
 
 - NIE sztywna lista budowy (użytkownik odrzucił: AI stawiało pełno drwali/kamieniarzy). Planista potrzeb
-  (`world_ai.cpp`) co 3 s czyta te same statystyki i ostrzeżenia co gracz:
+  (`ai_planner.cpp`, klasa `AiPlanner`) co 3 s czyta te same statystyki i ostrzeżenia co gracz:
   sprzątanie (zburz wyczerpanego kamieniarza / drwala bez drzew i sadzonek, plac bez drogi) → Dom przy limicie
   ludności → wieża w stronę brakującego surowca (gdy nie da się postawić potrzebnego budynku) → Magazyn (tylko gdy
   warsztaty stoją przez pełne magazyny) → proporcje warsztatów (tabela: 1 tartak / 4 drwali, 1 leśniczy / 3 drwali,
@@ -124,7 +124,7 @@ description: Wzorce symulacji gier strategicznych/ekonomicznych (RTS, gry w styl
 - Identyfikatory = indeksy w wektorach + ponowne używanie martwych slotów (lista wolnych z kwarantanną) i generacja
   w każdym obiekcie; odwołanie = (indeks, generacja), nieaktualne zachowuje się jak "brak". Bez ponownego użycia
   wektory rosną przez całą partię; bez generacji stare odwołanie trafia w nowy obiekt.
-- AI w mgle wojny: własna mapa odkrytego terenu, każde zapytanie AI o mapę przez jeden filtr (aiKnows); zwiadowca
+- AI w mgle wojny: własna mapa odkrytego terenu, każde zapytanie AI o mapę przez jeden filtr (`AiPlanner::knows`); zwiadowca
   z pamięcią nieosiągalnych celów; limit rozbudowy "na ślepo". Porównanie z/bez mgły na stałym ziarnie mapy.
 
 - Symulacja w krótkich krokach (np. <= 0,05 s, limit kroków na klatkę), a modele/mgła/efekty raz na klatkę -
